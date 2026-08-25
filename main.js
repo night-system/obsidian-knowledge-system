@@ -32,20 +32,22 @@ var import_obsidian5 = require("obsidian");
 // src/settings.ts
 var DEFAULT_SETTINGS = {
   apiKey: "",
-  defaultModel: "",
   baseUrl: "https://api.deepseek.com",
-  customApiKey: "",
-  customModel: "",
+  model: "",
+  models: [],
   sourceFolder: "/",
   outputFolder: "/",
-  timePropertyName: "",
+  timeAttr: "",
   timeFormat: "YYYY-MM-DD",
   recentDays: 7,
-  reviewStatusProperty: "approved",
-  reviewStatusValue: "\u672A\u5BA1",
-  categoryProperty: "category",
-  categoryValue: "\u672A\u5206\u7C7B",
-  timestampProperty: "created"
+  reviewAttr: "approved",
+  reviewDefault: "\u672A\u5BA1",
+  categoryAttr: "category",
+  categoryDefault: "\u672A\u5206\u7C7B",
+  timestampAttr: "created",
+  sourceAttr: "source",
+  customApiKey: "",
+  customModel: ""
 };
 
 // src/commands.ts
@@ -53,13 +55,97 @@ var import_obsidian2 = require("obsidian");
 
 // src/core.ts
 var import_obsidian = require("obsidian");
+
+// src/utils/index.ts
+var DAY_MS = 864e5;
+function parseTimestamp(value, moment, formats) {
+  if (typeof value === "number") return value > 1e12 ? value : value * 1e3;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value !== "string") return null;
+  const s = value.trim();
+  if (!s) return null;
+  for (const f of formats) {
+    if (!f) continue;
+    const m = moment(s, f, true);
+    if (m && typeof m.isValid === "function" && m.isValid()) return m.valueOf();
+  }
+  return null;
+}
+function resolveTimestamp(frontmatter, ctimeMs, moment, timeAttr, formats) {
+  if (timeAttr) {
+    const v = frontmatter[timeAttr];
+    if (v !== void 0 && v !== null) {
+      const ts = parseTimestamp(v, moment, formats);
+      if (ts !== null) return ts;
+    }
+  }
+  return ctimeMs;
+}
+function countRecent(items, opts) {
+  const { moment, timeAttr, formats, nowMs, days } = opts;
+  const cutoff = nowMs - Math.max(1, Math.floor(days || 1)) * DAY_MS;
+  let n = 0;
+  for (const item of items) {
+    if (!item.isMd) continue;
+    const ts = resolveTimestamp(item.frontmatter, item.ctimeMs, moment, timeAttr, formats);
+    if (ts >= cutoff) n++;
+  }
+  return n;
+}
+function extractLastChars(text, n) {
+  return [...text].slice(-n).join("");
+}
+function buildFrontmatter(vals, cfg) {
+  const timeStr = cfg.moment(vals.timestampMs).format(cfg.timeFormat);
+  return [
+    `${cfg.timestampAttr}: ${timeStr}`,
+    `${cfg.reviewAttr}: ${cfg.reviewDefault}`,
+    `${cfg.categoryAttr}: ${cfg.categoryDefault}`,
+    `${cfg.sourceAttr}: ${vals.source}`
+  ].join("\n");
+}
+function stripFrontmatter(content) {
+  if (content.startsWith("---")) {
+    const idx = content.indexOf("\n---", 3);
+    if (idx >= 0) {
+      let rest = content.slice(idx + 4);
+      if (rest.startsWith("\n")) rest = rest.slice(1);
+      return rest;
+    }
+  }
+  return content;
+}
+
+// src/core.ts
 var FALLBACK_FORMATS = ["YYYY-MM-DD", "YYYY.MM.DD", "YYYY/MM/DD"];
-var DAY_MS = 24 * 60 * 60 * 1e3;
+function formatsFor(plugin) {
+  const f = (plugin.settings.timeFormat || "").trim();
+  return [f, ...FALLBACK_FORMATS].filter((x, i, arr) => !!x && arr.indexOf(x) === i);
+}
+function frontmatterOf(app, file) {
+  var _a;
+  const cache = app.metadataCache.getFileCache(file);
+  return (_a = cache == null ? void 0 : cache.frontmatter) != null ? _a : {};
+}
+function appRequestUrl(app, params) {
+  return app.requestUrl(params);
+}
 function resolveSourceFolder(plugin) {
   const raw = (plugin.settings.sourceFolder || "/").trim();
-  const path = raw === "/" || raw === "" ? "" : raw.replace(/^\/+|\/+$/g, "");
-  const found = path ? plugin.app.vault.getAbstractFileByPath(path) : plugin.app.vault.getRoot();
-  return found instanceof import_obsidian.TFolder ? found : plugin.app.vault.getRoot();
+  if (raw === "/" || raw === "") return vaultRoot(plugin.app);
+  const p = raw.replace(/^\/+|\/+$/g, "");
+  const found = plugin.app.vault.getAbstractFileByPath(p);
+  return found instanceof import_obsidian.TFolder ? found : vaultRoot(plugin.app);
+}
+function vaultRoot(app) {
+  var _a;
+  const vault = app.vault;
+  if (typeof vault.getRoot === "function") {
+    const r = vault.getRoot();
+    if (r instanceof import_obsidian.TFolder) return r;
+  }
+  const byEmpty = app.vault.getAbstractFileByPath("");
+  return byEmpty instanceof import_obsidian.TFolder ? byEmpty : (_a = vault.getRoot) == null ? void 0 : _a.call(vault);
 }
 function getMarkdownFilesInFolder(folder) {
   const result = [];
@@ -75,65 +161,27 @@ function getMarkdownFilesInFolder(folder) {
   visit(folder);
   return result;
 }
-function frontmatterOf(app, file) {
-  var _a;
-  const cache = app.metadataCache.getFileCache(file);
-  return (_a = cache == null ? void 0 : cache.frontmatter) != null ? _a : {};
-}
-function tryParseTimestamp(value, format) {
-  if (typeof value === "string") {
-    const s = value.trim();
-    if (!s) return null;
-    const formats = [format, ...FALLBACK_FORMATS].filter(
-      (f, i, arr) => !!f && arr.indexOf(f) === i
-    );
-    for (const f of formats) {
-      const m = window.moment(s, f, true);
-      if (m && m.isValid()) return m.valueOf();
-    }
-    return null;
-  }
-  if (typeof value === "number") {
-    return value > 1e12 ? value : value * 1e3;
-  }
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-  return null;
-}
-function resolveTimestampMs(plugin, file) {
-  const prop = (plugin.settings.timePropertyName || "").trim();
-  if (prop) {
-    const value = frontmatterOf(plugin.app, file)[prop];
-    if (value !== void 0 && value !== null) {
-      const ts = tryParseTimestamp(value, plugin.settings.timeFormat);
-      if (ts !== null) return ts;
-    }
-  }
-  return file.stat.ctime;
-}
 function countRecentFiles(plugin) {
   const folder = resolveSourceFolder(plugin);
   const files = getMarkdownFilesInFolder(folder);
-  const days = Math.max(1, Math.floor(plugin.settings.recentDays || 7));
-  const cutoff = Date.now() - days * DAY_MS;
-  let count = 0;
-  for (const file of files) {
-    if (resolveTimestampMs(plugin, file) >= cutoff) count++;
-  }
-  return count;
-}
-function yamlScalar(value) {
-  const s = value != null ? value : "";
-  if (s === "" || /[\s:{}[\]"',#&*!|>%@`\\]/.test(s) || /^[\d.+-]+$/.test(s) || /^(true|false|null|yes|no|on|off)$/i.test(s) || /^\d{4}-\d{2}-\d{2}/.test(s)) {
-    return JSON.stringify(s);
-  }
-  return s;
+  const items = files.map((file) => ({
+    isMd: true,
+    frontmatter: frontmatterOf(plugin.app, file),
+    ctimeMs: file.stat.ctime
+  }));
+  return countRecent(items, {
+    moment: window.moment,
+    timeAttr: plugin.settings.timeAttr || "",
+    formats: formatsFor(plugin),
+    nowMs: Date.now(),
+    days: plugin.settings.recentDays
+  });
 }
 function joinOutputPath(folder, name) {
   const raw = (folder || "/").trim();
   const base = raw === "/" || raw === "" ? "" : raw.replace(/^\/+|\/+$/g, "");
-  return (0, import_obsidian.normalizePath)(base ? `${base}/${name}` : name);
+  const joined = base ? `${base}/${name}` : name;
+  return joined.replace(/\/+/g, "/").replace(/^\/+/, "");
 }
 async function ensureFolderExists(app, folder) {
   const raw = (folder || "/").trim();
@@ -153,26 +201,36 @@ async function outputLatestContent(plugin) {
     new import_obsidian.Notice("\u6E90\u6587\u4EF6\u5939\u4E2D\u6CA1\u6709\u53EF\u7528\u7684 Markdown \u6587\u4EF6");
     return "";
   }
+  const formats = formatsFor(plugin);
+  const timeAttr = plugin.settings.timeAttr || "";
+  const tsOf = (file) => resolveTimestamp(frontmatterOf(plugin.app, file), file.stat.ctime, window.moment, timeAttr, formats);
   let latest = files[0];
-  let latestTs = resolveTimestampMs(plugin, latest);
+  let latestTs = tsOf(latest);
   for (const file of files) {
-    const ts = resolveTimestampMs(plugin, file);
+    const ts = tsOf(file);
     if (ts > latestTs) {
       latestTs = ts;
       latest = file;
     }
   }
-  const body = await plugin.app.vault.read(latest);
-  const last100 = Array.from(body).slice(-100).join("");
+  const raw = await plugin.app.vault.read(latest);
+  const body = stripFrontmatter(raw);
+  const last100 = extractLastChars(body, 100);
   const now = window.moment();
-  const nowStr = now.format(plugin.settings.timeFormat);
-  const frontmatter = [
-    `${plugin.settings.timestampProperty}: ${yamlScalar(nowStr)}`,
-    `${plugin.settings.reviewStatusProperty}: ${yamlScalar(plugin.settings.reviewStatusValue)}`,
-    `${plugin.settings.categoryProperty}: ${yamlScalar(plugin.settings.categoryValue)}`,
-    `source: ${yamlScalar(latest.path)}`
-  ].join("\n");
-  const fileName = `${latest.basename}-\u6700\u65B0\u5185\u5BB9-${now.format("YYYYMMDD-HHmmss-SSS")}.md`;
+  const frontmatter = buildFrontmatter(
+    { source: latest.path, timestampMs: now.valueOf() },
+    {
+      timestampAttr: plugin.settings.timestampAttr,
+      reviewAttr: plugin.settings.reviewAttr,
+      reviewDefault: plugin.settings.reviewDefault,
+      categoryAttr: plugin.settings.categoryAttr,
+      categoryDefault: plugin.settings.categoryDefault,
+      sourceAttr: plugin.settings.sourceAttr,
+      moment: window.moment,
+      timeFormat: plugin.settings.timeFormat
+    }
+  );
+  const fileName = `${latest.basename}-\u6700\u65B0\u5185\u5BB9-${now.valueOf()}.md`;
   const outPath = joinOutputPath(plugin.settings.outputFolder, fileName);
   await ensureFolderExists(plugin.app, plugin.settings.outputFolder);
   await plugin.app.vault.create(outPath, `---
@@ -188,36 +246,37 @@ function mapHttpError(status) {
   if (status === 429) return "\u9650\u6D41";
   return `\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${status}\uFF09`;
 }
-async function fetchDeepSeekModels(plugin) {
-  var _a, _b;
-  const apiKey = (plugin.settings.apiKey || "").trim();
-  if (!apiKey) {
+async function fetchModelList(app, apiKey, baseUrl) {
+  var _a;
+  const key = (apiKey || "").trim();
+  if (!key) {
     const message = "\u8BF7\u5148\u586B\u5199 API Key";
     new import_obsidian.Notice(message);
-    return { ok: false, models: [], message };
+    return { ok: false, modelIds: [], message };
   }
-  const base = (plugin.settings.baseUrl || "https://api.deepseek.com").trim().replace(/\/+$/, "");
+  const base = (baseUrl || "https://api.deepseek.com").trim().replace(/\/+$/, "");
   try {
-    const res = await (0, import_obsidian.requestUrl)({
+    const res = await appRequestUrl(app, {
       url: `${base}/models`,
       method: "GET",
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: { Authorization: `Bearer ${key}` },
       throw: false
     });
+    const body = typeof res.json === "function" ? await res.json() : res.json;
     if (res.status >= 200 && res.status < 300) {
-      const data = (_a = res.json) == null ? void 0 : _a.data;
-      const models = Array.isArray(data) ? data.map((m) => m && typeof m.id === "string" ? m.id : "").filter((x) => x.length > 0) : [];
-      const message2 = models.length > 0 ? `\u6210\u529F\u83B7\u53D6 ${models.length} \u4E2A\u6A21\u578B` : "\u672A\u8FD4\u56DE\u4EFB\u4F55\u6A21\u578B";
+      const data = body == null ? void 0 : body.data;
+      const modelIds = Array.isArray(data) ? data.map((m) => m && typeof m.id === "string" ? m.id : "").filter((x) => x.length > 0) : [];
+      const message2 = modelIds.length > 0 ? `\u6210\u529F\u83B7\u53D6 ${modelIds.length} \u4E2A\u6A21\u578B` : "\u672A\u8FD4\u56DE\u4EFB\u4F55\u6A21\u578B";
       new import_obsidian.Notice(message2);
-      return { ok: true, models, message: message2 };
+      return { ok: true, modelIds, message: message2 };
     }
     const message = mapHttpError(res.status);
     new import_obsidian.Notice(message);
-    return { ok: false, models: [], message };
+    return { ok: false, modelIds: [], message };
   } catch (e) {
-    const message = "\u7F51\u7EDC\u9519\u8BEF\uFF1A" + ((_b = e == null ? void 0 : e.message) != null ? _b : "\u672A\u77E5\u9519\u8BEF");
+    const message = "\u7F51\u7EDC\u9519\u8BEF\uFF1A" + ((_a = e == null ? void 0 : e.message) != null ? _a : "\u672A\u77E5\u9519\u8BEF");
     new import_obsidian.Notice(message);
-    return { ok: false, models: [], message };
+    return { ok: false, modelIds: [], message };
   }
 }
 
@@ -363,7 +422,7 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     const bodyEl = this.createGroup(containerEl, "\u8FDE\u63A5", false);
     const apiKey = new import_obsidian4.Setting(bodyEl).setName("API Key").setDesc("DeepSeek \u6216\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684 API Key\uFF0C\u7528\u4E8E\u83B7\u53D6\u6A21\u578B\u5217\u8868\u3002").addText((text) => {
       text.inputEl.type = "password";
-      text.setPlaceholder("sk-...").setValue(this.plugin.settings.apiKey).onChange((value) => this.updateSetting("apiKey", value));
+      text.setPlaceholder("\u7C98\u8D34\u4F60\u7684 API Key").setValue(this.plugin.settings.apiKey).onChange((value) => this.updateSetting("apiKey", value));
     });
     this.markSearchable(apiKey, "\u8FDE\u63A5 api key API Key \u5BC6\u94A5");
     const test = new import_obsidian4.Setting(bodyEl).setName("\u6D4B\u8BD5\u5E76\u83B7\u53D6\u6A21\u578B").setDesc("\u8C03\u7528\u670D\u52A1\u5546 GET /models \u63A5\u53E3\uFF0C\u5E76\u586B\u5145\u4E0B\u65B9\u6A21\u578B\u4E0B\u62C9\u6846\u3002").addButton(
@@ -375,7 +434,7 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     const model = new import_obsidian4.Setting(bodyEl).setName("\u9ED8\u8BA4\u6A21\u578B").setDesc("\u53EF\u7528\u7684\u6A21\u578B\u5217\u8868\uFF08\u6765\u81EA\u670D\u52A1\u5546 /models \u63A5\u53E3\uFF09\u3002").addDropdown((drop) => {
       this.modelDropdown = drop;
       this.populateModelDropdown(drop);
-      drop.onChange((value) => this.updateSetting("defaultModel", value));
+      drop.onChange((value) => this.updateSetting("model", value));
     });
     this.markSearchable(model, "\u8FDE\u63A5 \u9ED8\u8BA4\u6A21\u578B \u4E0B\u62C9 \u6A21\u578B");
   }
@@ -387,7 +446,7 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     this.markSearchable(baseUrl, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546 base_url \u5730\u5740 base url");
     const customApiKey = new import_obsidian4.Setting(bodyEl).setName("API Key").setDesc("\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684 API Key\uFF08\u9884\u7559\uFF09\u3002").addText((text) => {
       text.inputEl.type = "password";
-      text.setPlaceholder("sk-...").setValue(this.plugin.settings.customApiKey).onChange((value) => this.updateSetting("customApiKey", value));
+      text.setPlaceholder("\u7C98\u8D34\u4F60\u7684 API Key").setValue(this.plugin.settings.customApiKey).onChange((value) => this.updateSetting("customApiKey", value));
     });
     this.markSearchable(customApiKey, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546 api_key \u5BC6\u94A5");
     const customModel = new import_obsidian4.Setting(bodyEl).setName("\u6A21\u578B").setDesc("\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684\u6A21\u578B ID\uFF08\u9884\u7559\uFF09\u3002").addText(
@@ -411,7 +470,7 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
   renderTimeGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u65F6\u95F4", false);
     const timeProp = new import_obsidian4.Setting(bodyEl).setName("\u65F6\u95F4\u5C5E\u6027\u540D").setDesc("\u8BFB\u53D6\u6587\u4EF6\u65F6\u95F4\u4F7F\u7528\u7684 frontmatter \u5C5E\u6027\u540D\uFF1B\u7559\u7A7A\u5219\u4F7F\u7528\u6587\u4EF6\u521B\u5EFA\u65F6\u95F4\u3002").addText(
-      (text) => text.setPlaceholder("\u5982\uFF1Adate").setValue(this.plugin.settings.timePropertyName).onChange((value) => this.updateSetting("timePropertyName", value))
+      (text) => text.setPlaceholder("\u5982\uFF1Adate").setValue(this.plugin.settings.timeAttr).onChange((value) => this.updateSetting("timeAttr", value))
     );
     this.markSearchable(timeProp, "\u65F6\u95F4 \u65F6\u95F4\u5C5E\u6027\u540D \u5C5E\u6027 \u5B57\u6BB5");
     const timeFormat = new import_obsidian4.Setting(bodyEl).setName("\u65F6\u95F4\u6233\u683C\u5F0F").setDesc("moment \u517C\u5BB9\u7684\u65F6\u95F4\u683C\u5F0F\uFF0C\u4F8B\u5982 YYYY-MM-DD\u3002").addText(
@@ -430,25 +489,29 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
   renderOutputGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u8F93\u51FA\u5C5E\u6027", false);
     const reviewProp = new import_obsidian4.Setting(bodyEl).setName("\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u540D\u3002").addText(
-      (text) => text.setPlaceholder("approved").setValue(this.plugin.settings.reviewStatusProperty).onChange((value) => this.updateSetting("reviewStatusProperty", value))
+      (text) => text.setPlaceholder("approved").setValue(this.plugin.settings.reviewAttr).onChange((value) => this.updateSetting("reviewAttr", value))
     );
     this.markSearchable(reviewProp, "\u8F93\u51FA\u5C5E\u6027 \u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u540D \u72B6\u6001");
     const reviewVal = new import_obsidian4.Setting(bodyEl).setName("\u5BA1\u6838\u72B6\u6001\u9ED8\u8BA4\u503C").setDesc("\u5199\u5165\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u7684\u9ED8\u8BA4\u503C\u3002").addText(
-      (text) => text.setValue(this.plugin.settings.reviewStatusValue).onChange((value) => this.updateSetting("reviewStatusValue", value))
+      (text) => text.setValue(this.plugin.settings.reviewDefault).onChange((value) => this.updateSetting("reviewDefault", value))
     );
     this.markSearchable(reviewVal, "\u8F93\u51FA\u5C5E\u6027 \u5BA1\u6838\u72B6\u6001\u9ED8\u8BA4\u503C");
     const categoryProp = new import_obsidian4.Setting(bodyEl).setName("\u5206\u7C7B\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u5206\u7C7B\u5C5E\u6027\u540D\u3002").addText(
-      (text) => text.setPlaceholder("category").setValue(this.plugin.settings.categoryProperty).onChange((value) => this.updateSetting("categoryProperty", value))
+      (text) => text.setPlaceholder("category").setValue(this.plugin.settings.categoryAttr).onChange((value) => this.updateSetting("categoryAttr", value))
     );
     this.markSearchable(categoryProp, "\u8F93\u51FA\u5C5E\u6027 \u5206\u7C7B\u5C5E\u6027\u540D \u5206\u7C7B");
     const categoryVal = new import_obsidian4.Setting(bodyEl).setName("\u5206\u7C7B\u9ED8\u8BA4\u503C").setDesc("\u5199\u5165\u5206\u7C7B\u5C5E\u6027\u7684\u9ED8\u8BA4\u503C\u3002").addText(
-      (text) => text.setValue(this.plugin.settings.categoryValue).onChange((value) => this.updateSetting("categoryValue", value))
+      (text) => text.setValue(this.plugin.settings.categoryDefault).onChange((value) => this.updateSetting("categoryDefault", value))
     );
     this.markSearchable(categoryVal, "\u8F93\u51FA\u5C5E\u6027 \u5206\u7C7B\u9ED8\u8BA4\u503C");
     const timestampProp = new import_obsidian4.Setting(bodyEl).setName("\u65F6\u95F4\u6233\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u5F53\u524D\u65F6\u95F4\u6233\u5C5E\u6027\u540D\u3002").addText(
-      (text) => text.setPlaceholder("created").setValue(this.plugin.settings.timestampProperty).onChange((value) => this.updateSetting("timestampProperty", value))
+      (text) => text.setPlaceholder("created").setValue(this.plugin.settings.timestampAttr).onChange((value) => this.updateSetting("timestampAttr", value))
     );
     this.markSearchable(timestampProp, "\u8F93\u51FA\u5C5E\u6027 \u65F6\u95F4\u6233\u5C5E\u6027\u540D created");
+    const sourceAttr = new import_obsidian4.Setting(bodyEl).setName("\u6765\u6E90\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u6765\u6E90\u8DEF\u5F84\u5C5E\u6027\u540D\u3002").addText(
+      (text) => text.setPlaceholder("source").setValue(this.plugin.settings.sourceAttr).onChange((value) => this.updateSetting("sourceAttr", value))
+    );
+    this.markSearchable(sourceAttr, "\u8F93\u51FA\u5C5E\u6027 \u6765\u6E90\u5C5E\u6027\u540D source");
   }
   // -------------------------------------------------------------------------
   // model fetching
@@ -465,15 +528,18 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     const options = {};
     for (const model of this.currentModels) options[model] = model;
     drop.addOptions(options);
-    const keep = this.plugin.settings.defaultModel;
+    const keep = this.plugin.settings.model;
     const value = this.currentModels.includes(keep) ? keep : this.currentModels[0];
     drop.setValue(value);
-    this.updateSetting("defaultModel", value);
+    this.updateSetting("model", value);
   }
   async refreshModels() {
-    const result = await fetchDeepSeekModels(this.plugin);
+    const result = await this.plugin.fetchModels(
+      this.plugin.settings.apiKey,
+      this.plugin.settings.baseUrl
+    );
     if (result.ok) {
-      this.currentModels = result.models;
+      this.currentModels = result.modelIds;
       if (this.modelDropdown) this.populateModelDropdown(this.modelDropdown);
     }
   }
@@ -495,5 +561,23 @@ var KnowledgeSystemPlugin2 = class extends import_obsidian5.Plugin {
   }
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+  /**
+   * Fetch the provider's model list (GET /models). Exposed as a public method
+   * so the settings tab button and the acceptance harness both call it. On
+   * success the returned ids are also persisted onto the settings.
+   */
+  async fetchModels(apiKey, baseUrl) {
+    const result = await fetchModelList(
+      this.app,
+      apiKey || this.settings.apiKey,
+      baseUrl || this.settings.baseUrl
+    );
+    if (result.ok) {
+      this.settings.models = result.modelIds;
+      if (result.modelIds.length > 0) this.settings.model = result.modelIds[0];
+      await this.saveSettings();
+    }
+    return result;
   }
 };

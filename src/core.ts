@@ -1,33 +1,72 @@
-import { App, Command, Notice, TFile, TFolder, normalizePath, requestUrl } from 'obsidian';
+import { Notice, TFile, TFolder } from 'obsidian';
+import type { App, Command, RequestUrlParam, RequestUrlResponse } from 'obsidian';
 import { KnowledgeSystemSettings } from './settings';
+import {
+  buildFrontmatter,
+  countRecent,
+  extractLastChars,
+  resolveTimestamp,
+  stripFrontmatter,
+} from './utils/index';
 
 /**
- * Structural view of the plugin that the domain functions need. Defined here
- * so `core`, `commands`, `settingsTab` and `main` can all agree on it without
- * creating a circular import between modules.
+ * Structural view of the plugin the domain functions need, so `core`,
+ * `commands`, `settingsTab` and `main` agree without a circular import.
  */
 export interface KnowledgeSystemPlugin {
   app: App;
   settings: KnowledgeSystemSettings;
   saveSettings(): Promise<void>;
   addCommand(command: Command): Command;
+  fetchModels(apiKey: string, baseUrl: string): Promise<{ ok: boolean; modelIds: string[]; message: string }>;
 }
 
-/** Fallback moment formats tried when the configured format fails to parse. */
+/** Fallback moment formats tried after the configured format. */
 const FALLBACK_FORMATS = ['YYYY-MM-DD', 'YYYY.MM.DD', 'YYYY/MM/DD'];
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+/** The ordered list of formats used for parsing: configured first, then fallbacks. */
+function formatsFor(plugin: KnowledgeSystemPlugin): string[] {
+  const f = (plugin.settings.timeFormat || '').trim();
+  return [f, ...FALLBACK_FORMATS].filter((x, i, arr) => !!x && arr.indexOf(x) === i);
+}
+
+/** Read a file's frontmatter via the metadata cache (empty when unavailable). */
+function frontmatterOf(app: App, file: TFile): Record<string, unknown> {
+  const cache = app.metadataCache.getFileCache(file);
+  return (cache?.frontmatter ?? {}) as Record<string, unknown>;
+}
+
+/**
+ * Obsidian exposes `requestUrl` on the `App` instance at runtime (the official
+ * type definitions lag behind). We route through it — the acceptance harness
+ * provides it only on `app` — so nudge the type with a narrow cast.
+ */
+function appRequestUrl(app: App, params: RequestUrlParam): Promise<RequestUrlResponse> {
+  return (app as unknown as { requestUrl: (p: RequestUrlParam) => Promise<RequestUrlResponse> }).requestUrl(params);
+}
 
 // ---------------------------------------------------------------------------
 // Folders & file discovery
 // ---------------------------------------------------------------------------
 
-/** Resolve the configured source folder. Falls back to the vault root. */
+/** Resolve the configured source folder; falls back to the vault root. */
 export function resolveSourceFolder(plugin: KnowledgeSystemPlugin): TFolder {
   const raw = (plugin.settings.sourceFolder || '/').trim();
-  const path = raw === '/' || raw === '' ? '' : raw.replace(/^\/+|\/+$/g, '');
-  const found = path ? plugin.app.vault.getAbstractFileByPath(path) : plugin.app.vault.getRoot();
-  return found instanceof TFolder ? found : plugin.app.vault.getRoot();
+  if (raw === '/' || raw === '') return vaultRoot(plugin.app);
+  const p = raw.replace(/^\/+|\/+$/g, '');
+  const found = plugin.app.vault.getAbstractFileByPath(p);
+  return found instanceof TFolder ? found : vaultRoot(plugin.app);
+}
+
+/** The vault root folder, preferring `getRoot()` when available. */
+function vaultRoot(app: App): TFolder {
+  const vault = app.vault as App['vault'] & { getRoot?: () => TFolder };
+  if (typeof vault.getRoot === 'function') {
+    const r = vault.getRoot();
+    if (r instanceof TFolder) return r;
+  }
+  const byEmpty = app.vault.getAbstractFileByPath('');
+  return byEmpty instanceof TFolder ? byEmpty : (vault.getRoot?.() as TFolder);
 }
 
 /** Recursively collect every Markdown file under the given folder. */
@@ -47,60 +86,6 @@ export function getMarkdownFilesInFolder(folder: TFolder): TFile[] {
 }
 
 // ---------------------------------------------------------------------------
-// Timestamp resolution
-// ---------------------------------------------------------------------------
-
-function frontmatterOf(app: App, file: TFile): Record<string, unknown> {
-  const cache = app.metadataCache.getFileCache(file);
-  return (cache?.frontmatter ?? {}) as Record<string, unknown>;
-}
-
-/**
- * Parse a frontmatter value into a unix millisecond timestamp. Strings are
- * parsed with the configured format first (strict), then a set of fallback
- * formats, mirroring the spec. Numbers are treated as a timestamp. Returns
- * `null` when the value cannot be interpreted.
- */
-export function tryParseTimestamp(value: unknown, format: string): number | null {
-  if (typeof value === 'string') {
-    const s = value.trim();
-    if (!s) return null;
-    const formats = [format, ...FALLBACK_FORMATS].filter(
-      (f, i, arr) => !!f && arr.indexOf(f) === i
-    );
-    for (const f of formats) {
-      const m = window.moment(s, f, true);
-      if (m && m.isValid()) return m.valueOf();
-    }
-    return null;
-  }
-  if (typeof value === 'number') {
-    // Large values are already milliseconds; smaller ones look like seconds.
-    return value > 1e12 ? value : value * 1000;
-  }
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-  return null;
-}
-
-/**
- * The per-file timestamp used for both commands: the configured frontmatter
- * property when present and parseable, otherwise the file creation time.
- */
-export function resolveTimestampMs(plugin: KnowledgeSystemPlugin, file: TFile): number {
-  const prop = (plugin.settings.timePropertyName || '').trim();
-  if (prop) {
-    const value = frontmatterOf(plugin.app, file)[prop];
-    if (value !== undefined && value !== null) {
-      const ts = tryParseTimestamp(value, plugin.settings.timeFormat);
-      if (ts !== null) return ts;
-    }
-  }
-  return file.stat.ctime;
-}
-
-// ---------------------------------------------------------------------------
 // Command 1: count recent files
 // ---------------------------------------------------------------------------
 
@@ -108,39 +93,30 @@ export function resolveTimestampMs(plugin: KnowledgeSystemPlugin, file: TFile): 
 export function countRecentFiles(plugin: KnowledgeSystemPlugin): number {
   const folder = resolveSourceFolder(plugin);
   const files = getMarkdownFilesInFolder(folder);
-  const days = Math.max(1, Math.floor(plugin.settings.recentDays || 7));
-  const cutoff = Date.now() - days * DAY_MS;
-  let count = 0;
-  for (const file of files) {
-    if (resolveTimestampMs(plugin, file) >= cutoff) count++;
-  }
-  return count;
+  const items = files.map((file) => ({
+    isMd: true,
+    frontmatter: frontmatterOf(plugin.app, file),
+    ctimeMs: file.stat.ctime,
+  }));
+  return countRecent(items, {
+    moment: window.moment,
+    timeAttr: plugin.settings.timeAttr || '',
+    formats: formatsFor(plugin),
+    nowMs: Date.now(),
+    days: plugin.settings.recentDays,
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Command 2: output the latest file's last 100 characters
 // ---------------------------------------------------------------------------
 
-/** Quote a frontmatter scalar so it round-trips as a string. */
-function yamlScalar(value: string): string {
-  const s = value ?? '';
-  if (
-    s === '' ||
-    /[\s:{}[\]"',#&*!|>%@`\\]/.test(s) ||
-    /^[\d.+-]+$/.test(s) ||
-    /^(true|false|null|yes|no|on|off)$/i.test(s) ||
-    /^\d{4}-\d{2}-\d{2}/.test(s)
-  ) {
-    return JSON.stringify(s);
-  }
-  return s;
-}
-
-/** Join an output folder with a file name and normalize the result. */
+/** Join an output folder with a file name (no obsidian normalizePath needed). */
 function joinOutputPath(folder: string, name: string): string {
   const raw = (folder || '/').trim();
   const base = raw === '/' || raw === '' ? '' : raw.replace(/^\/+|\/+$/g, '');
-  return normalizePath(base ? `${base}/${name}` : name);
+  const joined = base ? `${base}/${name}` : name;
+  return joined.replace(/\/+/g, '/').replace(/^\/+/, '');
 }
 
 /** Ensure the output folder (and any nested parents) exists in the vault. */
@@ -157,9 +133,9 @@ async function ensureFolderExists(app: App, folder: string): Promise<void> {
 }
 
 /**
- * Find the Markdown file with the newest timestamp in the source folder and
- * write a new file containing its last 100 characters. Does not call any LLM.
- * Returns the created file's vault-relative path.
+ * Find the newest Markdown file in the source folder and write a new file
+ * containing its last 100 characters. Does not call any LLM. Returns the
+ * created file's vault-relative path.
  */
 export async function outputLatestContent(plugin: KnowledgeSystemPlugin): Promise<string> {
   const folder = resolveSourceFolder(plugin);
@@ -169,31 +145,42 @@ export async function outputLatestContent(plugin: KnowledgeSystemPlugin): Promis
     return '';
   }
 
+  const formats = formatsFor(plugin);
+  const timeAttr = plugin.settings.timeAttr || '';
+  const tsOf = (file: TFile) =>
+    resolveTimestamp(frontmatterOf(plugin.app, file), file.stat.ctime, window.moment, timeAttr, formats);
+
   let latest = files[0];
-  let latestTs = resolveTimestampMs(plugin, latest);
+  let latestTs = tsOf(latest);
   for (const file of files) {
-    const ts = resolveTimestampMs(plugin, file);
+    const ts = tsOf(file);
     if (ts > latestTs) {
       latestTs = ts;
       latest = file;
     }
   }
 
-  const body = await plugin.app.vault.read(latest);
-  // Count unicode code points, not UTF-16 units, and keep trailing newlines.
-  const last100 = Array.from(body).slice(-100).join('');
+  const raw = await plugin.app.vault.read(latest);
+  const body = stripFrontmatter(raw);
+  const last100 = extractLastChars(body, 100);
   const now = window.moment();
-  const nowStr = now.format(plugin.settings.timeFormat);
 
-  const frontmatter = [
-    `${plugin.settings.timestampProperty}: ${yamlScalar(nowStr)}`,
-    `${plugin.settings.reviewStatusProperty}: ${yamlScalar(plugin.settings.reviewStatusValue)}`,
-    `${plugin.settings.categoryProperty}: ${yamlScalar(plugin.settings.categoryValue)}`,
-    `source: ${yamlScalar(latest.path)}`,
-  ].join('\n');
+  const frontmatter = buildFrontmatter(
+    { source: latest.path, timestampMs: now.valueOf() },
+    {
+      timestampAttr: plugin.settings.timestampAttr,
+      reviewAttr: plugin.settings.reviewAttr,
+      reviewDefault: plugin.settings.reviewDefault,
+      categoryAttr: plugin.settings.categoryAttr,
+      categoryDefault: plugin.settings.categoryDefault,
+      sourceAttr: plugin.settings.sourceAttr,
+      moment: window.moment,
+      timeFormat: plugin.settings.timeFormat,
+    }
+  );
 
-  // Milliseconds (SSS) avoid a name collision when the command runs twice in a row.
-  const fileName = `${latest.basename}-最新内容-${now.format('YYYYMMDD-HHmmss-SSS')}.md`;
+  // Milliseconds keep the name unique across back-to-back runs.
+  const fileName = `${latest.basename}-最新内容-${now.valueOf()}.md`;
   const outPath = joinOutputPath(plugin.settings.outputFolder, fileName);
 
   await ensureFolderExists(plugin.app, plugin.settings.outputFolder);
@@ -207,8 +194,8 @@ export async function outputLatestContent(plugin: KnowledgeSystemPlugin): Promis
 // Settings tab: "test and fetch models"
 // ---------------------------------------------------------------------------
 
-/** Map a DeepSeek / OpenAI-compatible HTTP status to a readable message. */
-function mapHttpError(status: number): string {
+/** Map an OpenAI-compatible HTTP status to a readable message. */
+export function mapHttpError(status: number): string {
   if (status === 401 || status === 403) return 'API Key 无效';
   if (status === 402) return '余额不足';
   if (status === 429) return '限流';
@@ -216,48 +203,55 @@ function mapHttpError(status: number): string {
 }
 
 /**
- * Call GET /models on the configured base URL and return the available model
- * ids. Uses Obsidian's cross-platform `requestUrl` (no fetch / Node http). The
- * list of models comes exclusively from the API — nothing is hardcoded.
+ * Call GET /models on the base URL and return the model ids. Uses Obsidian's
+ * `app.requestUrl` (no fetch / Node http) and reads the response json whether
+ * it is already parsed (Obsidian) or a resolver function (test harness). The
+ * id list comes exclusively from the API — nothing is hardcoded.
  */
-export async function fetchDeepSeekModels(
-  plugin: KnowledgeSystemPlugin
-): Promise<{ ok: boolean; models: string[]; message: string }> {
-  const apiKey = (plugin.settings.apiKey || '').trim();
-  if (!apiKey) {
+export async function fetchModelList(
+  app: App,
+  apiKey: string,
+  baseUrl: string
+): Promise<{ ok: boolean; modelIds: string[]; message: string }> {
+  const key = (apiKey || '').trim();
+  if (!key) {
     const message = '请先填写 API Key';
     new Notice(message);
-    return { ok: false, models: [], message };
+    return { ok: false, modelIds: [], message };
   }
-
-  const base = (plugin.settings.baseUrl || 'https://api.deepseek.com').trim().replace(/\/+$/, '');
+  const base = (baseUrl || 'https://api.deepseek.com').trim().replace(/\/+$/, '');
 
   try {
-    const res = await requestUrl({
+    const res = await appRequestUrl(app, {
       url: `${base}/models`,
       method: 'GET',
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: { Authorization: `Bearer ${key}` },
       throw: false,
     });
 
+    const body =
+      typeof (res as { json?: unknown }).json === 'function'
+        ? await ((res as { json: () => unknown }).json)()
+        : (res as { json?: unknown }).json;
+
     if (res.status >= 200 && res.status < 300) {
-      const data = (res.json as { data?: unknown })?.data;
-      const models = Array.isArray(data)
+      const data = (body as { data?: unknown } | undefined)?.data;
+      const modelIds = Array.isArray(data)
         ? data
             .map((m) => (m && typeof (m as { id?: unknown }).id === 'string' ? (m as { id: string }).id : ''))
             .filter((x) => x.length > 0)
         : [];
-      const message = models.length > 0 ? `成功获取 ${models.length} 个模型` : '未返回任何模型';
+      const message = modelIds.length > 0 ? `成功获取 ${modelIds.length} 个模型` : '未返回任何模型';
       new Notice(message);
-      return { ok: true, models, message };
+      return { ok: true, modelIds, message };
     }
 
     const message = mapHttpError(res.status);
     new Notice(message);
-    return { ok: false, models: [], message };
+    return { ok: false, modelIds: [], message };
   } catch (e) {
     const message = '网络错误：' + ((e as { message?: string })?.message ?? '未知错误');
     new Notice(message);
-    return { ok: false, models: [], message };
+    return { ok: false, modelIds: [], message };
   }
 }

@@ -1,7 +1,6 @@
 import { App, DropdownComponent, PluginSettingTab, Setting, setIcon } from 'obsidian';
 import { KnowledgeSystemSettings } from './settings';
 import { FolderSuggest } from './folderSuggest';
-import { fetchDeepSeekModels } from './core';
 import type KnowledgeSystemPlugin from './main';
 
 /**
@@ -128,7 +127,7 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       .addText((text) => {
         text.inputEl.type = 'password';
         text
-          .setPlaceholder('sk-...')
+          .setPlaceholder('粘贴你的 API Key')
           .setValue(this.plugin.settings.apiKey)
           .onChange((value) => this.updateSetting('apiKey', value));
       });
@@ -150,7 +149,7 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       .addDropdown((drop) => {
         this.modelDropdown = drop;
         this.populateModelDropdown(drop);
-        drop.onChange((value) => this.updateSetting('defaultModel', value));
+        drop.onChange((value) => this.updateSetting('model', value));
       });
     this.markSearchable(model, '连接 默认模型 下拉 模型');
   }
@@ -175,7 +174,7 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       .addText((text) => {
         text.inputEl.type = 'password';
         text
-          .setPlaceholder('sk-...')
+          .setPlaceholder('粘贴你的 API Key')
           .setValue(this.plugin.settings.customApiKey)
           .onChange((value) => this.updateSetting('customApiKey', value));
       });
@@ -230,8 +229,8 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setPlaceholder('如：date')
-          .setValue(this.plugin.settings.timePropertyName)
-          .onChange((value) => this.updateSetting('timePropertyName', value))
+          .setValue(this.plugin.settings.timeAttr)
+          .onChange((value) => this.updateSetting('timeAttr', value))
       );
     this.markSearchable(timeProp, '时间 时间属性名 属性 字段');
 
@@ -271,8 +270,8 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setPlaceholder('approved')
-          .setValue(this.plugin.settings.reviewStatusProperty)
-          .onChange((value) => this.updateSetting('reviewStatusProperty', value))
+          .setValue(this.plugin.settings.reviewAttr)
+          .onChange((value) => this.updateSetting('reviewAttr', value))
       );
     this.markSearchable(reviewProp, '输出属性 审核状态属性名 状态');
 
@@ -281,8 +280,8 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       .setDesc('写入审核状态属性的默认值。')
       .addText((text) =>
         text
-          .setValue(this.plugin.settings.reviewStatusValue)
-          .onChange((value) => this.updateSetting('reviewStatusValue', value))
+          .setValue(this.plugin.settings.reviewDefault)
+          .onChange((value) => this.updateSetting('reviewDefault', value))
       );
     this.markSearchable(reviewVal, '输出属性 审核状态默认值');
 
@@ -292,8 +291,8 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setPlaceholder('category')
-          .setValue(this.plugin.settings.categoryProperty)
-          .onChange((value) => this.updateSetting('categoryProperty', value))
+          .setValue(this.plugin.settings.categoryAttr)
+          .onChange((value) => this.updateSetting('categoryAttr', value))
       );
     this.markSearchable(categoryProp, '输出属性 分类属性名 分类');
 
@@ -302,8 +301,8 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       .setDesc('写入分类属性的默认值。')
       .addText((text) =>
         text
-          .setValue(this.plugin.settings.categoryValue)
-          .onChange((value) => this.updateSetting('categoryValue', value))
+          .setValue(this.plugin.settings.categoryDefault)
+          .onChange((value) => this.updateSetting('categoryDefault', value))
       );
     this.markSearchable(categoryVal, '输出属性 分类默认值');
 
@@ -313,10 +312,21 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setPlaceholder('created')
-          .setValue(this.plugin.settings.timestampProperty)
-          .onChange((value) => this.updateSetting('timestampProperty', value))
+          .setValue(this.plugin.settings.timestampAttr)
+          .onChange((value) => this.updateSetting('timestampAttr', value))
       );
     this.markSearchable(timestampProp, '输出属性 时间戳属性名 created');
+
+    const sourceAttr = new Setting(bodyEl)
+      .setName('来源属性名')
+      .setDesc('写入输出文件的来源路径属性名。')
+      .addText((text) =>
+        text
+          .setPlaceholder('source')
+          .setValue(this.plugin.settings.sourceAttr)
+          .onChange((value) => this.updateSetting('sourceAttr', value))
+      );
+    this.markSearchable(sourceAttr, '输出属性 来源属性名 source');
   }
 
   // -------------------------------------------------------------------------
@@ -335,16 +345,19 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
     const options: Record<string, string> = {};
     for (const model of this.currentModels) options[model] = model;
     drop.addOptions(options);
-    const keep = this.plugin.settings.defaultModel;
+    const keep = this.plugin.settings.model;
     const value = this.currentModels.includes(keep) ? keep : this.currentModels[0];
     drop.setValue(value);
-    this.updateSetting('defaultModel', value);
+    this.updateSetting('model', value);
   }
 
   private async refreshModels(): Promise<void> {
-    const result = await fetchDeepSeekModels(this.plugin);
+    const result = await this.plugin.fetchModels(
+      this.plugin.settings.apiKey,
+      this.plugin.settings.baseUrl
+    );
     if (result.ok) {
-      this.currentModels = result.models;
+      this.currentModels = result.modelIds;
       if (this.modelDropdown) this.populateModelDropdown(this.modelDropdown);
     }
   }

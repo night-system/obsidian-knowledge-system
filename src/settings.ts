@@ -1,60 +1,65 @@
 /**
  * Persisted plugin settings and their defaults.
  *
- * Every property that influences how source/output files are interpreted is
- * user-configurable, so the plugin can be adapted to an existing vault with
- * arbitrary frontmatter property names instead of hardcoding them.
+ * The key names are part of the acceptance contract (the acceptance scripts set
+ * `plugin.settings` directly with these exact keys — see 验收标准文档). Do not
+ * rename them. Every attribute name that drives source/output interpretation is
+ * user-configurable so the plugin adapts to an existing vault instead of
+ * hardcoding frontmatter property names.
  */
 export interface KnowledgeSystemSettings {
-  /** Main DeepSeek API key (masked text input in the UI). */
+  /** Main provider API key (masked text input). */
   apiKey: string;
-  /** Selected model id. Options come exclusively from the /models endpoint. */
-  defaultModel: string;
-  /** Base URL of the (OpenAI-compatible) provider. Defaults to DeepSeek. */
+  /** Base URL of the OpenAI-compatible provider. Defaults to DeepSeek. */
   baseUrl: string;
-  /** Custom provider override: API key (stored for future phases). */
-  customApiKey: string;
-  /** Custom provider override: model id (stored for future phases). */
-  customModel: string;
+  /** Selected default model id (from the /models endpoint). */
+  model: string;
+  /** Full model list returned by the /models endpoint. */
+  models: string[];
   /** Folder scanned by the "count recent files" command. */
   sourceFolder: string;
   /** Folder where the "output latest content" command writes files. */
   outputFolder: string;
-  /**
-   * Frontmatter property holding each file's timestamp. Empty means "use the
-   * file creation time (ctime)".
-   */
-  timePropertyName: string;
-  /** moment-compatible format string used to parse / write timestamps. */
+  /** Frontmatter attribute holding each file's timestamp; empty = use ctime. */
+  timeAttr: string;
+  /** moment-compatible format string (parse + write timestamps). */
   timeFormat: string;
   /** How many days back the "count recent files" command looks. */
   recentDays: number;
-  /** Frontmatter property holding the review/审核 status. */
-  reviewStatusProperty: string;
-  /** Default value written to the review status property. */
-  reviewStatusValue: string;
-  /** Frontmatter property holding the category/分类. */
-  categoryProperty: string;
-  /** Default value written to the category property. */
-  categoryValue: string;
-  /** Frontmatter property holding the output timestamp. */
-  timestampProperty: string;
+  /** Frontmatter attribute holding the review/审核 status. */
+  reviewAttr: string;
+  /** Default value written to the review status attribute. */
+  reviewDefault: string;
+  /** Frontmatter attribute holding the category/分类. */
+  categoryAttr: string;
+  /** Default value written to the category attribute. */
+  categoryDefault: string;
+  /** Frontmatter attribute holding the output timestamp. */
+  timestampAttr: string;
+  /** Frontmatter attribute holding the source file path. */
+  sourceAttr: string;
+  /** Custom-provider API key (stored for future phases; UI only). */
+  customApiKey: string;
+  /** Custom-provider model id (stored for future phases; UI only). */
+  customModel: string;
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   apiKey: '',
-  defaultModel: '',
   baseUrl: 'https://api.deepseek.com',
-  customApiKey: '',
-  customModel: '',
+  model: '',
+  models: [],
   sourceFolder: '/',
   outputFolder: '/',
-  timePropertyName: '',
+  timeAttr: '',
   timeFormat: 'YYYY-MM-DD',
   recentDays: 7,
-  reviewStatusProperty: 'approved',
-  reviewStatusValue: '未审',
-  categoryProperty: 'category',
-  categoryValue: '未分类',
-  timestampProperty: 'created',
+  reviewAttr: 'approved',
+  reviewDefault: '未审',
+  categoryAttr: 'category',
+  categoryDefault: '未分类',
+  timestampAttr: 'created',
+  sourceAttr: 'source',
+  customApiKey: '',
+  customModel: '',
 };

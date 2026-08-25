@@ -59,16 +59,6 @@ export function parseAnthropicSSE(lines: string[]): AnthropicSSEEvent[] {
   return out;
 }
 
-/**
- * Whether the chat should stream (Anthropic `stream:true`). Obsidian's mobile
- * `requestUrl` (Capacitor) cannot parse a chunked SSE body — it JSON-parses the
- * whole response and breaks mid-stream with "Unexpected end of JSON input" — so
- * on mobile we fall back to a non-streaming request.
- */
-export function shouldStream(isMobile: boolean): boolean {
-  return !isMobile;
-}
-
 /** A normalized Anthropic content block used by the chat UI. */
 export interface AnthropicBlock {
   type: 'thinking' | 'text' | 'tool_use';
@@ -90,8 +80,7 @@ export interface AnthropicNonStreamResult {
 /**
  * Parse a non-streaming Anthropic message response body (`{ content: [...],
  * stop_reason, usage }`) into the normalized block sequence the chat UI renders,
- * plus the terminal `stop_reason`. Used on mobile, where `requestUrl` cannot
- * stream (see `shouldStream`).
+ * plus the terminal `stop_reason`. Used for the non-streaming fallback path.
  */
 export function parseAnthropicResponse(json: unknown): AnthropicNonStreamResult {
   const obj = json && typeof json === 'object' ? (json as any) : {};

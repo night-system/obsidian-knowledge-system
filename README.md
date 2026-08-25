@@ -1,13 +1,15 @@
 # obsidian-knowledge-system
 
-配置驱动的 AI 知识系统框架。v0.4.0 实现**真正逐字流式渲染**：改为**边读边解析边渲染**（增量 SSE 解析器 + 120ms 节流 + 持久容器低闪烁增量 DOM），AI 回复逐词冒出、不再「一大段一大段出现」，并升级**聊天 UI**（气泡化输入条、lucide 图标、AI/模型徽标、流式光标、思考块闪烁、移动端触控）；`create_note` 支持**属性规则**配置（见设置页）。v0.3.2 增加 **Base URL 端点自动探测**：聊天端点自动探测 `/anthropic` 前缀（DeepSeek 官方 `https://api.deepseek.com/anthropic`），模型列表自动探测根端点，404 时**自动纠偏并回写设置**，并在聊天页显示**一键可复制的诊断错误**。v0.3.1 接入 **Anthropic 兼容协议**（`POST {baseUrl}/v1/messages`，`x-api-key`）、**内置工具集**（`list_recent_notes` / `read_note` / `create_note`）、**AI 聊天视图**与「测试任务」按钮；聊天用**原生 `fetch` 流式**（桌面 Electron + 移动端 WebView 均可，端点 CORS 已放行），**兼容性不佳时自动降级为非流式**（`requestUrl` + `stream:false`）；v0.2.0 起还含独立**设置视图**、**动态输出属性**、**测试工具**标签页。
+配置驱动的 AI 知识系统框架。v0.5.0：**流式期间直接渲染 markdown**（180ms 节流，第一次输出就是 markdown）+ **首 token（TTFT）检测点**（`[ks-stream]` 增 `ttfbMs`/`firstEventMs`）+ **聊天 UI 认真照抄 dsh**（用户气泡胶囊 / 无边框 AI 叙述 / 输入卡片 22px / 时间戳 hover 显现 / 流式状态行 shimmer / 思考块扫光）+ **默认模型建议标注**；v0.4.0 实现**真正逐字流式渲染**：改为**边读边解析边渲染**（增量 SSE 解析器 + 120ms 节流 + 持久容器低闪烁增量 DOM），AI 回复逐词冒出、不再「一大段一大段出现」，并升级**聊天 UI**（气泡化输入条、lucide 图标、AI/模型徽标、流式光标、思考块闪烁、移动端触控）；`create_note` 支持**属性规则**配置（见设置页）。v0.3.2 增加 **Base URL 端点自动探测**：聊天端点自动探测 `/anthropic` 前缀（DeepSeek 官方 `https://api.deepseek.com/anthropic`），模型列表自动探测根端点，404 时**自动纠偏并回写设置**，并在聊天页显示**一键可复制的诊断错误**。v0.3.1 接入 **Anthropic 兼容协议**（`POST {baseUrl}/v1/messages`，`x-api-key`）、**内置工具集**（`list_recent_notes` / `read_note` / `create_note`）、**AI 聊天视图**与「测试任务」按钮；聊天用**原生 `fetch` 流式**（桌面 Electron + 移动端 WebView 均可，端点 CORS 已放行），**兼容性不佳时自动降级为非流式**（`requestUrl` + `stream:false`）；v0.2.0 起还含独立**设置视图**、**动态输出属性**、**测试工具**标签页。
 
 ---
 
 ## 功能简介
 
-- **AI 聊天视图**：命令面板 "Open Knowledge System chat" 在中间标签页打开聊天，气泡式用户/助手消息，助手用 markdown 渲染，**thinking 块可折叠**，**tool_use 工具卡片**（名称 + 参数摘要 + 结果），支持多轮 tool_use/tool_result 往返，出错在 UI 内显示错误气泡。**真正逐字流式渲染**（`stream:true` 时用增量 SSE 解析器**边读边解析边渲染**，120ms 节流 + 持久容器低闪烁增量 DOM，AI 回复逐词冒出；文本块流式期间只更新纯文本 `textContent`，块结算时才 MarkdownRenderer 渲染一次）；**非流式/不支持自动回退 `requestUrl` 非流式**（复用同一 UI 渲染）。
+- **AI 聊天视图**：命令面板 "Open Knowledge System chat" 在中间标签页打开聊天，气泡式用户/助手消息，助手用 markdown 渲染，**thinking 块可折叠**，**tool_use 工具卡片**（名称 + 参数摘要 + 结果），支持多轮 tool_use/tool_result 往返，出错在 UI 内显示错误气泡。**真正逐字流式渲染 + 流式期间直接 markdown（v0.5.0）**（`stream:true` 时用增量 SSE 解析器**边读边解析边渲染**，AI 回复逐词冒出；文本块流式期间用 **180ms 节流 MarkdownRenderer 直接渲染 markdown**——**第一次输出就是 markdown**，块结算时立即渲染终稿并冻结，不再「先纯文本、结束后才变 markdown」）；**非流式/不支持自动回退 `requestUrl` 非流式**（复用同一 UI 渲染）。
 - **聊天 UI 美化（v0.4.0）**：输入条**卡片化**（带边框圆角 + 圆形发送/停止钮 `interactive-accent` + 测试钮）+ 输入框透明无边框自动增高（`font-size:16px` 防 iOS 缩放）；消息带 **AI/模型徽标**（lucide `bot` 图标）与「你」头行；**流式光标**（`|` 闪烁）在 AI 生成时显示；**思考块**流式时 body 尾加闪烁「…」（lucide `brain` 图标）；移动端收紧间距并放大按钮触控；一律使用 Obsidian 变量与 lucide 图标（无 emoji、无硬编码颜色）。
+- **聊天 UI 认真照抄 dsh（v0.5.0）**：**用户气泡**右对齐胶囊（r22px、蓝底 `--background-modifier-hover` 主题自适应、padding 10/16、font 16/24、`max-width:min(525px,82%)`）；**AI 消息**无气泡/无边线/无头像、全栏宽纯文本叙述（font 16/28）；消息列 `max-width:748px; margin:0 auto; gap:16px`；输入卡片 `border-radius:22px` + 1px 边框 + 阴影；发送钮 34×34 圆（`interactive-accent`，disabled opacity .4）；**消息时间戳** `font 14/24`、`--text-faint`、hover 才显现（80ms，触屏常显）；**AI 流式状态行**（输入栏上方，蓝色 shimmer）；**思考块 running 态 300px 扫光**；保留流式光标（用户已习惯）与之并存。
+- **首 token（TTFT）检测点（v0.5.0）**：`[ks-stream]` 增加 `ttfbMs`（首个成功候选 fetch 返回响应头，≈网络首字节）、`firstEventMs`（首个 SSE 事件，≈首个 token 到达）、`model`、`toolsCount`；**默认模型建议**：模型下拉名标注 `deepseek-v4-flash（最快）` / `deepseek-v4-pro（质量）`。**首 token 慢多半是 iOS 网络栈缓冲**（服务端 TTFB ≤0.5s，慢在客户端）；反馈首 token 慢问题时请附 DevTools 的 console `[ks-stream]` 输出。
 - **Anthropic 兼容协议**：调用 `POST {settings.baseUrl}/v1/messages`，请求头 `x-api-key: <key>` + `anthropic-version: 2023-06-01`；`baseUrl` 默认 `https://api.deepseek.com/anthropic`。
 - **内置工具集**（供 AI 调用）：`list_recent_notes`（浏览源文件夹最近笔记）、`read_note`（读取笔记正文，去 YAML）、`create_note`（在输出文件夹创建笔记，防路径穿越）。
 - **测试任务按钮**：在聊天视图一键发送内置中文 prompt，要求 AI 依次调用 `list_recent_notes → read_note → create_note`。
@@ -17,6 +19,7 @@
 - **动态输出属性**：输出属性为键值对，可增删；时间戳、来源为固定行。
 - **独立设置视图**：命令面板 "Show Knowledge System settings view" 打开同设置 UI。
 - **测试工具标签页**：设置页第 5 个标签页一键执行「统计最近文件数」「输出最新内容测试」。
+- **工具预设系统 + 两个新工具（v0.5.0）**：新增 **第 6 个「预设」标签页**，可把「启用的工具子集」「工具参数覆写（如 list_recent_notes 天数、禁用 create_note、search 模式）」「自定义系统提示词」保存成预设并在**聊天界面**用下拉选择器随时切换（切换后下次请求生效）。新增工具 `update_note_yaml`（更新源文件夹笔记指定 frontmatter 值，**默认不暴露**，可在全局开关中开启）与 `search_output_notes`（在输出文件夹按「包含匹配」搜索，支持完整/阉割两种模式）。同时「AI 创建属性规则」的可选值改为**逐个 tag/chip 输入**（回车添加、× 删除、自动去重），并把该分组**上移到「输出属性」页顶部**、更名为「AI 创建属性规则（create_note 默认值与约束）」以便发现。
 
 ---
 
@@ -110,22 +113,23 @@
 
 > 旧版 `审核状态属性名/默认值` 与 `分类属性名/默认值` 会在首次加载时自动迁移到上面的动态行（`approved → 未审`、`category → 未分类`）；旧字段仍保留读取兼容。
 
-#### AI 创建属性规则（v0.4.0）
+#### AI 创建属性规则（create_note 默认值与约束，v0.4.0 → v0.5.0）
 
-设置 → 输出属性 页可配置「**AI 创建属性规则**」：每条规则 = frontmatter **属性键名 + 解释 + 可选值列表 + 默认值**。
+设置 → 输出属性 页（该分组已**上移到页顶**、标题为「**AI 创建属性规则（create_note 默认值与约束）**」）可配置「**AI 创建属性规则**」：每条规则 = frontmatter **属性键名 + 解释 + 可选值列表 + 默认值**。
 
 - 这些规则会随 `create_note` 工具的描述与 JSON Schema（`enum`）一并传给 AI，约束它在 frontmatter 中填写的值——**超出可选值会被拒绝创建**（错误回给 AI 修正，不落盘）。
 - AI 未填某键而配置了**默认值**时，创建时**自动补上**；默认值支持 **`{{YYYY.MM.DD}}` 等 moment 模板**（`{{}}` 内为 moment 兼容格式，创建当天自动渲染）。
 - 规则之外的键名 AI 仍可随意添加（不校验、不过滤）。
+- **可选值改为逐个 tag 输入**：在「可选值」输入框键入后按 **回车** 添加为一个 chip（旁边带 **×** 删除），同值自动去重，显示顺序 = 添加顺序；不再用逗号分隔。
 
 | 字段 | 说明 |
 |---|---|
 | 属性名 | frontmatter 键名（如 `category`、`approve`）。 |
 | 解释 | 该属性的含义说明，随工具描述传给 AI（如「文件的类型分类」）。 |
-| 可选值 | 逗号分隔的允许值列表；**留空 = 任意值**（不校验）。 |
-| 默认值 | AI 未填写该键时自动补的值；**留空 = 不添加**；支持 `{{moment格式}}` 模板。 |
+| 可选值 | 逐个 tag 添加的可选值列表（回车添加 / ×删除 / 自动去重）；**留空 = 任意值**（不校验）。 |
+| 默认值 | AI 未填写该键时自动补的值（即「AI 未填此键时创建文件自动插入的值，支持 {{YYYY.MM.DD}}；留空=不插入」）。 |
 
-示例：`approve`（解释「审核状态」，可选值 `未审核, 已审核`，默认值 `未审核`）→ AI 未写时自动加 `approve: 未审核`；AI 写「未审核/已审核」允许，写其它值则拒绝创建。
+示例：`approve`（解释「审核状态」，可选值 `未审核、已审核`，默认值 `未审核`）→ AI 未写时自动加 `approve: 未审核`；AI 写「未审核/已审核」允许，写其它值则拒绝创建。
 
 ### 测试工具（标签页）
 
@@ -133,6 +137,22 @@
 |---|---|
 | 统计最近文件数 | 扫描源文件夹，统计最近 N 天内的 Markdown 文件数，以 Notice 提示。 |
 | 输出最新内容测试 | 取源文件夹时间最新的文件，将其正文最后 100 个字符（按 Unicode 字符计，含换行）写入输出文件夹，并生成含可配置属性名的 frontmatter。 |
+
+### 预设（标签页，v0.5.0 第 6 个标签页）
+
+「工具预设」把一组「工具配置」保存成预设，并在聊天界面用下拉选择器随时切换。一份预设包含：
+
+| 字段 | 说明 |
+|---|---|
+| 名称 | 预设显示名（聊天选择器里显示）。 |
+| 系统提示词 | 随预设绑定的自定义系统提示；留空 = 默认（不发送 system）。 |
+| 启用工具 | 勾选允许 AI 使用的工具（list_recent_notes / read_note / create_note / update_note_yaml / search_output_notes）；全部不勾 = 默认（全部工具）。 |
+| list_recent_notes 天数 | 覆写其 `days`；留空 = 用「时间」页的「最近 N 天」。 |
+| create_note / update_note_yaml | false = 从暴露列表移除对应工具。 |
+| search_output_notes 模式 | 完整版（AI 按任意键搜索）/ 阉割版（只能按下方限定键搜索）。 |
+| 阉割版限定键 | search 为阉割版时的限定键 + 可选值（chip 填写；留空 = 任意值）。 |
+
+> **全局开关**：设置 → 预设 页可打开「update_yaml_tool_enabled」以向 AI 暴露 `update_note_yaml`（默认关闭）。聊天界面输入栏上方的**预设下拉选择器**切换当前预设（默认「默认（全部工具）」= 全部工具 + 设置里的 yaml 规则），切换后**下次请求生效**。
 
 ---
 
@@ -181,6 +201,12 @@ source: notes/example.md
 ---
 
 ## 更新日志
+
+### v0.5.0（流式期间直接 markdown + TTFT 检测点 + UI 照抄 dsh + 预设系统/新工具/yaml tag 输入）
+- **A.1 流式期间直接渲染 markdown（核心）**：`chatView` `updateText`/`refreshBlockText` 改为**流式中（未 stop）也做节流 `MarkdownRenderer.render`**——每文本块 180ms 节流一次 `setText` + 全量渲染，**DOM 恒为 markdown、第一次输出就是 markdown**（不再「先纯文本、结束后才变 markdown」）；`content_block_stop` 立即渲染终稿并取消挂起节流（`settleTextMarkdown`），已完成/已 settle 块冻结不重渲（保留 `blockSettled`）；思考块保持 textContent 增量 + 流式扫光。节流期间用户滚动不被打断（保留 v0.4.0 自动滚动逻辑）。
+- **A.2 首 token（TTFT）检测点 + 默认模型建议**：`core.ts` `streamAnthropicMessages` 成功路径返回 `ttfbMs`（首个成功候选 fetch 返回响应头，≈网络首字节）/`firstEventMs`（首个 SSE 事件，≈首个 token 到达）；`chatView` 的 `[ks-stream]` 增加 `startAtMs`/`ttfbMs`/`firstEventMs`/`model`/`toolsCount`。模型下拉显示名对 `deepseek-v4-flash` 标注「最快」、`deepseek-v4-pro` 标注「质量」（存值仍是模型 id）。README/设置文案提示「首 token 慢多半是 iOS 网络栈缓冲，已加 TTFT 检测点，反馈时附 console 输出」。
+- **A.3 聊天 UI 认真照抄 dsh**：用户气泡 r22px 胶囊 + 主题自适应蓝底 + 右对齐 + `max-width:min(525px,82%)`；AI 消息无气泡/无边线/无头像、全栏宽叙述（font 16/28）；消息列 748px 居中 + gap 16px；输入卡片 22px + 1px 边框 + 阴影；发送钮 34×34 圆（disabled opacity .4）；消息时间戳 `font 14/24`、hover 显现（80ms）触屏常显；AI 流式状态行（输入栏上方，蓝色 shimmer）；思考块 running 态 300px 扫光；保留流式光标与之并存；移动端收紧 padding、输入卡 `--radius-m`、按钮 40px。新增 `.ks-chat-time`/`.ks-chat-status` 与 `.ks-chat-preset-bar` 样式占位（预设选择器 DOM 由工具预设系统部分接入）。
+- **版本**：`manifest.json` / `package.json` = `0.5.0`；`versions.json` 增 `"0.5.0": "1.5.0"`。
 
 ### v0.4.0（真正逐字流式 + 聊天 UI 美化）
 - **修复假流式**：`src/core.ts` `streamAnthropicMessages` 改为 `res.body.getReader()` **边读边解析边渲染**——订阅增量 SSE 解析器，每个 `\n` 闭帧的 `event:`/`data:` 事件即时回调给 UI；不再整段读完再一次性解析（旧「一大段一大段出现」的根因）。返回新增 `chunks`（reader 块数）、`events`（事件数）。

@@ -3,7 +3,15 @@ import type KnowledgeSystemPlugin from './main';
 import { fetchAnthropicMessages, streamAnthropicMessages, AnthropicChatMessage } from './core';
 import { parseAnthropicResponse, AnthropicBlock } from './utils/sse';
 import { chatEndpointCandidates, hasAnthropicPath } from './utils/endpoints';
-import { buildAnthropicTools, listRecentNotesTool, readNoteTool, createNoteTool, ToolCtx } from './utils/tools';
+import {
+  listRecentNotesTool,
+  readNoteTool,
+  createNoteTool,
+  updateNoteYamlTool,
+  searchOutputNotesTool,
+  ToolCtx,
+} from './utils/tools';
+import { resolveToolConfig, ResolvedToolConfig } from './utils/presets';
 
 /** The workspace view type for the chat view. Contract value. */
 export const VIEW_TYPE_CHAT = 'knowledge-system-chat-view';
@@ -94,8 +102,19 @@ export class KnowledgeChatView extends ItemView {
   private thinkExpanded: Record<number, boolean | null> = {};
   private renderPending = false;
   private renderTimer: number | null = null;
+  /** 流式 markdown 节流：每文本块一次进行中的 setTimeout；键存在即节流进行中。 */
+  private mdRenderPending: Record<number, boolean> = {};
+  /** 与上面的 pending 配对的 timer id，用于在块结算时取消挂起的节流渲染。 */
+  private mdRenderTimers: Record<number, number> = {};
   private streamState: 'idle' | 'streaming' | 'done' = 'idle';
   private streamCursorEl: HTMLElement | null = null;
+  /** 输入栏上方的 AI 流式状态行（dsh shimmer），流式期间显示。 */
+  private statusEl!: HTMLElement;
+  /** 预设选择器条（v0.5.0 DOM，input bar 上方一行）。 */
+  private presetBarEl: HTMLElement | null = null;
+  private presetSelect: HTMLSelectElement | null = null;
+  /** 本轮发送时解析的生效工具/系统配置，供 executeTool 读取。 */
+  private resolvedConfig: ResolvedToolConfig | null = null;
 
   constructor(plugin: KnowledgeSystemPlugin, leaf: WorkspaceLeaf) {
     super(leaf);
@@ -120,6 +139,14 @@ export class KnowledgeChatView extends ItemView {
     container.addClass('ks-chat');
 
     this.scrollEl = container.createDiv({ cls: 'ks-chat-scroll' });
+
+    // 流式状态行：输入栏上方，流式期间显示「正在思考… / DeepSeek 正在输出…」，
+    // 用 dsh 的蓝色 shimmer 渐变（`--interactive-accent` 主题自适应）。
+    this.statusEl = container.createDiv({ cls: 'ks-chat-status is-hidden' });
+    this.statusEl.setText('DeepSeek 正在输出…');
+
+    // 预设选择器条（v0.5.0）：input bar 上方一行，切换即生效。
+    this.buildPresetBar(container);
 
     const bar = container.createDiv({ cls: 'ks-chat-inputbar' });
     this.inputEl = bar.createEl('textarea', { cls: 'ks-chat-textarea' });
@@ -156,35 +183,84 @@ export class KnowledgeChatView extends ItemView {
   async onClose(): Promise<void> {
     this.activeController?.abort();
     this.resolvePending();
+    this.clearMarkdownTimers();
     this.streamState = 'idle';
     this.streamCursorEl = null;
     this.contentEl.empty();
   }
 
   // -------------------------------------------------------------------------
+  // preset selector (v0.5.0)
+  // -------------------------------------------------------------------------
+
+  /** Build the preset dropdown bar above the input bar (one-off DOM). */
+  private buildPresetBar(container: HTMLElement): void {
+    this.presetBarEl = container.createDiv({ cls: 'ks-preset-bar' });
+    const label = this.presetBarEl.createSpan({ cls: 'ks-preset-label', text: '预设' });
+    const select = this.presetBarEl.createEl('select', { cls: 'ks-preset-select' });
+    this.presetSelect = select;
+    select.addEventListener('change', () => {
+      this.plugin.settings.activePresetId = select.value;
+      void this.plugin.saveSettings();
+      const p = (this.plugin.settings.toolPresets || []).find((x) => x.id === select.value);
+      const name = select.value ? (p ? p.name : select.value) : '默认（全部工具）';
+      new Notice(`已切换预设：${name}（下次请求生效）`);
+    });
+    this.refreshPresetConfig();
+    void label;
+  }
+
+  /** Repopulate the preset dropdown options from settings (called on open). */
+  private refreshPresetConfig(): void {
+    if (!this.presetSelect) return;
+    const el = this.presetSelect;
+    const presets = this.plugin.settings.toolPresets || [];
+    el.empty();
+    const def = document.createElement('option');
+    def.value = '';
+    def.textContent = '默认（全部工具）';
+    el.appendChild(def);
+    for (const p of presets) {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      el.appendChild(opt);
+    }
+    el.value = this.plugin.settings.activePresetId || '';
+  }
+
+  // -------------------------------------------------------------------------
   // send / render helpers
   // -------------------------------------------------------------------------
 
-  /** Render a right-aligned user bubble with a「你」head line. */
+  /** Render a right-aligned capsule user bubble (dsh: r22px capsule, timestamp below). */
   private userBubble(text: string): void {
     const root = this.scrollEl.createDiv({ cls: 'ks-chat-msg ks-chat-user' });
-    const head = root.createDiv({ cls: 'ks-chat-head' });
-    head.createSpan({ cls: 'ks-chat-head-name', text: '你' });
     const el = root.createDiv({ cls: 'ks-chat-content' });
     el.style.whiteSpace = 'pre-wrap';
     el.setText(text);
+    root.createDiv({ cls: 'ks-chat-time' }).setText(this.nowLabel());
   }
 
-  /** Render an assistant bubble with an「AI · 模型名」head badge and bot icon. */
+  /** Render an assistant message: full-width narration, no bubble/edge/avatar,
+   *  a muted model caption (dsh has no role label, but the model is useful), and
+   *  a hover-reveal timestamp. Returns the markdown body container. */
   private assistantBubble(): { root: HTMLElement; body: HTMLElement } {
     const root = this.scrollEl.createDiv({ cls: 'ks-chat-msg ks-chat-ai' });
     const head = root.createDiv({ cls: 'ks-chat-head' });
-    const icon = head.createSpan({ cls: 'ks-chat-head-icon' });
-    setIcon(icon, 'bot');
     const model = (this.plugin.settings.model || '').trim();
     head.createSpan({ cls: 'ks-chat-head-name', text: model ? `AI · ${model}` : 'AI' });
     const body = root.createDiv({ cls: 'ks-chat-content markdown-rendered' });
+    root.createDiv({ cls: 'ks-chat-time' }).setText(this.nowLabel());
     return { root, body };
+  }
+
+  /** Current wall-clock time label (HH:mm) for the hover-reveal timestamp. */
+  private nowLabel(): string {
+    const m = (window as { moment?: (arg?: unknown) => { format?: (f: string) => string } }).moment;
+    const notNow = m ? m(new Date()) : null;
+    if (notNow && typeof notNow.format === 'function') return notNow.format('HH:mm');
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
   /** Render a copyable, self-diagnosing error block (used by every failure path). */
@@ -331,14 +407,30 @@ export class KnowledgeChatView extends ItemView {
     let streamOk = false;
     let streamErr: string | null = null;
     let aborted = false;
+    // TTFT 检测点：记录本轮起点，配合 core 返回的 ttfbMs/firstEventMs 归因首 token。
+    const startAtMs = performance.now();
+    // 解析当前生效的工具/系统配置（预设系统）。存到成员供 executeTool 读取。
+    const cfg = resolveToolConfig(this.plugin.settings);
+    this.resolvedConfig = cfg;
+    const tools = cfg.tools;
     try {
       const st = await streamAnthropicMessages(this.plugin.settings, this.apiHistory, {
-        tools: buildAnthropicTools(this.plugin.settings.yamlRules),
+        tools,
+        system: cfg.systemPrompt || undefined,
         signal: ac.signal,
         onEvent: (event) => this.handleChatEvent(event),
         onAutoCorrect: (url) => this.handleAutoCorrect(url),
       });
-      console.info('[ks-stream]', { chunks: st.chunks, events: st.events, url: st.url });
+      console.info('[ks-stream]', {
+        startAtMs,
+        ttfbMs: st.ttfbMs,
+        firstEventMs: st.firstEventMs,
+        chunks: st.chunks,
+        events: st.events,
+        url: st.url,
+        model: this.plugin.settings.model,
+        toolsCount: (tools || []).length,
+      });
       if (st.ok) {
         // 2xx but no frames parsed → treat as a parse failure and fall back to
         // the non-streaming requestUrl path (more stable than an empty reply).
@@ -379,6 +471,7 @@ export class KnowledgeChatView extends ItemView {
     // text, drop the cursor) before we try the non-streaming fallback, so a
     // leftover error leaves a clean bubble instead of a stuck blinking cursor.
     this.streamState = 'done';
+    this.hideStatus();
     this.removeStreamCursor();
     this.renderAll();
     this.resolvePending();
@@ -388,7 +481,8 @@ export class KnowledgeChatView extends ItemView {
     let nonStreamErr: string | null = null;
     try {
       res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, {
-        tools: buildAnthropicTools(this.plugin.settings.yamlRules),
+        tools,
+        system: cfg.systemPrompt || undefined,
         onAutoCorrect: (url) => this.handleAutoCorrect(url),
       });
       if (res.requestError != null) {
@@ -426,14 +520,18 @@ export class KnowledgeChatView extends ItemView {
     this.blockStopped = {};
     this.blockSettled = {};
     this.thinkExpanded = {};
+    this.mdRenderPending = {};
+    this.mdRenderTimers = {};
     this.streamState = 'streaming';
     this.streamCursorEl = null;
     this.resolvePending();
+    this.showStatus('DeepSeek 正在输出…');
   }
 
   /** Finalize an aborted partial turn: paint what streamed, drop the cursor. */
   private finishStream(body: HTMLElement): void {
     this.streamState = 'done';
+    this.hideStatus();
     this.renderAll();
     this.resolvePending();
   }
@@ -443,6 +541,7 @@ export class KnowledgeChatView extends ItemView {
     if (!d || typeof d !== 'object') return;
     if (d.type === 'error') {
       this.turnError = `错误：${d.error?.message ?? d.message ?? '未知'}`;
+      this.hideStatus();
       this.renderAll();
       return;
     }
@@ -456,6 +555,7 @@ export class KnowledgeChatView extends ItemView {
       const container = this.ensureBlockEl(idx);
       this.paintBlock(idx, container, this.turnBlocks[idx], undefined, false);
       this.updateStreamCursor();
+      this.updateStatus();
       this.scheduleRender();
     } else if (d.type === 'content_block_delta') {
       const blk = this.turnBlocks[d.index];
@@ -473,6 +573,7 @@ export class KnowledgeChatView extends ItemView {
         blk.partialJson += delta.partial_json ?? '';
         this.refreshToolSub(d.index, blk);
       }
+      this.updateStatus();
       this.scheduleRender();
     } else if (d.type === 'content_block_stop') {
       const blk = this.turnBlocks[d.index];
@@ -486,18 +587,51 @@ export class KnowledgeChatView extends ItemView {
       this.blockStopped[d.index] = true;
       if (blk?.type === 'text') this.settleTextMarkdown(d.index, blk);
       this.updateStreamCursor();
+      this.updateStatus();
       this.scheduleRender();
     } else if (d.type === 'message_delta') {
       this.turnStopReason = d.delta?.stop_reason ?? null;
     }
   }
 
+  /** 按当前进行中的块类型更新状态行文案（思考 vs 输出）。 */
+  private updateStatus(): void {
+    if (this.streamState !== 'streaming') return;
+    let last: AnthropicBlock | null = null;
+    for (let i = this.turnBlocks.length - 1; i >= 0; i--) {
+      if (this.turnBlocks[i]) {
+        last = this.turnBlocks[i];
+        break;
+      }
+    }
+    const label = last?.type === 'thinking' ? '正在思考…' : 'DeepSeek 正在输出…';
+    this.showStatus(label);
+  }
+
+  private showStatus(text: string): void {
+    if (!this.statusEl) return;
+    this.statusEl.setText(text);
+    this.statusEl.removeClass('is-hidden');
+  }
+
+  private hideStatus(): void {
+    if (this.statusEl) this.statusEl.addClass('is-hidden');
+  }
+
   private async finishTurn(body: HTMLElement, blocks: AnthropicBlock[], stopReason: string | null): Promise<void> {
     this.streamState = 'done';
+    this.hideStatus();
     this.renderBlocks(body, blocks, {});
     this.resolvePending();
     if (stopReason === 'tool_use') {
-      const ctx: ToolCtx = { app: this.plugin.app, settings: this.plugin.settings, moment: window.moment };
+      const cfg = this.resolvedConfig;
+      const ctx: ToolCtx = {
+        app: this.plugin.app,
+        settings: this.plugin.settings,
+        moment: window.moment,
+        searchMode: cfg?.searchMode,
+        searchRestrictions: cfg?.searchRestrictions,
+      };
       const toolResults: Record<string, string> = {};
       for (const b of blocks.filter((x) => x.type === 'tool_use')) {
         toolResults[b.id] = await this.executeTool(ctx, b.name, b.input);
@@ -598,34 +732,70 @@ export class KnowledgeChatView extends ItemView {
     this.markdownEls[index] = el;
   }
 
-  /** Update a text block in place: plain text while streaming, markdown once settled. */
+  /** Update a text block in place. 流式期间用 180ms 节流 markdown 渲染（DOM 恒为
+   *  markdown，不再写纯文本 —— 用户核心诉求「第一次输出就直接 markdown 渲染」）；
+   *  块结算（stopped）时立即渲染一次终稿并冻结。 */
   private updateText(index: number, text: string, stopped: boolean): void {
     const el = this.markdownEls[index];
     if (!el?.isConnected) return;
-    if (stopped && this.blockSettled[index]) return; // already markdown-rendered
     if (stopped) {
+      if (this.blockSettled[index]) return; // 已渲染终稿 → 冻结不重渲
       this.blockSettled[index] = true;
       el.setText(text);
-      // Once per block: render markdown. No MarkdownRenderer during streaming.
       void MarkdownRenderer.render(this.app, text, el, '', this);
     } else {
-      el.setText(text);
+      this.scheduleMarkdownRender(index, text);
     }
   }
 
-  /** O(1) per-token update for a streaming text block. */
+  /** 流式 per-token 入口：只记数据（text 已存入 blk.text），触发节流 markdown 渲染。 */
   private refreshBlockText(index: number, text: string): void {
-    const el = this.markdownEls[index];
-    if (el?.isConnected) el.setText(text);
+    this.scheduleMarkdownRender(index, text);
   }
 
-  /** Final markdown render for a just-stopped text block. */
+  /**
+   * 节流 markdown 渲染器：同一文本块 180ms 内只进行一次 `setText` + 全量
+   * `MarkdownRenderer.render`，让流式途中 DOM 始终是 markdown 但刷新被节流到
+   * 每 ~180ms 一次（对常见回复 <2000 字，移动端可接受；卡顿可调大节流）。已
+   * settle 的块冻结不重渲（保留 blockSettled 机制）。异步 render 会自替换子节点。
+   */
+  private scheduleMarkdownRender(index: number, text: string): void {
+    if (this.mdRenderPending[index]) return;
+    this.mdRenderPending[index] = true;
+    this.mdRenderTimers[index] = window.setTimeout(() => {
+      this.mdRenderPending[index] = false;
+      this.mdRenderTimers[index] = 0;
+      const el = this.markdownEls[index];
+      if (el?.isConnected && !this.blockSettled[index]) {
+        el.setText(text);
+        void MarkdownRenderer.render(this.app, text, el, '', this);
+      }
+    }, 180);
+  }
+
+  /** 块 content_block_stop：立即渲染终稿，并取消挂起的节流定时器。 */
   private settleTextMarkdown(index: number, block: AnthropicBlock): void {
     this.blockSettled[index] = true;
+    this.clearMarkdownTimer(index);
     const el = this.markdownEls[index];
     if (!el?.isConnected) return;
     el.setText(block.text);
     void MarkdownRenderer.render(this.app, block.text, el, '', this);
+  }
+
+  private clearMarkdownTimer(index: number): void {
+    const timer = this.mdRenderTimers[index];
+    if (timer != null) {
+      window.clearTimeout(timer);
+      this.mdRenderTimers[index] = 0;
+    }
+    this.mdRenderPending[index] = false;
+  }
+
+  private clearMarkdownTimers(): void {
+    for (const index of Object.keys(this.mdRenderTimers)) {
+      this.clearMarkdownTimer(Number(index));
+    }
   }
 
   // --- thinking blocks -------------------------------------------------------
@@ -741,6 +911,8 @@ export class KnowledgeChatView extends ItemView {
     this.blockStopped = {};
     this.blockSettled = {};
     this.thinkExpanded = {};
+    this.mdRenderPending = {};
+    this.mdRenderTimers = {};
     this.removeStreamCursor();
     body.empty();
     for (let i = 0; i < blocks.length; i++) {
@@ -754,9 +926,11 @@ export class KnowledgeChatView extends ItemView {
 
   private async executeTool(ctx: ToolCtx, name: string, input: unknown): Promise<string> {
     const a = (input ?? {}) as Record<string, any>;
+    const cfg = this.resolvedConfig;
     try {
       if (name === 'list_recent_notes') {
-        const r = await listRecentNotesTool(ctx, { days: a.days });
+        const days = a.days ?? cfg?.listRecentDays;
+        const r = await listRecentNotesTool(ctx, { days });
         return 'error' in r ? `ERROR: ${r.error}` : JSON.stringify(r.result);
       }
       if (name === 'read_note') {
@@ -766,6 +940,16 @@ export class KnowledgeChatView extends ItemView {
       if (name === 'create_note') {
         const r = await createNoteTool(ctx, { title: a.title, yaml: a.yaml, content: a.content });
         return 'error' in r ? `ERROR: ${r.error}` : `已创建：${r.result.path}`;
+      }
+      if (name === 'update_note_yaml') {
+        const r = await updateNoteYamlTool(ctx, { name: a.name, updates: a.updates });
+        return 'error' in r ? `ERROR: ${r.error}` : `已更新：${r.result.path}（${r.result.updated.join(', ')}）`;
+      }
+      if (name === 'search_output_notes') {
+        const r = await searchOutputNotesTool(ctx, { filters: a.filters, query: a.query, limit: a.limit });
+        if ('error' in r) return `ERROR: ${r.error}`;
+        if (r.result.length === 0) return '未找到匹配的笔记';
+        return JSON.stringify(r.result);
       }
       return `ERROR: 未知工具 ${name}`;
     } catch (e) {

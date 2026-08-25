@@ -362,6 +362,11 @@ export async function fetchAnthropicMessages(
  * `{ ok:false, status?, error?, url? }` so the caller can fall back to
  * `fetchAnthropicMessages`. On a successful `/anthropic` correction the caller
  * is asked (via `opts.onAutoCorrect`) to persist the corrected base URL.
+ *
+ * On the success path the result additionally carries `ttfbMs` (毫秒：从进入函数
+ * 到「首个成功候选的 fetch 返回响应头」，≈ 网络首字节）与 `firstEventMs`（毫秒：到首个
+ * SSE 事件被解析，≈ 首个 token 到达）——这两个 TTFT 检测点供 `[ks-stream]` 汇报首
+ * token 慢的归因（用户反馈时附 console 输出）。
  */
 export async function streamAnthropicMessages(
   settings: { baseUrl: string; apiKey: string; model: string },
@@ -373,7 +378,16 @@ export async function streamAnthropicMessages(
     onEvent: (event: { event: string; data: unknown }) => void;
     onAutoCorrect?: (url: string) => void;
   }
-): Promise<{ ok: boolean; status?: number; error?: string; url?: string; chunks?: number; events?: number }> {
+): Promise<{
+  ok: boolean;
+  status?: number;
+  error?: string;
+  url?: string;
+  chunks?: number;
+  events?: number;
+  ttfbMs?: number;
+  firstEventMs?: number;
+}> {
   const base = (settings.baseUrl || 'https://api.deepseek.com/anthropic').trim().replace(/\/+$/, '');
   const body: Record<string, unknown> = {
     model: settings.model,
@@ -387,6 +401,12 @@ export async function streamAnthropicMessages(
   const candidates = chatEndpointCandidates(base);
   let lastUrl = '';
   let lastStatus = 0;
+  // TTFT 检测点：以进入请求为起点，记录「成功候选 fetch 返回首个响应头」
+  // （≈ 网络首字节 TTFB）与「首个解析出的 SSE 事件」两个时点，供 [ks-stream]
+  // 汇报首 token 慢的归因（用户可据此反馈 console 输出）。
+  const t0 = performance.now();
+  let ttfbMs: number | undefined;
+  let firstEventMs: number | undefined;
 
   try {
     for (let i = 0; i < candidates.length; i++) {
@@ -403,6 +423,7 @@ export async function streamAnthropicMessages(
         signal: opts.signal,
       });
       if (res.ok && res.body) {
+        ttfbMs = performance.now() - t0; // 首个成功候选的 fetch resolve ≈ 网络首字节
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         // Parse the SSE body incrementally: every closed frame is handed to
@@ -412,6 +433,7 @@ export async function streamAnthropicMessages(
         let chunks = 0;
         let events = 0;
         const parser = createIncrementalSseParser((ev) => {
+          if (firstEventMs == null) firstEventMs = performance.now() - t0; // 首个事件 ≈ 首个 token 到达
           events++;
           opts.onEvent(ev);
         });
@@ -429,9 +451,9 @@ export async function streamAnthropicMessages(
         // zero-event stream is a parse failure so the caller falls back to the
         // non-streaming path (contract 10.3).
         if (events > 0) {
-          return { ok: true, url, chunks, events };
+          return { ok: true, url, chunks, events, ttfbMs, firstEventMs };
         }
-        return { ok: false, status: res.status, error: '流式响应未解析到事件', url, chunks, events };
+        return { ok: false, status: res.status, error: '流式响应未解析到事件', url, chunks, events, ttfbMs, firstEventMs };
       }
       lastStatus = res.status;
       // A missing route (404) may be the missing /anthropic prefix → try the next.

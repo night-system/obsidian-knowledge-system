@@ -24,6 +24,39 @@ export interface YamlRule {
   default: string;
 }
 
+/**
+ * One tool preset: a saved combination of enabled tool subset, tool parameter
+ * overrides and a custom system prompt. `activePresetId` selects the one in use
+ * in the chat view; `''` means the default "all tools + settings rules".
+ *
+ * `enabledTools` empty = the full base tool set (intersection rules below).
+ * `toolOverrides.yamlRules` is intentionally NOT supported (per v0.5.0
+ * decision) — yaml rules always come from `settings.yamlRules`.
+ */
+export interface ToolPreset {
+  /** Unique id (uuid/timestamp). */
+  id: string;
+  /** Display name (shown in the chat preset selector). */
+  name: string;
+  /** Custom system prompt; empty = default (no system message sent). */
+  systemPrompt: string;
+  /** Enabled tool-name subset; empty = all (default). */
+  enabledTools: string[];
+  /** Tool parameter overrides / constraints. */
+  toolOverrides: {
+    /** Override list_recent_notes days (default uses settings.recentDays). */
+    listRecentDays?: number;
+    /** false = drop create_note from the exposed tool set. */
+    createNoteEnabled?: boolean;
+    /** false = drop update_note_yaml from the exposed tool set. */
+    updateYamlEnabled?: boolean;
+    /** search_output_notes mode (B.5). */
+    searchMode?: 'full' | 'restricted';
+    /** Whitelisted keys for the restricted search mode. */
+    searchRestrictions?: { key: string; values: string[] }[];
+  };
+}
+
 export interface KnowledgeSystemSettings {
   /** Main provider API key (masked text input). */
   apiKey: string;
@@ -67,6 +100,12 @@ export interface KnowledgeSystemSettings {
   extraProperties: { key: string; value: string }[];
   /** Frontmatter property rules applied when the AI creates a note (v0.4.0). */
   yamlRules: YamlRule[];
+  /** Saved tool presets (v0.5.0); empty = default tool set only. */
+  toolPresets: ToolPreset[];
+  /** Active preset id used by the chat view; '' = default (all tools + settings rules). */
+  activePresetId: string;
+  /** Global switch: expose update_note_yaml to the AI (default off). */
+  updateYamlToolEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -90,4 +129,7 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   customModel: '',
   extraProperties: [],
   yamlRules: [],
+  toolPresets: [],
+  activePresetId: '',
+  updateYamlToolEnabled: false,
 };

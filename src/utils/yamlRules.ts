@@ -18,6 +18,7 @@
  *   `serializeYaml` plain-string behavior so current tests keep passing.
  */
 import type { YamlRule } from '../settings';
+import { stripFrontmatter } from './index';
 
 /**
  * Normalise the AI's `yaml` argument into a flat `Record<string, unknown>`.
@@ -166,4 +167,28 @@ export function serializeYamlFromObj(obj: Record<string, unknown>): string {
   return Object.entries(obj)
     .map(([k, v]) => `${k}: ${serializeValue(v)}`)
     .join('\n');
+}
+
+/**
+ * Extract a file's YAML frontmatter as a flat object, or `{}` when the content
+ * has no frontmatter block (leading `---` … `---` fence). Values are parsed the
+ * same way as `parseYamlObject` (first-colon split, strings kept). Used by the
+ * `update_note_yaml` / `search_output_notes` tools.
+ */
+export function parseFrontmatterObj(content: string): Record<string, unknown> {
+  const m = (content || '').match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
+  if (!m) return {};
+  return parseYamlObject(m[1]);
+}
+
+/**
+ * Rebuild a file's full text given its current raw content and a desired
+ * frontmatter object: the frontmatter region is re-serialized from `fm` and the
+ * body (everything after the closing `---`) is preserved verbatim. When the
+ * content has no frontmatter, one is prepended.
+ */
+export function serializeFileWithFrontmatter(content: string, fm: Record<string, unknown>): string {
+  const body = stripFrontmatter(content || '');
+  const yamlStr = serializeYamlFromObj(fm);
+  return yamlStr ? `---\n${yamlStr}\n---\n${body}` : `---\n---\n${body}`;
 }

@@ -2,7 +2,9 @@ import { stripFrontmatter } from './index';
 import type { YamlRule } from '../settings';
 import {
   applyDefaults,
+  parseFrontmatterObj,
   parseYamlObject,
+  serializeFileWithFrontmatter,
   serializeYamlFromObj,
   validateYamlRules,
 } from './yamlRules';
@@ -29,6 +31,10 @@ export interface ToolCtx {
   };
   now?: number;
   moment?: any;
+  /** search_output_notes mode (preset-driven); 'full' by default. */
+  searchMode?: 'full' | 'restricted';
+  /** Whitelisted keys for the restricted search (preset-driven). */
+  searchRestrictions?: { key: string; values: string[] }[];
 }
 
 /** Shape of one Anthropic-compatible tool in the request. */
@@ -279,4 +285,175 @@ export async function createNoteTool(
 
   await ctx.app.vault.create(path, full);
   return { result: { path } };
+}
+
+/**
+ * Anthropic schema for `update_note_yaml` (v0.5.0, default NOT exposed). The
+ * AI updates a source-folder note's frontmatter keys; other keys are preserved.
+ */
+export function buildUpdateNoteYamlTool(): AnthropicTool {
+  return {
+    name: 'update_note_yaml',
+    description: '更新源文件夹内笔记的 frontmatter 属性值（保留其余属性不变）。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '笔记文件名（可带或不带 .md 后缀）' },
+        updates: {
+          type: 'array',
+          description: '要更新的 frontmatter 键值对列表；只改这些键，其余键保持不变。',
+          items: {
+            type: 'object',
+            properties: { key: { type: 'string' }, value: { type: 'string' } },
+            required: ['key', 'value'],
+          },
+        },
+      },
+      required: ['name', 'updates'],
+    },
+  };
+}
+
+/**
+ * Anthropic schema for `search_output_notes` (v0.5.0). In `restricted` mode the
+ * `filters` object exposes only the whitelisted keys (with enum when provided)
+ * and `query` is omitted; in `full` mode `filters` is an arbitrary key-value
+ * array plus a free-text `query`.
+ */
+export function buildSearchOutputNotesTool(
+  searchMode?: 'full' | 'restricted',
+  restrictions?: { key: string; values: string[] }[]
+): AnthropicTool {
+  const restricted = searchMode === 'restricted';
+  let filtersSchema: any;
+  if (restricted) {
+    const allowed = Array.isArray(restrictions) ? restrictions : [];
+    const props: Record<string, any> = {};
+    for (const r of allowed) {
+      if (!r.key) continue;
+      props[r.key] =
+        r.values && r.values.length > 0
+          ? { type: 'string', enum: r.values, description: `只允许这些值：${r.values.join('/')}` }
+          : { type: 'string' };
+    }
+    filtersSchema = {
+      type: 'object',
+      description: '只能按这些键搜索（值为包含匹配、大小写不敏感）：' + allowed.map((r) => r.key).join('、'),
+      properties: props,
+      required: [],
+    };
+  } else {
+    filtersSchema = {
+      type: 'array',
+      description: '按 frontmatter 键值对过滤；值为包含匹配（子串、大小写不敏感）。',
+      items: {
+        type: 'object',
+        properties: { key: { type: 'string' }, value: { type: 'string' } },
+        required: ['key', 'value'],
+      },
+    };
+  }
+  const properties: Record<string, any> = { filters: filtersSchema };
+  if (!restricted) {
+    properties.query = { type: 'string', description: '文件名或正文包含的子串（大小写不敏感）。' };
+  }
+  properties.limit = { type: 'integer', description: '返回条数上限，默认 20，最大 100。' };
+  return {
+    name: 'search_output_notes',
+    description:
+      '在输出文件夹内搜索笔记；filters 的值为包含匹配（子串、大小写不敏感）；query 为正文/文件名子串；limit 默认 20 最大 100。',
+    input_schema: { type: 'object', properties, required: [] },
+  };
+}
+
+export async function updateNoteYamlTool(
+  ctx: ToolCtx,
+  args: { name?: string; updates?: { key: string; value: string }[] }
+): Promise<{ result: { path: string; updated: string[] } } | { error: string }> {
+  const settings = ctx.settings;
+  const zeit = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
+  const folder = (settings.sourceFolder || '/').trim();
+  const target = stripExt((args?.name || '').trim());
+  if (!target) return { error: 'ERROR: 未提供文件名' };
+
+  const updates = (args?.updates ?? [])
+    .filter((u) => u && u != null && typeof (u as { key?: unknown })?.key === 'string' && typeof (u as { value?: unknown })?.value === 'string');
+  if (updates.length === 0) return { error: 'ERROR: 未提供要更新的键值对' };
+
+  const files = (ctx.app.vault.getMarkdownFiles?.() ?? []) as VaultFile[];
+  const match = files.find(
+    (f) => inFolder(f.path, folder) && stripExt(f.basename ?? f.name ?? f.path) === target
+  );
+  if (!match) return { error: 'ERROR: 未找到笔记' };
+
+  const ts = fileTimestamp(match, ctx);
+  const earliest = parseEarliest(settings.earliestTime ?? '', settings.timeFormat ?? '', zeit);
+  if (earliest != null && ts < earliest) return { error: `ERROR: 笔记早于最早时间 ${settings.earliestTime}` };
+
+  const raw = await ctx.app.vault.read(match);
+  const fm = parseFrontmatterObj(raw);
+  for (const u of updates) fm[u.key] = u.value;
+  const newContent = serializeFileWithFrontmatter(raw, fm);
+  await ctx.app.vault.adapter.write(match.path, newContent);
+  return { result: { path: match.path, updated: updates.map((u) => u.key) } };
+}
+
+export async function searchOutputNotesTool(
+  ctx: ToolCtx,
+  args: { filters?: { key: string; value: string }[]; query?: string; limit?: number }
+): Promise<
+  | { result: { path: string; title: string; frontmatter?: Record<string, unknown>; summary?: string }[] }
+  | { error: string }
+> {
+  const settings = ctx.settings;
+  const folder = (settings.outputFolder || '/').trim();
+  const filters = Array.isArray(args?.filters) ? (args!.filters as { key: string; value: string }[]) : [];
+  const query = typeof args?.query === 'string' ? args.query : '';
+  let limit = typeof args?.limit === 'number' ? Math.floor(args.limit) : 20;
+  if (!Number.isFinite(limit) || limit <= 0) limit = 20;
+  if (limit > 100) limit = 100;
+
+  // 阉割版约束校验：restricted 模式只允许白名单键（schema 已限定，此处再兜底校验）。
+  const restricted = ctx.searchMode === 'restricted';
+  const allowedKeys = new Set((ctx.searchRestrictions ?? []).map((r) => r.key));
+  if (restricted) {
+    for (const f of filters) {
+      if (!allowedKeys.has(f.key)) {
+        return { error: `ERROR: 搜索只能使用允许的键[${[...allowedKeys].join(', ')}]` };
+      }
+    }
+  }
+
+  const files = (ctx.app.vault.getMarkdownFiles?.() ?? []) as VaultFile[];
+  const q = query.toLowerCase();
+  const results: { path: string; title: string; frontmatter: Record<string, unknown>; summary: string }[] = [];
+  for (const f of files) {
+    if (!inFolder(f.path, folder)) continue;
+    const raw = await ctx.app.vault.read(f);
+    const fm = parseFrontmatterObj(raw);
+    const body = stripFrontmatter(raw);
+    let hit = filters.length === 0;
+    for (const flt of filters) {
+      const v = fm[flt.key];
+      if (v == null || !String(v).toLowerCase().includes(String(flt.value).toLowerCase())) {
+        hit = false;
+        break;
+      }
+      hit = true;
+    }
+    if (!hit) continue;
+    if (q) {
+      const nameHit = (f.basename ?? f.name ?? f.path).toLowerCase().includes(q);
+      const bodyHit = body.toLowerCase().includes(q);
+      if (!nameHit && !bodyHit) continue;
+    }
+    results.push({
+      path: f.path,
+      title: stripExt(f.basename ?? f.name ?? f.path),
+      frontmatter: fm,
+      summary: [...body].slice(0, 200).join(''),
+    });
+    if (results.length >= limit) break;
+  }
+  return { result: results };
 }

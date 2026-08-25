@@ -215,7 +215,7 @@ class SettingsRenderer {
 
     const baseUrl = new Setting(bodyEl)
       .setName('Base URL')
-      .setDesc('Anthropic 兼容服务的基础地址，默认 DeepSeek Anthropic 端点。')
+      .setDesc('Anthropic 兼容服务的基础地址。填 https://api.deepseek.com 或 https://api.deepseek.com/anthropic 均可：聊天会自动探测 /anthropic 端点，模型列表自动探测根端点。默认 DeepSeek Anthropic 端点。')
       .addText((text) =>
         text
           .setPlaceholder('https://api.deepseek.com/anthropic')

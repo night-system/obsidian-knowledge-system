@@ -145,6 +145,37 @@ function parseAnthropicResponse(json) {
   return { blocks, stop_reason: (_a = obj.stop_reason) != null ? _a : null };
 }
 
+// src/utils/endpoints.ts
+function normalizeBase(base) {
+  return (base || "").trim().replace(/\/+$/, "");
+}
+function hasAnthropicPath(base) {
+  return /\/anthropic(\/|$)/i.test(normalizeBase(base));
+}
+function stripAnthropic(base) {
+  return normalizeBase(base).replace(/\/anthropic\/?/i, "").replace(/\/+$/, "");
+}
+function hasV1Segment(base) {
+  return /(^|\/)v1(\/|$)/i.test(normalizeBase(base));
+}
+function chatEndpointCandidates(baseUrl) {
+  const base = normalizeBase(baseUrl);
+  if (!base) return [];
+  if (hasAnthropicPath(base)) return [`${base}/v1/messages`];
+  if (hasV1Segment(base)) return [`${base}/messages`];
+  return [`${base}/v1/messages`, `${base}/anthropic/v1/messages`];
+}
+function modelsEndpointCandidates(baseUrl) {
+  const base = normalizeBase(baseUrl);
+  if (!base) return [];
+  if (hasAnthropicPath(base)) {
+    const root = stripAnthropic(base);
+    return [`${root}/models`, `${root}/v1/models`];
+  }
+  if (hasV1Segment(base)) return [`${base}/models`];
+  return [`${base}/models`, `${base}/v1/models`];
+}
+
 // src/utils/index.ts
 var DAY_MS = 864e5;
 function parseTimestamp(value, moment, formats) {
@@ -375,16 +406,16 @@ async function fetchModelList(apiKey, baseUrl) {
   const base = (baseUrl || "https://api.deepseek.com").trim().replace(/\/+$/, "");
   try {
     let lastStatus = 0;
-    for (const suffix of ["/models", "/v1/models"]) {
+    for (const url of modelsEndpointCandidates(base)) {
       const res = await (0, import_obsidian2.requestUrl)({
-        url: `${base}${suffix}`,
+        url,
         method: "GET",
         headers: { Authorization: `Bearer ${key}` },
         throw: false
       });
       const ids = await listFromResponse(res);
       if (ids && ids.length > 0) {
-        const message2 = `\u6210\u529F\u83B7\u53D6 ${ids.length} \u4E2A\u6A21\u578B\uFF1A${ids[0]}`;
+        const message2 = `\u6210\u529F\u83B7\u53D6 ${ids.length} \u4E2A\u6A21\u578B\uFF1A${ids[0]}\uFF08${url}\uFF09`;
         new import_obsidian2.Notice(message2);
         return { ok: true, modelIds: ids, message: message2 };
       }
@@ -399,7 +430,14 @@ async function fetchModelList(apiKey, baseUrl) {
     return { ok: false, modelIds: [], message };
   }
 }
+function maybeAutoCorrect(base, url, cb) {
+  if (!cb) return;
+  if (hasAnthropicPath(base)) return;
+  if (!/\/anthropic\/v1\/messages$/i.test(url)) return;
+  cb(url);
+}
 async function fetchAnthropicMessages(settings, messages, opts) {
+  var _a;
   const base = (settings.baseUrl || "https://api.deepseek.com/anthropic").trim().replace(/\/+$/, "");
   const body = {
     model: settings.model,
@@ -409,18 +447,40 @@ async function fetchAnthropicMessages(settings, messages, opts) {
     ...(opts == null ? void 0 : opts.tools) && opts.tools.length > 0 ? { tools: opts.tools } : {},
     stream: false
   };
-  const res = await (0, import_obsidian2.requestUrl)({
-    url: `${base}/v1/messages`,
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": settings.apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify(body),
-    throw: false
-  });
-  return { status: res.status, text: await extractResponseText(res) };
+  const candidates = chatEndpointCandidates(base);
+  let lastStatus = 0;
+  let lastUrl = "";
+  let requestError;
+  for (let i = 0; i < candidates.length; i++) {
+    const url = candidates[i];
+    lastUrl = url;
+    try {
+      const res = await (0, import_obsidian2.requestUrl)({
+        url,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": settings.apiKey,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify(body),
+        throw: false
+      });
+      const status = res.status;
+      if (status >= 200 && status < 300) {
+        maybeAutoCorrect(base, url, opts == null ? void 0 : opts.onAutoCorrect);
+        return { status, text: await extractResponseText(res), url };
+      }
+      lastStatus = status;
+      if (status === 404 && i < candidates.length - 1) continue;
+      return { status, text: (await extractResponseText(res)).slice(0, 300), url };
+    } catch (e) {
+      requestError = (_a = e == null ? void 0 : e.message) != null ? _a : "\u7F51\u7EDC\u9519\u8BEF";
+      if (i < candidates.length - 1) continue;
+      return { status: 0, text: "", requestError, url: lastUrl };
+    }
+  }
+  return { status: lastStatus, text: "", url: lastUrl, requestError };
 }
 async function streamAnthropicMessages(settings, messages, opts) {
   var _a;
@@ -433,33 +493,45 @@ async function streamAnthropicMessages(settings, messages, opts) {
     ...opts.tools && opts.tools.length > 0 ? { tools: opts.tools } : {},
     stream: true
   };
+  const candidates = chatEndpointCandidates(base);
+  let lastUrl = "";
+  let lastStatus = 0;
   try {
-    const res = await window.fetch(`${base}/v1/messages`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": settings.apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true"
-      },
-      body: JSON.stringify(body),
-      signal: opts.signal
-    });
-    if (!res.ok || !res.body) return { ok: false, status: res.status, error: `HTTP ${res.status}` };
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let text = "";
-    for (; ; ) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      text += decoder.decode(value, { stream: true });
+    for (let i = 0; i < candidates.length; i++) {
+      const url = lastUrl = candidates[i];
+      const res = await window.fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": settings.apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
+        body: JSON.stringify(body),
+        signal: opts.signal
+      });
+      if (res.ok && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        for (; ; ) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+        }
+        const events = parseAnthropicSSE(text.split("\n"));
+        for (const event of events) opts.onEvent(event);
+        maybeAutoCorrect(base, url, opts.onAutoCorrect);
+        return { ok: true, url };
+      }
+      lastStatus = res.status;
+      if (res.status === 404 && i < candidates.length - 1) continue;
+      return { ok: false, status: res.status, error: `HTTP ${res.status} POST ${url}`, url };
     }
-    const events = parseAnthropicSSE(text.split("\n"));
-    for (const event of events) opts.onEvent(event);
-    return { ok: true };
   } catch (e) {
-    return { ok: false, error: (_a = e == null ? void 0 : e.message) != null ? _a : "\u7F51\u7EDC\u9519\u8BEF" };
+    return { ok: false, error: (_a = e == null ? void 0 : e.message) != null ? _a : "\u7F51\u7EDC\u9519\u8BEF", url: lastUrl };
   }
+  return { ok: false, status: lastStatus, error: `HTTP ${lastStatus} POST ${lastUrl}`, url: lastUrl };
 }
 async function extractResponseText(res) {
   if (typeof (res == null ? void 0 : res.text) === "string" && res.text) return res.text;
@@ -617,7 +689,7 @@ var SettingsRenderer = class {
   }
   renderCustomProviderGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546", true);
-    const baseUrl = new import_obsidian3.Setting(bodyEl).setName("Base URL").setDesc("Anthropic \u517C\u5BB9\u670D\u52A1\u7684\u57FA\u7840\u5730\u5740\uFF0C\u9ED8\u8BA4 DeepSeek Anthropic \u7AEF\u70B9\u3002").addText(
+    const baseUrl = new import_obsidian3.Setting(bodyEl).setName("Base URL").setDesc("Anthropic \u517C\u5BB9\u670D\u52A1\u7684\u57FA\u7840\u5730\u5740\u3002\u586B https://api.deepseek.com \u6216 https://api.deepseek.com/anthropic \u5747\u53EF\uFF1A\u804A\u5929\u4F1A\u81EA\u52A8\u63A2\u6D4B /anthropic \u7AEF\u70B9\uFF0C\u6A21\u578B\u5217\u8868\u81EA\u52A8\u63A2\u6D4B\u6839\u7AEF\u70B9\u3002\u9ED8\u8BA4 DeepSeek Anthropic \u7AEF\u70B9\u3002").addText(
       (text) => text.setPlaceholder("https://api.deepseek.com/anthropic").setValue(this.plugin.settings.baseUrl).onChange((value) => this.updateSetting("baseUrl", value))
     );
     this.markSearchable(baseUrl, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546 base_url \u5730\u5740 base url anthropic");
@@ -1054,8 +1126,72 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     const body = root.createDiv({ cls: "ks-chat-content markdown-rendered" });
     return { root, body };
   }
-  errorBubble(text) {
-    this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-error" }).setText(text);
+  /** Render a copyable, self-diagnosing error block (used by every failure path). */
+  errorBlock(streamErr, nonStreamErr) {
+    const root = this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-error" });
+    const block = root.createDiv({ cls: "ks-chat-error-block" });
+    const pre = block.createEl("pre", { cls: "ks-chat-error-text" });
+    const lines = ["\u8BF7\u6C42\u5931\u8D25"];
+    if (streamErr) lines.push(`\u6D41\u5F0F\uFF1A${streamErr}`);
+    if (nonStreamErr) lines.push(`\u975E\u6D41\u5F0F\uFF1A${nonStreamErr}`);
+    lines.push(`\u63D0\u793A\uFF1A${this.errorHint()}`);
+    const text = lines.join("\n");
+    pre.setText(text);
+    const copyBtn = block.createEl("button", { cls: "ks-chat-copy ks-chat-copy-btn" });
+    copyBtn.setText("\u4E00\u952E\u590D\u5236");
+    copyBtn.addEventListener("click", () => this.copyToClipboard(text, copyBtn));
+  }
+  /** Build the diagnostic hint line from the current base URL configuration. */
+  errorHint() {
+    const base = (this.plugin.settings.baseUrl || "").trim();
+    if (hasAnthropicPath(base)) {
+      return "\u8BF7\u68C0\u67E5 API Key\u3001\u6A21\u578B\u540D\u4E0E\u7F51\u7EDC\u8FDE\u63A5\u3002";
+    }
+    const attemptedAnthropic = !hasAnthropicPath(base) && chatEndpointCandidates(base).length > 1;
+    if (attemptedAnthropic) {
+      return "\u5DF2\u81EA\u52A8\u5C1D\u8BD5\u8865\u5145 /anthropic \u524D\u7F00\u4ECD\u672A\u6210\u529F\u3002\u82E5\u4F7F\u7528 DeepSeek \u5B98\u65B9 API\uFF0C\u8BF7\u5728\u8BBE\u7F6E\u4E2D\u5C06 Base URL \u6539\u4E3A https://api.deepseek.com/anthropic\uFF08\u6216\u4FDD\u6301\u6839\u5730\u5740\uFF0C\u672C\u7248\u672C\u6BCF\u6B21\u90FD\u4F1A\u81EA\u52A8\u63A2\u6D4B\u4FEE\u6B63\uFF09\u3002";
+    }
+    return "\u8BF7\u68C0\u67E5 API Key\u3001\u6A21\u578B\u540D\u4E0E\u7F51\u7EDC\u8FDE\u63A5\u3002";
+  }
+  /** Copy `text` to the clipboard, keeping the UI under `btn` in sync. */
+  copyToClipboard(text, btn) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      navigator.clipboard.writeText(text).then(
+        () => this.markCopied(btn),
+        () => this.clipboardFallback(text, btn)
+      );
+    } else {
+      this.clipboardFallback(text, btn);
+    }
+  }
+  /** Flip the button to「已复制」then back to「一键复制」(short-lived confirmation). */
+  markCopied(btn) {
+    btn.setText("\u5DF2\u590D\u5236");
+    window.setTimeout(() => btn.setText("\u4E00\u952E\u590D\u5236"), 1500);
+  }
+  /** Legacy textarea+execCommand fallback; request the user to select on failure. */
+  clipboardFallback(text, btn) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.top = "0";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      this.markCopied(btn);
+    } catch (e) {
+      btn.setText("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u957F\u6309\u6587\u672C");
+    }
+  }
+  /** Persist an endpoint auto-correction and notify the user (explicit, not silent). */
+  handleAutoCorrect(url) {
+    const corrected = url.replace(/\/v1\/messages$/, "").replace(/\/+$/, "");
+    this.plugin.settings.baseUrl = corrected;
+    void this.plugin.saveSettings();
+    new import_obsidian5.Notice(`\u5DF2\u81EA\u52A8\u66F4\u6B63\u7AEF\u70B9\uFF1A${url}\uFF08\u8BBE\u7F6E\u4E2D\u7684 Base URL \u5DF2\u540C\u6B65\u66F4\u65B0\uFF09`);
   }
   async send(text) {
     var _a, _b;
@@ -1070,7 +1206,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       this.userBubble(userText);
       await this.runTurn();
     } catch (e) {
-      this.errorBubble("\u8BF7\u6C42\u5F02\u5E38\uFF1A" + ((_b = e == null ? void 0 : e.message) != null ? _b : "\u672A\u77E5\u9519\u8BEF"));
+      this.errorBlock("\u8BF7\u6C42\u5F02\u5E38\uFF1A" + ((_b = e == null ? void 0 : e.message) != null ? _b : "\u672A\u77E5\u9519\u8BEF"), null);
     } finally {
       this.busy = false;
       this.activeController = null;
@@ -1078,7 +1214,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     }
   }
   async runTurn() {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const { body } = this.assistantBubble();
     this.turnBlocks = [];
     this.turnStopReason = null;
@@ -1091,45 +1227,54 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       const st = await streamAnthropicMessages(this.plugin.settings, this.apiHistory, {
         tools: ANTHROPIC_TOOLS,
         signal: ac.signal,
-        onEvent: (event) => this.handleChatEvent(body, event)
+        onEvent: (event) => this.handleChatEvent(body, event),
+        onAutoCorrect: (url) => this.handleAutoCorrect(url)
       });
       if (st.ok) {
         streamOk = true;
       } else {
-        streamErr = (_a = st.error) != null ? _a : st.status != null ? `HTTP ${st.status}` : "\u7F51\u7EDC\u9519\u8BEF";
+        streamErr = st.status != null ? `HTTP ${st.status}\uFF08POST ${(_a = st.url) != null ? _a : "\u672A\u77E5"}\uFF09` : (_b = st.error) != null ? _b : "\u7F51\u7EDC\u9519\u8BEF";
       }
     } catch (e) {
-      streamErr = (_b = e == null ? void 0 : e.message) != null ? _b : "\u7F51\u7EDC\u9519\u8BEF";
+      streamErr = (_c = e == null ? void 0 : e.message) != null ? _c : "\u7F51\u7EDC\u9519\u8BEF";
     } finally {
       this.activeController = null;
     }
     if (streamOk) {
       if (this.turnError) {
-        this.errorBubble(this.turnError);
+        this.errorBlock(this.turnError, null);
         return;
       }
       await this.finishTurn(body, this.turnBlocks.filter(Boolean), this.turnStopReason);
       return;
     }
     let res;
+    let nonStreamErr = null;
     try {
-      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS });
+      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, {
+        tools: ANTHROPIC_TOOLS,
+        onAutoCorrect: (url) => this.handleAutoCorrect(url)
+      });
+      if (res.requestError != null) {
+        nonStreamErr = `\u7F51\u7EDC\u9519\u8BEF\uFF08POST ${(_d = res.url) != null ? _d : "\u672A\u77E5"}\uFF09\uFF1A${res.requestError}`;
+      } else if (res.status < 200 || res.status >= 300) {
+        nonStreamErr = `HTTP ${res.status}\uFF08POST ${(_e = res.url) != null ? _e : "\u672A\u77E5"}\uFF09`;
+      }
     } catch (e) {
-      this.errorBubble(`\u6D41\u5F0F\u5931\u8D25\uFF1A${streamErr != null ? streamErr : "\u672A\u77E5"}\uFF1B\u975E\u6D41\u5F0F\u5931\u8D25\uFF1A${(_c = e == null ? void 0 : e.message) != null ? _c : "\u672A\u77E5"}`);
+      nonStreamErr = `\u7F51\u7EDC\u9519\u8BEF\uFF08POST ${(_f = res == null ? void 0 : res.url) != null ? _f : "\u672A\u77E5"}\uFF09\uFF1A${(_g = e == null ? void 0 : e.message) != null ? _g : "\u672A\u77E5"}`;
+    }
+    if (res && res.status >= 200 && res.status < 300) {
+      let json = null;
+      try {
+        json = JSON.parse(res.text);
+      } catch (e) {
+        json = null;
+      }
+      const parsed = parseAnthropicResponse(json);
+      await this.finishTurn(body, parsed.blocks, (_h = parsed.stop_reason) != null ? _h : null);
       return;
     }
-    if (res.status < 200 || res.status >= 300) {
-      this.errorBubble(`\u6D41\u5F0F\u5931\u8D25\uFF1A${streamErr != null ? streamErr : "\u672A\u77E5"}\uFF1B\u975E\u6D41\u5F0F\u5931\u8D25\uFF1AHTTP ${res.status}`);
-      return;
-    }
-    let json = null;
-    try {
-      json = JSON.parse(res.text);
-    } catch (e) {
-      json = null;
-    }
-    const parsed = parseAnthropicResponse(json);
-    await this.finishTurn(body, parsed.blocks, (_d = parsed.stop_reason) != null ? _d : null);
+    this.errorBlock(streamErr, nonStreamErr);
   }
   handleChatEvent(body, ev) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;

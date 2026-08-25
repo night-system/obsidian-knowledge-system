@@ -1,7 +1,8 @@
-import { ItemView, MarkdownRenderer, WorkspaceLeaf, setIcon } from 'obsidian';
+import { ItemView, MarkdownRenderer, WorkspaceLeaf, Notice, setIcon } from 'obsidian';
 import type KnowledgeSystemPlugin from './main';
 import { fetchAnthropicMessages, streamAnthropicMessages, AnthropicChatMessage } from './core';
 import { parseAnthropicResponse, AnthropicBlock } from './utils/sse';
+import { chatEndpointCandidates, hasAnthropicPath } from './utils/endpoints';
 import { ANTHROPIC_TOOLS, listRecentNotesTool, readNoteTool, createNoteTool, ToolCtx } from './utils/tools';
 
 /** The workspace view type for the chat view. Contract value. */
@@ -125,8 +126,78 @@ export class KnowledgeChatView extends ItemView {
     return { root, body };
   }
 
-  private errorBubble(text: string): void {
-    this.scrollEl.createDiv({ cls: 'ks-chat-msg ks-chat-error' }).setText(text);
+  /** Render a copyable, self-diagnosing error block (used by every failure path). */
+  private errorBlock(streamErr: string | null, nonStreamErr: string | null): void {
+    const root = this.scrollEl.createDiv({ cls: 'ks-chat-msg ks-chat-error' });
+    const block = root.createDiv({ cls: 'ks-chat-error-block' });
+    const pre = block.createEl('pre', { cls: 'ks-chat-error-text' });
+    const lines = ['请求失败'];
+    if (streamErr) lines.push(`流式：${streamErr}`);
+    if (nonStreamErr) lines.push(`非流式：${nonStreamErr}`);
+    lines.push(`提示：${this.errorHint()}`);
+    const text = lines.join('\n');
+    pre.setText(text);
+
+    const copyBtn = block.createEl('button', { cls: 'ks-chat-copy ks-chat-copy-btn' });
+    copyBtn.setText('一键复制');
+    copyBtn.addEventListener('click', () => this.copyToClipboard(text, copyBtn));
+  }
+
+  /** Build the diagnostic hint line from the current base URL configuration. */
+  private errorHint(): string {
+    const base = (this.plugin.settings.baseUrl || '').trim();
+    if (hasAnthropicPath(base)) {
+      return '请检查 API Key、模型名与网络连接。';
+    }
+    const attemptedAnthropic = !hasAnthropicPath(base) && chatEndpointCandidates(base).length > 1;
+    if (attemptedAnthropic) {
+      return '已自动尝试补充 /anthropic 前缀仍未成功。若使用 DeepSeek 官方 API，请在设置中将 Base URL 改为 https://api.deepseek.com/anthropic（或保持根地址，本版本每次都会自动探测修正）。';
+    }
+    return '请检查 API Key、模型名与网络连接。';
+  }
+
+  /** Copy `text` to the clipboard, keeping the UI under `btn` in sync. */
+  private copyToClipboard(text: string, btn: HTMLElement): void {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(text).then(
+        () => this.markCopied(btn),
+        () => this.clipboardFallback(text, btn)
+      );
+    } else {
+      this.clipboardFallback(text, btn);
+    }
+  }
+
+  /** Flip the button to「已复制」then back to「一键复制」(short-lived confirmation). */
+  private markCopied(btn: HTMLElement): void {
+    btn.setText('已复制');
+    window.setTimeout(() => btn.setText('一键复制'), 1500);
+  }
+
+  /** Legacy textarea+execCommand fallback; request the user to select on failure. */
+  private clipboardFallback(text: string, btn: HTMLElement): void {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      this.markCopied(btn);
+    } catch {
+      btn.setText('复制失败，请长按文本');
+    }
+  }
+
+  /** Persist an endpoint auto-correction and notify the user (explicit, not silent). */
+  private handleAutoCorrect(url: string): void {
+    const corrected = url.replace(/\/v1\/messages$/, '').replace(/\/+$/, '');
+    this.plugin.settings.baseUrl = corrected;
+    void this.plugin.saveSettings();
+    new Notice(`已自动更正端点：${url}（设置中的 Base URL 已同步更新）`);
   }
 
   async send(text?: string): Promise<void> {
@@ -141,7 +212,7 @@ export class KnowledgeChatView extends ItemView {
       this.userBubble(userText);
       await this.runTurn();
     } catch (e) {
-      this.errorBubble('请求异常：' + ((e as { message?: string })?.message ?? '未知错误'));
+      this.errorBlock('请求异常：' + ((e as { message?: string })?.message ?? '未知错误'), null);
     } finally {
       this.busy = false;
       this.activeController = null;
@@ -164,11 +235,12 @@ export class KnowledgeChatView extends ItemView {
         tools: ANTHROPIC_TOOLS,
         signal: ac.signal,
         onEvent: (event) => this.handleChatEvent(body, event),
+        onAutoCorrect: (url) => this.handleAutoCorrect(url),
       });
       if (st.ok) {
         streamOk = true;
       } else {
-        streamErr = st.error ?? (st.status != null ? `HTTP ${st.status}` : '网络错误');
+        streamErr = st.status != null ? `HTTP ${st.status}（POST ${st.url ?? '未知'}）` : (st.error ?? '网络错误');
       }
     } catch (e) {
       streamErr = (e as { message?: string })?.message ?? '网络错误';
@@ -178,7 +250,7 @@ export class KnowledgeChatView extends ItemView {
 
     if (streamOk) {
       if (this.turnError) {
-        this.errorBubble(this.turnError);
+        this.errorBlock(this.turnError, null);
         return;
       }
       await this.finishTurn(body, this.turnBlocks.filter(Boolean), this.turnStopReason);
@@ -187,24 +259,32 @@ export class KnowledgeChatView extends ItemView {
 
     // Fallback: requestUrl + non-stream (mobile requestUrl can't parse chunked SSE).
     let res;
+    let nonStreamErr: string | null = null;
     try {
-      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS });
+      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, {
+        tools: ANTHROPIC_TOOLS,
+        onAutoCorrect: (url) => this.handleAutoCorrect(url),
+      });
+      if (res.requestError != null) {
+        nonStreamErr = `网络错误（POST ${res.url ?? '未知'}）：${res.requestError}`;
+      } else if (res.status < 200 || res.status >= 300) {
+        nonStreamErr = `HTTP ${res.status}（POST ${res.url ?? '未知'}）`;
+      }
     } catch (e) {
-      this.errorBubble(`流式失败：${streamErr ?? '未知'}；非流式失败：${(e as { message?: string })?.message ?? '未知'}`);
+      nonStreamErr = `网络错误（POST ${res?.url ?? '未知'}）：${(e as { message?: string })?.message ?? '未知'}`;
+    }
+    if (res && res.status >= 200 && res.status < 300) {
+      let json: any = null;
+      try {
+        json = JSON.parse(res.text);
+      } catch {
+        json = null;
+      }
+      const parsed = parseAnthropicResponse(json);
+      await this.finishTurn(body, parsed.blocks, parsed.stop_reason ?? null);
       return;
     }
-    if (res.status < 200 || res.status >= 300) {
-      this.errorBubble(`流式失败：${streamErr ?? '未知'}；非流式失败：HTTP ${res.status}`);
-      return;
-    }
-    let json: any = null;
-    try {
-      json = JSON.parse(res.text);
-    } catch {
-      json = null;
-    }
-    const parsed = parseAnthropicResponse(json);
-    await this.finishTurn(body, parsed.blocks, parsed.stop_reason ?? null);
+    this.errorBlock(streamErr, nonStreamErr);
   }
 
   private handleChatEvent(body: HTMLElement, ev: { event: string; data: unknown }): void {

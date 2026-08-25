@@ -175,6 +175,41 @@
   border: 1px solid var(--background-modifier-border);
 }
 
+.ks-chat-error-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--size-2-2);
+  width: 100%;
+}
+
+.ks-chat-error-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+  color: var(--text-error);
+  background: var(--background-primary);
+  border-radius: var(--radius-s);
+  padding: var(--size-2-2);
+}
+
+.ks-chat-copy {
+  align-self: flex-start;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border: none;
+  border-radius: var(--radius-s);
+  padding: var(--size-2-1) var(--size-2-2);
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+}
+
+.ks-chat-copy:hover {
+  background: var(--background-modifier-hover);
+}
+
 .ks-chat-inputbar {
   display: flex;
   gap: var(--size-2-2);

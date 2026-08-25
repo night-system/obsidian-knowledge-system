@@ -1,6 +1,6 @@
 # obsidian-knowledge-system
 
-配置驱动的 AI 知识系统框架。v0.3.1 接入 **Anthropic 兼容协议**（`POST {baseUrl}/v1/messages`，`x-api-key`）、**内置工具集**（`list_recent_notes` / `read_note` / `create_note`）、**AI 聊天视图**与「测试任务」按钮；聊天用**原生 `fetch` 流式**（桌面 Electron + 移动端 WebView 均可，端点 CORS 已放行），**兼容性不佳时自动降级为非流式**（`requestUrl` + `stream:false`）；v0.2.0 起还含独立**设置视图**、**动态输出属性**、**测试工具**标签页。
+配置驱动的 AI 知识系统框架。v0.3.2 增加 **Base URL 端点自动探测**：聊天端点自动探测 `/anthropic` 前缀（DeepSeek 官方 `https://api.deepseek.com/anthropic`），模型列表自动探测根端点，404 时**自动纠偏并回写设置**，并在聊天页显示**一键可复制的诊断错误**。v0.3.1 接入 **Anthropic 兼容协议**（`POST {baseUrl}/v1/messages`，`x-api-key`）、**内置工具集**（`list_recent_notes` / `read_note` / `create_note`）、**AI 聊天视图**与「测试任务」按钮；聊天用**原生 `fetch` 流式**（桌面 Electron + 移动端 WebView 均可，端点 CORS 已放行），**兼容性不佳时自动降级为非流式**（`requestUrl` + `stream:false`）；v0.2.0 起还含独立**设置视图**、**动态输出属性**、**测试工具**标签页。
 
 ---
 
@@ -150,6 +150,26 @@ source: notes/example.md
 - 网络请求仅使用 Obsidian 原生 `requestUrl` 通道，不依赖 `fetch` 或 Node 的 `http` / `fs` / `path`。
 - 文件夹选择器使用 Obsidian 原生 `AbstractInputSuggest`（设置页、命令、Notice 在移动端均正常）。
 - 不使用任何桌面端专属 API，也不引入运行时依赖。
+
+---
+
+## 已知问题与兼容说明（v0.3.2）
+
+- **Base URL 填 `https://api.deepseek.com` 或 `https://api.deepseek.com/anthropic` 均可**：聊天端点自动探测 `/anthropic` 前缀，模型列表自动探测根端点，404 时自动纠偏并在聊天页显示**一键可复制的诊断错误**。
+- 若你的服务商把 Anthropic 兼容聊天端点挂在根路径（非 `/anthropic` 前缀），插件会按原样请求 `{base}/v1/messages`，不会强行补 `/anthropic`（避免破坏自建网关）。
+- 当探测发现「设置里少了 `/anthropic` 前缀、但 `/anthropic` 端点为成功候选」时，插件会弹 Notice「已自动更正端点：…」，并把设置里的 Base URL 同步更新为含 `/anthropic` 的版本；若你用的是自建网关（根路径本就能 200），不会触发此纠偏。
+- 诊断错误块包含流式/非流式的状态码与实际请求的完整 URL，以及针对性的提示，便于定位网络/密钥/模型名问题。
+
+---
+
+## 更新日志
+
+### v0.3.2（Base URL 端点自动探测）
+- 新增纯函数模块 `src/utils/endpoints.ts`：`chatEndpointCandidates` / `modelsEndpointCandidates`（含 `/anthropic` 段补全/去除的候选变换，不硬编码服务商域名）。
+- 聊天协议（流式与非流式）改为**逐候选探测**：仅当状态码 404 且还有候选时换下一个；其余失败立即返回，错误文案携带**实际请求的完整 URL**。
+- 模型列表改用 `modelsEndpointCandidates`，修复「填了 `/anthropic` 后模型列表 404」的对称问题；成功消息带实际 URL。
+- 自动纠偏：当「设置缺 `/anthropic`、第 2 个候选成功」时弹 Notice 并回写 `settings.baseUrl` 为含 `/anthropic` 的版本。
+- 聊天页错误气泡改为**可复制错误块**（一键复制，`navigator.clipboard` + `textarea/execCommand` 兜底），流式/非流式/请求异常三条失败路径共用。
 
 ---
 

@@ -1,9 +1,9 @@
 {
 	"id": "obsidian-knowledge-system",
 	"name": "Knowledge System",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"minAppVersion": "1.5.0",
-	"description": "配置驱动的 AI 知识系统框架。v0.3.0：Anthropic 兼容协议（x-api-key / v1/messages）、内置工具集（list_recent_notes / read_note / create_note）、AI 流式聊天视图、测试按钮；v0.2.0 起含独立设置视图、动态输出属性、测试工具 tab。",
+	"description": "配置驱动的 AI 知识系统框架。v0.3.2：Base URL 端点自动探测（聊天自动修正 /anthropic 前缀、模型列表自动探测根端点、404 自动纠偏并回写设置、一键可复制诊断错误）；v0.3.0 起含 Anthropic 兼容协议（x-api-key / v1/messages）、内置工具集、AI 流式聊天视图、测试按钮、独立设置视图。",
 	"author": "night-system",
 	"authorUrl": "https://github.com/night-system",
 	"isDesktopOnly": false

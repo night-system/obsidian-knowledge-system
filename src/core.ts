@@ -3,6 +3,11 @@ import type { App, Command } from 'obsidian';
 import { KnowledgeSystemSettings } from './settings';
 import { parseAnthropicSSE } from './utils/sse';
 import {
+  chatEndpointCandidates,
+  hasAnthropicPath,
+  modelsEndpointCandidates,
+} from './utils/endpoints';
+import {
   buildFrontmatter,
   countRecent,
   extractLastChars,
@@ -215,10 +220,12 @@ async function listFromResponse(res: any): Promise<string[] | null> {
 }
 
 /**
- * Fetch the provider's model list. Anthropic-compatible endpoints have no
- * `GET /models`, so we try `{baseUrl}/models` first (OpenAI-compatible), then
- * `{baseUrl}/v1/models`, and surface a readable error if both fail. Uses the
- * module-level `requestUrl` (no fetch / Node http). Ids come only from the API.
+ * Fetch the provider's model list. The endpoint is probed via
+ * `modelsEndpointCandidates(baseUrl)` so a base that carries the `/anthropic`
+ * chat prefix (e.g. `https://api.deepseek.com/anthropic`) is correctly
+ * redirected to the root `/models` route, while a plain base keeps the
+ * `{base}/models` → `{base}/v1/models` fallback. Uses the module-level
+ * `requestUrl` (no fetch / Node http). Ids come only from the API.
  */
 export async function fetchModelList(
   apiKey: string,
@@ -234,16 +241,16 @@ export async function fetchModelList(
 
   try {
     let lastStatus = 0;
-    for (const suffix of ['/models', '/v1/models']) {
+    for (const url of modelsEndpointCandidates(base)) {
       const res = await requestUrl({
-        url: `${base}${suffix}`,
+        url,
         method: 'GET',
         headers: { Authorization: `Bearer ${key}` },
         throw: false,
       });
       const ids = await listFromResponse(res);
       if (ids && ids.length > 0) {
-        const message = `成功获取 ${ids.length} 个模型：${ids[0]}`;
+        const message = `成功获取 ${ids.length} 个模型：${ids[0]}（${url}）`;
         new Notice(message);
         return { ok: true, modelIds: ids, message };
       }
@@ -269,17 +276,31 @@ export interface AnthropicChatMessage {
 }
 
 /**
- * Fallback chat request: POST `{baseUrl}/v1/messages` non-streaming via the
+ * If a chat request landed on the `/anthropic`-supplemented candidate while the
+ * configured base URL did not carry an `/anthropic` segment, ask the caller to
+ * persist the correction (explicit auto-correct: the user is notified).
+ */
+function maybeAutoCorrect(base: string, url: string, cb?: (url: string) => void): void {
+  if (!cb) return;
+  if (hasAnthropicPath(base)) return; // user already configured the /anthropic prefix
+  if (!/\/anthropic\/v1\/messages$/i.test(url)) return; // success wasn't the correction candidate
+  cb(url);
+}
+
+/**
+ * Fallback chat request: POST the chat endpoint non-streaming via the
  * module-level `requestUrl` (mobile `requestUrl` cannot parse a chunked SSE
- * body). Returns `{ status, text }` where `text` is the full JSON body, which
- * the caller parses with `parseAnthropicResponse`. Used when native `fetch`
- * streaming fails or is unsupported.
+ * body). Probes `chatEndpointCandidates(baseUrl)` in order, so a base that
+ * lacks the `/anthropic` prefix is auto-corrected. Returns `{ status, text }`
+ * (plus `url`/`requestError` when meaningful); `text` is the full JSON body on
+ * 2xx, else readable/truncated to 300 chars so the UI can lean on the status.
+ * The caller parses `text` with `parseAnthropicResponse`.
  */
 export async function fetchAnthropicMessages(
   settings: { baseUrl: string; apiKey: string; model: string },
   messages: AnthropicChatMessage[],
-  opts?: { system?: string; tools?: unknown[] }
-): Promise<{ status: number; text: string }> {
+  opts?: { system?: string; tools?: unknown[]; onAutoCorrect?: (url: string) => void }
+): Promise<{ status: number; text: string; url?: string; requestError?: string }> {
   const base = (settings.baseUrl || 'https://api.deepseek.com/anthropic').trim().replace(/\/+$/, '');
   const body: Record<string, unknown> = {
     model: settings.model,
@@ -290,18 +311,44 @@ export async function fetchAnthropicMessages(
     stream: false,
   };
 
-  const res = await requestUrl({
-    url: `${base}/v1/messages`,
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': settings.apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(body),
-    throw: false,
-  });
-  return { status: res.status, text: await extractResponseText(res) };
+  const candidates = chatEndpointCandidates(base);
+  let lastStatus = 0;
+  let lastUrl = '';
+  let requestError: string | undefined;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const url = candidates[i];
+    lastUrl = url;
+    try {
+      const res = await requestUrl({
+        url,
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': settings.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify(body),
+        throw: false,
+      });
+      const status = res.status;
+      if (status >= 200 && status < 300) {
+        maybeAutoCorrect(base, url, opts?.onAutoCorrect);
+        return { status, text: await extractResponseText(res), url };
+      }
+      lastStatus = status;
+      // 404 with a candidate left → the route may be missing its /anthropic prefix.
+      if (status === 404 && i < candidates.length - 1) continue;
+      // Any other non-2xx (or the last 404): keep the status, expose readable text.
+      return { status, text: (await extractResponseText(res)).slice(0, 300), url };
+    } catch (e) {
+      requestError = (e as { message?: string })?.message ?? '网络错误';
+      // A network failure on one candidate shouldn't mask a working sibling.
+      if (i < candidates.length - 1) continue;
+      return { status: 0, text: '', requestError, url: lastUrl };
+    }
+  }
+  return { status: lastStatus, text: '', url: lastUrl, requestError };
 }
 
 /**
@@ -309,14 +356,24 @@ export async function fetchAnthropicMessages(
  * Electron and mobile WebView; the endpoint's CORS preflight allows the headers
  * below). Reads the SSE body chunk-by-chunk with `res.body.getReader()`,
  * accumulates it, then hands each parsed event to `onEvent` so the UI can re-render
- * incrementally. `opts.signal` supports abort. On failure/unsupported it resolves
- * `{ ok:false }` so the caller can fall back to `fetchAnthropicMessages`.
+ * incrementally. `opts.signal` supports abort. The endpoint is probed via
+ * `chatEndpointCandidates(baseUrl)`: a 404 (missing `/anthropic` prefix) moves
+ * to the next candidate while any other failure aborts immediately with
+ * `{ ok:false, status?, error?, url? }` so the caller can fall back to
+ * `fetchAnthropicMessages`. On a successful `/anthropic` correction the caller
+ * is asked (via `opts.onAutoCorrect`) to persist the corrected base URL.
  */
 export async function streamAnthropicMessages(
   settings: { baseUrl: string; apiKey: string; model: string },
   messages: AnthropicChatMessage[],
-  opts: { system?: string; tools?: unknown[]; signal?: AbortSignal; onEvent: (event: { event: string; data: unknown }) => void }
-): Promise<{ ok: boolean; status?: number; error?: string }> {
+  opts: {
+    system?: string;
+    tools?: unknown[];
+    signal?: AbortSignal;
+    onEvent: (event: { event: string; data: unknown }) => void;
+    onAutoCorrect?: (url: string) => void;
+  }
+): Promise<{ ok: boolean; status?: number; error?: string; url?: string }> {
   const base = (settings.baseUrl || 'https://api.deepseek.com/anthropic').trim().replace(/\/+$/, '');
   const body: Record<string, unknown> = {
     model: settings.model,
@@ -327,34 +384,50 @@ export async function streamAnthropicMessages(
     stream: true,
   };
 
-  try {
-    const res = await window.fetch(`${base}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': settings.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify(body),
-      signal: opts.signal,
-    });
-    if (!res.ok || !res.body) return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+  const candidates = chatEndpointCandidates(base);
+  let lastUrl = '';
+  let lastStatus = 0;
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let text = '';
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      text += decoder.decode(value, { stream: true });
+  try {
+    for (let i = 0; i < candidates.length; i++) {
+      const url = (lastUrl = candidates[i]);
+      const res = await window.fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': settings.apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify(body),
+        signal: opts.signal,
+      });
+      if (res.ok && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let text = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+        }
+        const events = parseAnthropicSSE(text.split('\n'));
+        for (const event of events) opts.onEvent(event);
+        maybeAutoCorrect(base, url, opts.onAutoCorrect);
+        return { ok: true, url };
+      }
+      lastStatus = res.status;
+      // A missing route (404) may be the missing /anthropic prefix → try the next.
+      if (res.status === 404 && i < candidates.length - 1) continue;
+      // Any other failure: surface the actual requested URL for diagnosis.
+      return { ok: false, status: res.status, error: `HTTP ${res.status} POST ${url}`, url };
     }
-    const events = parseAnthropicSSE(text.split('\n'));
-    for (const event of events) opts.onEvent(event);
-    return { ok: true };
   } catch (e) {
-    return { ok: false, error: (e as { message?: string })?.message ?? '网络错误' };
+    return { ok: false, error: (e as { message?: string })?.message ?? '网络错误', url: lastUrl };
   }
+
+  // All candidates 404 (defensive; the loop returns on its last 404 candidate).
+  return { ok: false, status: lastStatus, error: `HTTP ${lastStatus} POST ${lastUrl}`, url: lastUrl };
 }
 
 /** Read the raw body text from a `requestUrl` response (Obsidian or mock). */

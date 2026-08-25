@@ -1,4 +1,11 @@
 import { stripFrontmatter } from './index';
+import type { YamlRule } from '../settings';
+import {
+  applyDefaults,
+  parseYamlObject,
+  serializeYamlFromObj,
+  validateYamlRules,
+} from './yamlRules';
 
 /**
  * Anthropic-compatible built-in tools: pure validation / mat[]ching / YAML
@@ -18,10 +25,22 @@ export interface ToolCtx {
     timeFormat?: string;
     recentDays?: number;
     earliestTime?: string;
+    yamlRules?: YamlRule[];
   };
   now?: number;
   moment?: any;
 }
+
+/** Shape of one Anthropic-compatible tool in the request. */
+export type AnthropicTool = {
+  name: string;
+  description: string;
+  input_schema: {
+    type: 'object';
+    properties: Record<string, any>;
+    required: string[];
+  };
+};
 
 /** Duck-typed shape of an Obsidian `TFile` (the harness uses a plain object). */
 interface VaultFile {
@@ -36,40 +55,78 @@ interface VaultFile {
 const DAY_MS = 86_400_000;
 const FALLBACK_FORMATS = ['YYYY-MM-DD', 'YYYY.MM.DD', 'YYYY/MM/DD'];
 
-/** Anthropic `tools` schema for the chat request. */
-export const ANTHROPIC_TOOLS = [
-  {
-    name: 'list_recent_notes',
-    description: '列出源文件夹内最近 N 天的 Markdown 笔记（标题 + 时间）。',
-    input_schema: {
-      type: 'object',
-      properties: { days: { type: 'integer', description: '回看天数；缺省用设置的最近 N 天' } },
-      required: [],
-    },
-  },
-  {
-    name: 'read_note',
-    description: '读取源文件夹内某篇笔记的正文（去除 YAML frontmatter）。',
-    input_schema: {
-      type: 'object',
-      properties: { name: { type: 'string', description: '笔记文件名（可带或不带 .md 后缀）' } },
-      required: ['name'],
-    },
-  },
-  {
-    name: 'create_note',
-    description: '在输出文件夹创建一篇新笔记。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string', description: '文件名（不含 .md 后缀）' },
-        yaml: { type: 'object', description: 'frontmatter 键值对' },
-        content: { type: 'string', description: '正文' },
+/**
+ * Build the Anthropic `tools` schema for the chat request, embedding the
+ * configured `create_note` YAML frontmatter rules so the AI sees the allowed
+ * keys, their explanations, and the optional enum of allowed values. With no
+ * rules the output is identical to the legacy static array.
+ */
+export function buildAnthropicTools(yamlRules?: YamlRule[]): AnthropicTool[] {
+  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  const yamlDesc =
+    'frontmatter 键值对对象（YAML frontmatter 区）。项目已配置以下属性规则：' +
+    rules
+      .map(
+        (r) =>
+          `- ${r.key}：${r.desc}` +
+          (r.values?.length ? `（可选值：${r.values.join('/')}）` : '') +
+          (r.default ? `（默认值：${r.default}）` : '')
+      )
+      .join('\n') +
+    '\n规则未列出的键名可以随意添加；规则内键名请严格遵守可选值，否则创建会被拒绝。';
+
+  const yamlSchema: any = { type: 'object', description: yamlDesc };
+  if (rules.length > 0) {
+    const props: Record<string, any> = {};
+    for (const r of rules) {
+      if (!r.key) continue;
+      props[r.key] = {
+        type: 'string',
+        description: r.desc,
+        ...(r.values?.length ? { enum: r.values } : {}),
+      };
+    }
+    yamlSchema.properties = props;
+    yamlSchema.required = []; // 规则键不强制 AI 填写
+  }
+
+  return [
+    {
+      name: 'list_recent_notes',
+      description: '列出源文件夹内最近 N 天的 Markdown 笔记（标题 + 时间）。',
+      input_schema: {
+        type: 'object',
+        properties: { days: { type: 'integer', description: '回看天数；缺省用设置的最近 N 天' } },
+        required: [],
       },
-      required: ['title'],
     },
-  },
-];
+    {
+      name: 'read_note',
+      description: '读取源文件夹内某篇笔记的正文（去除 YAML frontmatter）。',
+      input_schema: {
+        type: 'object',
+        properties: { name: { type: 'string', description: '笔记文件名（可带或不带 .md 后缀）' } },
+        required: ['name'],
+      },
+    },
+    {
+      name: 'create_note',
+      description: '在输出文件夹创建一篇新笔记。',
+      input_schema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: '文件名（不含 .md 后缀）' },
+          yaml: yamlSchema,
+          content: { type: 'string', description: '正文' },
+        },
+        required: ['title'],
+      },
+    },
+  ];
+}
+
+/** Anthropic `tools` schema for the chat request (no YAML rules by default). */
+export const ANTHROPIC_TOOLS: AnthropicTool[] = buildAnthropicTools([]);
 
 /** Strip the trailing `.md` extension. */
 function stripExt(name: string): string {
@@ -128,8 +185,8 @@ function joinVaultPath(folder: string, name: string): string {
   return (base ? base + '/' + name : name).replace(/\/+/g, '/').replace(/^\/+/, '');
 }
 
-/** Serialize an object/string into YAML frontmatter body lines. */
-function serializeYaml(yaml: unknown): string {
+/** Serialize an object/string into YAML frontmatter body lines (kept for import compat). */
+export function serializeYaml(yaml: unknown): string {
   if (yaml == null) return '';
   if (typeof yaml === 'string') return yaml.trim().replace(/^\n+|\n+$/g, '');
   if (typeof yaml === 'object') {
@@ -205,10 +262,18 @@ export async function createNoteTool(
   const title = (args?.title || '').trim();
   if (!isValidFilename(title)) return { error: 'ERROR: 非法文件名' };
 
+  const rules = settings.yamlRules ?? [];
+  const obj = parseYamlObject(args?.yaml);
+  const err = validateYamlRules(obj, rules);
+  if (err) return { error: err }; // 校验失败：不落盘，错误回给 AI
+
+  const moment = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
+  const filled = applyDefaults(obj, rules, { moment, now: ctx.now });
+
   const folder = (settings.outputFolder || '/').trim();
   const name = title.toLowerCase().endsWith('.md') ? title : title + '.md';
   const path = joinVaultPath(folder, name);
-  const yamlStr = serializeYaml(args?.yaml);
+  const yamlStr = serializeYamlFromObj(filled);
   const body = `${args?.content ?? ''}`;
   const full = yamlStr ? `---\n${yamlStr}\n---\n${body}` : `---\n---\n${body}`;
 

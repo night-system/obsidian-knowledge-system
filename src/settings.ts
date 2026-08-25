@@ -7,6 +7,23 @@
  * user-configurable so the plugin adapts to an existing vault instead of
  * hardcoding frontmatter property names.
  */
+/**
+ * One configurable frontmatter property rule for the `create_note` tool.
+ * `values` empty = any value allowed (no validation); `default` empty = the
+ * property is not added when the AI omits it, and may carry a moment template
+ * like `{{YYYY.MM.DD}}` rendered at creation time.
+ */
+export interface YamlRule {
+  /** Frontmatter property name. */
+  key: string;
+  /** Human explanation, shown to the AI in the tool description. */
+  desc: string;
+  /** Allowed values; empty array = arbitrary (no validation). */
+  values: string[];
+  /** Default value; empty = not added when the AI omits it. */
+  default: string;
+}
+
 export interface KnowledgeSystemSettings {
   /** Main provider API key (masked text input). */
   apiKey: string;
@@ -48,6 +65,8 @@ export interface KnowledgeSystemSettings {
    * name plus its default value (written by the output command). Legacy
    * review/category fields are migrated here on first load. */
   extraProperties: { key: string; value: string }[];
+  /** Frontmatter property rules applied when the AI creates a note (v0.4.0). */
+  yamlRules: YamlRule[];
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -70,4 +89,5 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   customApiKey: '',
   customModel: '',
   extraProperties: [],
+  yamlRules: [],
 };

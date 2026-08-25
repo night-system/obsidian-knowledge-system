@@ -1,7 +1,7 @@
 import { Notice, requestUrl, TFile, TFolder } from 'obsidian';
 import type { App, Command } from 'obsidian';
 import { KnowledgeSystemSettings } from './settings';
-import { parseAnthropicSSE } from './utils/sse';
+import { createIncrementalSseParser } from './utils/sse';
 import {
   chatEndpointCandidates,
   hasAnthropicPath,
@@ -373,7 +373,7 @@ export async function streamAnthropicMessages(
     onEvent: (event: { event: string; data: unknown }) => void;
     onAutoCorrect?: (url: string) => void;
   }
-): Promise<{ ok: boolean; status?: number; error?: string; url?: string }> {
+): Promise<{ ok: boolean; status?: number; error?: string; url?: string; chunks?: number; events?: number }> {
   const base = (settings.baseUrl || 'https://api.deepseek.com/anthropic').trim().replace(/\/+$/, '');
   const body: Record<string, unknown> = {
     model: settings.model,
@@ -405,16 +405,33 @@ export async function streamAnthropicMessages(
       if (res.ok && res.body) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let text = '';
+        // Parse the SSE body incrementally: every closed frame is handed to
+        // `onEvent` the moment its blank line arrives, so the UI re-renders per
+        // token instead of buffering the whole body (the previous fake-streaming
+        // cause of "one big block appears at once").
+        let chunks = 0;
+        let events = 0;
+        const parser = createIncrementalSseParser((ev) => {
+          events++;
+          opts.onEvent(ev);
+        });
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
-          text += decoder.decode(value, { stream: true });
+          chunks++;
+          parser.push(decoder.decode(value, { stream: true }));
         }
-        const events = parseAnthropicSSE(text.split('\n'));
-        for (const event of events) opts.onEvent(event);
+        parser.push(decoder.decode()); // flush any residual multi-byte sequence
+        parser.flush();
+        parser.reset(); // release the incremental parser's buffer after a committed flush
         maybeAutoCorrect(base, url, opts.onAutoCorrect);
-        return { ok: true, url };
+        // 2xx with a parseable body must still yield at least one frame; a
+        // zero-event stream is a parse failure so the caller falls back to the
+        // non-streaming path (contract 10.3).
+        if (events > 0) {
+          return { ok: true, url, chunks, events };
+        }
+        return { ok: false, status: res.status, error: '流式响应未解析到事件', url, chunks, events };
       }
       lastStatus = res.status;
       // A missing route (404) may be the missing /anthropic prefix → try the next.

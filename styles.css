@@ -120,6 +120,16 @@
   min-width: 10em;
 }
 
+/* AI 创建属性规则 rows (key + desc + allowed values + default + delete). */
+.ks-yaml-rule-row .setting-item-control {
+  flex-wrap: nowrap;
+  gap: var(--size-2-2);
+}
+
+.ks-yaml-rule-row .setting-item-control .text-input {
+  min-width: 8em;
+}
+
 /* Standalone settings view (workspace leaf). */
 .ks-view {
   padding: var(--size-4-2) var(--size-4-3);
@@ -145,15 +155,34 @@
   padding-bottom: var(--size-4-2);
 }
 
+/* Base message bubble. */
 .ks-chat-msg {
   max-width: 100%;
   border-radius: var(--radius-m);
   padding: var(--size-2-2) var(--size-4-2);
 }
 
+/* Message header row (role / model badge). */
+.ks-chat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  margin-bottom: var(--size-2-1);
+}
+
+.ks-chat-head-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+/* User bubble: right-aligned capsule (dsh: max-width:min(525px,82%), r22px). */
 .ks-chat-user {
   align-self: flex-end;
-  background: var(--background-secondary);
+  background: var(--background-modifier-hover);
+  max-width: min(525px, 82%);
+  border-radius: 22px;
   color: var(--text-normal);
 }
 
@@ -162,17 +191,42 @@
   color: var(--text-normal);
 }
 
+/* Assistant bubble: transparent, full width. */
 .ks-chat-ai {
   align-self: stretch;
+  background: transparent;
 }
 
 .ks-chat-ai .ks-chat-content.markdown-rendered {
   color: var(--text-normal);
 }
 
+/* Persistent per-block container (low-flicker incremental render). */
+.ks-chat-block {
+  display: block;
+  width: 100%;
+}
+
+.ks-chat-markdown {
+  word-break: break-word;
+}
+
+/* Blinking streaming cursor at the insertion point. */
+.ks-stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--text-normal);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: ks-blink 0.9s steps(2) infinite;
+}
+
+/* Error block: subtle error tint. */
 .ks-chat-error {
+  background: rgba(var(--background-modifier-error-rgb), 0.05);
+  border-radius: var(--radius-m);
   color: var(--text-error);
-  border: 1px solid var(--background-modifier-border);
 }
 
 .ks-chat-error-block {
@@ -210,31 +264,95 @@
   background: var(--background-modifier-hover);
 }
 
+/* Cardified input bar (dsh: rounded 22px — Obsidian --radius-l on desktop,
+   --radius-m on mobile is more restrained). */
 .ks-chat-inputbar {
   display: flex;
+  align-items: flex-end;
   gap: var(--size-2-2);
   margin-top: var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  padding: var(--size-2-2);
+  background: var(--background-primary);
 }
 
 .ks-chat-textarea {
   flex: 1 1 auto;
-  min-height: 2.6em;
-  max-height: 12em;
-  resize: vertical;
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m);
-  padding: var(--size-2-2);
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  resize: none;
   color: var(--text-normal);
   font-family: var(--font-interface);
+  font-size: 16px; /* 移动端防 iOS 缩放 */
+  line-height: 1.4;
+  min-height: 2.8em; /* 至少两行 */
+  max-height: 12em;
 }
 
 .ks-chat-send {
+  width: 34px;
+  height: 34px;
+  border-radius: 9999px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
   flex: 0 0 auto;
+  padding: 0;
+}
+
+.ks-chat-send:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.ks-chat-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: var(--interactive-accent);
+}
+
+.ks-chat-send svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Busy → square stop button (dsh: rounded square, not a circle). */
+.ks-chat-send-stop {
+  border-radius: 12px;
+}
+
+.ks-chat-send-stop svg {
+  fill: currentColor;
 }
 
 .ks-chat-test {
+  width: 34px;
+  height: 34px;
+  border-radius: 9999px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
   flex: 0 0 auto;
+  padding: 0;
+}
+
+.ks-chat-test:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ks-chat-test svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* Collapsible thinking block. */
@@ -255,7 +373,8 @@
   font-size: var(--font-ui-small);
 }
 
-.ks-think-icon {
+.ks-think-icon,
+.ks-think-icon-2 {
   display: inline-flex;
 }
 
@@ -267,6 +386,28 @@
 
 .ks-think.is-collapsed .ks-think-body {
   display: none;
+}
+
+/* Blinking「…」while reasoning streams. */
+.ks-think-streaming .ks-think-body::after {
+  content: '…';
+  margin-left: 2px;
+  animation: ks-blink 0.9s steps(2) infinite;
+}
+
+/* Horizontal gradient shimmer bar in the head while reasoning (dsh-style).
+   Animated on an element, not text, so it degrades safely on any renderer. */
+.ks-think-streaming .ks-think-head::after {
+  content: '';
+  display: inline-block;
+  width: 3em;
+  height: 0.6em;
+  margin-left: var(--size-2-1);
+  border-radius: 4px;
+  background: linear-gradient(90deg, transparent 0%, var(--text-muted) 50%, transparent 100%);
+  background-size: 200% 100%;
+  opacity: 0.6;
+  animation: ks-shimmer 1.4s linear infinite;
 }
 
 /* Tool-use card. */
@@ -306,4 +447,47 @@
   word-break: break-word;
 }
 
+/* Blink keyframes shared by the think「…」and the streaming cursor. */
+@keyframes ks-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
 
+/* Horizontal shimmer for the streaming think "head" bar. */
+@keyframes ks-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Mobile: tighter padding, larger touch targets, more restrained input radius. */
+@media (max-width: 480px) {
+  .ks-chat {
+    padding: var(--size-2-2);
+  }
+  .ks-chat-user {
+    max-width: 82%;
+  }
+  .ks-chat-inputbar {
+    padding: var(--size-2-1);
+    border-radius: var(--radius-m);
+  }
+  .ks-chat-send,
+  .ks-chat-test {
+    width: 40px;
+    height: 40px;
+  }
+  .ks-chat-send svg,
+  .ks-chat-test svg {
+    width: 20px;
+    height: 20px;
+  }
+}

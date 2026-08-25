@@ -379,6 +379,10 @@ class SettingsRenderer {
         })
       );
     this.markSearchable(addBtn, '输出属性 添加属性 增加 添加');
+
+    // AI 创建属性规则（create_note frontmatter 键值对规则）——独立的可折叠分组。
+    const yamlRulesBody = this.createGroup(containerEl, 'AI 创建属性规则', false);
+    this.renderYamlRules(yamlRulesBody);
   }
 
   /** Render each extra property as a row: key input, value input, delete button. */
@@ -421,6 +425,96 @@ class SettingsRenderer {
       row.settingEl.addClass('ks-extra-props-row');
       this.markSearchable(row, `输出属性 ${entry.key} ${entry.value}`);
     });
+  }
+
+  /**
+   * Render the "AI 创建属性规则" group: an info row, then one row per rule
+   * (key + desc + allowed values + default + delete), then an add button. The
+   * rule objects are mutated in place and persisted immediately (same pattern
+   * as renderExtraProperties). Allowed values are stored as an array of trimmed
+   * strings and shown as a comma-separated string.
+   */
+  private renderYamlRules(containerEl: HTMLElement): void {
+    containerEl.empty();
+
+    const info = new Setting(containerEl)
+      .setName('')
+      .setDesc('控制 AI 使用 create_note 工具时的 frontmatter 键值对：键名+解释+可选值+默认值；默认值支持 {{YYYY.MM.DD}} 等 moment 模板，{{}} 内为 moment 兼容格式。');
+    this.markSearchable(info, 'AI 创建属性规则 键名 解释 可选值 默认值 moment 模板 frontmatter');
+
+    const list = this.plugin.settings.yamlRules || [];
+    list.forEach((rule, index) => {
+      const row = new Setting(containerEl)
+        .setName('')
+        .setDesc('')
+        .addText((text) =>
+          text
+            .setPlaceholder('属性名，如 category')
+            .setValue(rule.key)
+            .onChange((value) => {
+              rule.key = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addText((text) =>
+          text
+            .setPlaceholder('解释该属性的含义（随工具描述传给 AI）')
+            .setValue(rule.desc)
+            .onChange((value) => {
+              rule.desc = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addText((text) =>
+          text
+            .setPlaceholder('可选值，逗号分隔；留空=任意')
+            .setValue(rule.values.join(', '))
+            .onChange((value) => {
+              rule.values = value
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+              void this.plugin.saveSettings();
+            })
+        )
+        .addText((text) =>
+          text
+            .setPlaceholder('默认值；留空=AI不填时不添加；支持{{YYYY-MM-DD}}')
+            .setValue(rule.default)
+            .onChange((value) => {
+              rule.default = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addButton((btn) =>
+          btn
+            .setIcon('trash-2')
+            .setTooltip('删除')
+            .onClick(() => {
+              const a = this.plugin.settings.yamlRules;
+              a.splice(index, 1);
+              void this.plugin.saveSettings();
+              this.renderYamlRules(containerEl);
+            })
+        );
+      row.settingEl.addClass('ks-yaml-rule-row');
+      this.markSearchable(
+        row,
+        `AI 创建属性规则 ${rule.key} ${rule.desc} ${rule.values.join(' ')} ${rule.default}`
+      );
+    });
+
+    const addBtn = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setButtonText('+ 添加规则').onClick(() => {
+          this.plugin.settings.yamlRules.push({ key: '', desc: '', values: [], default: '' });
+          void this.plugin.saveSettings();
+          this.renderYamlRules(containerEl);
+        })
+      );
+    this.markSearchable(addBtn, 'AI 创建属性规则 添加规则 增加 添加');
   }
 
   // -------------------------------------------------------------------------

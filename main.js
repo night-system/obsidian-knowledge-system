@@ -49,7 +49,8 @@ var DEFAULT_SETTINGS = {
   earliestTime: "",
   customApiKey: "",
   customModel: "",
-  extraProperties: []
+  extraProperties: [],
+  yamlRules: []
 };
 
 // src/settingsTab.ts
@@ -98,35 +99,68 @@ function tryParsed(raw) {
     return raw;
   }
 }
-function parseAnthropicSSE(lines) {
-  const out = [];
-  let event = "";
-  let dataLines = [];
-  const flush = () => {
-    if (event || dataLines.length > 0) {
-      out.push({ event: event || "", data: tryParsed(dataLines.join("\n")) });
+function processSseLine(state, rawLine) {
+  const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+  if (line === "") {
+    if (state.event || state.dataLines.length > 0) {
+      const frame = { event: state.event || "", data: tryParsed(state.dataLines.join("\n")) };
+      state.event = "";
+      state.dataLines = [];
+      return { frame };
     }
-    event = "";
-    dataLines = [];
-  };
-  for (const rawLine of lines) {
-    const line = !!rawLine && rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-    if (line === "") {
-      flush();
-      continue;
-    }
-    if (line.startsWith(":")) continue;
-    if (line.startsWith("event:")) {
-      event = line.slice(6).trim();
-      continue;
-    }
-    if (line.startsWith("data:")) {
-      dataLines.push(line.slice(5).trimStart());
-      continue;
-    }
+    return { frame: null };
   }
-  flush();
-  return out;
+  if (line.startsWith(":")) return { frame: null };
+  if (line.startsWith("event:")) {
+    state.event = line.slice(6).trim();
+    return { frame: null };
+  }
+  if (line.startsWith("data:")) {
+    state.dataLines.push(line.slice(5).trimStart());
+    return { frame: null };
+  }
+  return { frame: null };
+}
+function createIncrementalSseParser(onEvent) {
+  let buffer = "";
+  const state = { event: "", dataLines: [] };
+  const MAX_BUFFER = 1024 * 1024;
+  const push = (chunk) => {
+    buffer += chunk;
+    let idx;
+    while ((idx = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 1);
+      const res = processSseLine(state, line);
+      if (res.frame) onEvent(res.frame);
+    }
+    if (buffer.length > MAX_BUFFER) {
+      if (state.event || state.dataLines.length > 0) {
+        onEvent({ event: state.event || "", data: tryParsed(state.dataLines.join("\n")) });
+      }
+      state.event = "";
+      state.dataLines = [];
+      buffer = "";
+    }
+  };
+  const flush = () => {
+    if (buffer.length > 0) {
+      const res = processSseLine(state, buffer);
+      if (res.frame) onEvent(res.frame);
+      buffer = "";
+    }
+    if (state.event || state.dataLines.length > 0) {
+      onEvent({ event: state.event || "", data: tryParsed(state.dataLines.join("\n")) });
+      state.event = "";
+      state.dataLines = [];
+    }
+  };
+  const reset = () => {
+    buffer = "";
+    state.event = "";
+    state.dataLines = [];
+  };
+  return { push, flush, reset };
 }
 function parseAnthropicResponse(json) {
   var _a;
@@ -513,16 +547,26 @@ async function streamAnthropicMessages(settings, messages, opts) {
       if (res.ok && res.body) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let text = "";
+        let chunks = 0;
+        let events = 0;
+        const parser = createIncrementalSseParser((ev) => {
+          events++;
+          opts.onEvent(ev);
+        });
         for (; ; ) {
           const { done, value } = await reader.read();
           if (done) break;
-          text += decoder.decode(value, { stream: true });
+          chunks++;
+          parser.push(decoder.decode(value, { stream: true }));
         }
-        const events = parseAnthropicSSE(text.split("\n"));
-        for (const event of events) opts.onEvent(event);
+        parser.push(decoder.decode());
+        parser.flush();
+        parser.reset();
         maybeAutoCorrect(base, url, opts.onAutoCorrect);
-        return { ok: true, url };
+        if (events > 0) {
+          return { ok: true, url, chunks, events };
+        }
+        return { ok: false, status: res.status, error: "\u6D41\u5F0F\u54CD\u5E94\u672A\u89E3\u6790\u5230\u4E8B\u4EF6", url, chunks, events };
       }
       lastStatus = res.status;
       if (res.status === 404 && i < candidates.length - 1) continue;
@@ -768,6 +812,8 @@ var SettingsRenderer = class {
       })
     );
     this.markSearchable(addBtn, "\u8F93\u51FA\u5C5E\u6027 \u6DFB\u52A0\u5C5E\u6027 \u589E\u52A0 \u6DFB\u52A0");
+    const yamlRulesBody = this.createGroup(containerEl, "AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219", false);
+    this.renderYamlRules(yamlRulesBody);
   }
   /** Render each extra property as a row: key input, value input, delete button. */
   renderExtraProperties(containerEl) {
@@ -795,6 +841,62 @@ var SettingsRenderer = class {
       row.settingEl.addClass("ks-extra-props-row");
       this.markSearchable(row, `\u8F93\u51FA\u5C5E\u6027 ${entry.key} ${entry.value}`);
     });
+  }
+  /**
+   * Render the "AI 创建属性规则" group: an info row, then one row per rule
+   * (key + desc + allowed values + default + delete), then an add button. The
+   * rule objects are mutated in place and persisted immediately (same pattern
+   * as renderExtraProperties). Allowed values are stored as an array of trimmed
+   * strings and shown as a comma-separated string.
+   */
+  renderYamlRules(containerEl) {
+    containerEl.empty();
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u63A7\u5236 AI \u4F7F\u7528 create_note \u5DE5\u5177\u65F6\u7684 frontmatter \u952E\u503C\u5BF9\uFF1A\u952E\u540D+\u89E3\u91CA+\u53EF\u9009\u503C+\u9ED8\u8BA4\u503C\uFF1B\u9ED8\u8BA4\u503C\u652F\u6301 {{YYYY.MM.DD}} \u7B49 moment \u6A21\u677F\uFF0C{{}} \u5185\u4E3A moment \u517C\u5BB9\u683C\u5F0F\u3002");
+    this.markSearchable(info, "AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 \u952E\u540D \u89E3\u91CA \u53EF\u9009\u503C \u9ED8\u8BA4\u503C moment \u6A21\u677F frontmatter");
+    const list = this.plugin.settings.yamlRules || [];
+    list.forEach((rule, index) => {
+      const row = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addText(
+        (text) => text.setPlaceholder("\u5C5E\u6027\u540D\uFF0C\u5982 category").setValue(rule.key).onChange((value) => {
+          rule.key = value;
+          void this.plugin.saveSettings();
+        })
+      ).addText(
+        (text) => text.setPlaceholder("\u89E3\u91CA\u8BE5\u5C5E\u6027\u7684\u542B\u4E49\uFF08\u968F\u5DE5\u5177\u63CF\u8FF0\u4F20\u7ED9 AI\uFF09").setValue(rule.desc).onChange((value) => {
+          rule.desc = value;
+          void this.plugin.saveSettings();
+        })
+      ).addText(
+        (text) => text.setPlaceholder("\u53EF\u9009\u503C\uFF0C\u9017\u53F7\u5206\u9694\uFF1B\u7559\u7A7A=\u4EFB\u610F").setValue(rule.values.join(", ")).onChange((value) => {
+          rule.values = value.split(",").map((s) => s.trim()).filter(Boolean);
+          void this.plugin.saveSettings();
+        })
+      ).addText(
+        (text) => text.setPlaceholder("\u9ED8\u8BA4\u503C\uFF1B\u7559\u7A7A=AI\u4E0D\u586B\u65F6\u4E0D\u6DFB\u52A0\uFF1B\u652F\u6301{{YYYY-MM-DD}}").setValue(rule.default).onChange((value) => {
+          rule.default = value;
+          void this.plugin.saveSettings();
+        })
+      ).addButton(
+        (btn) => btn.setIcon("trash-2").setTooltip("\u5220\u9664").onClick(() => {
+          const a = this.plugin.settings.yamlRules;
+          a.splice(index, 1);
+          void this.plugin.saveSettings();
+          this.renderYamlRules(containerEl);
+        })
+      );
+      row.settingEl.addClass("ks-yaml-rule-row");
+      this.markSearchable(
+        row,
+        `AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 ${rule.key} ${rule.desc} ${rule.values.join(" ")} ${rule.default}`
+      );
+    });
+    const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setButtonText("+ \u6DFB\u52A0\u89C4\u5219").onClick(() => {
+        this.plugin.settings.yamlRules.push({ key: "", desc: "", values: [], default: "" });
+        void this.plugin.saveSettings();
+        this.renderYamlRules(containerEl);
+      })
+    );
+    this.markSearchable(addBtn, "AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 \u6DFB\u52A0\u89C4\u5219 \u589E\u52A0 \u6DFB\u52A0");
   }
   // -------------------------------------------------------------------------
   // test tools (execute the two commands without the command palette)
@@ -887,42 +989,155 @@ var KnowledgeSettingsView = class extends import_obsidian4.ItemView {
 // src/chatView.ts
 var import_obsidian5 = require("obsidian");
 
+// src/utils/yamlRules.ts
+function parseYamlObject(yaml) {
+  if (yaml == null) return {};
+  if (typeof yaml === "string") {
+    const obj = {};
+    for (const rawLine of yaml.split("\n")) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const idx = line.indexOf(":");
+      if (idx <= 0) continue;
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).trim();
+      if (!key) continue;
+      obj[key] = value;
+    }
+    return obj;
+  }
+  if (typeof yaml === "object") {
+    return { ...yaml };
+  }
+  return {};
+}
+function validateYamlRules(obj, rules) {
+  var _a;
+  for (const rule of rules) {
+    if (obj[rule.key] === void 0) continue;
+    const v = String((_a = obj[rule.key]) != null ? _a : "").trim();
+    if (rule.values && rule.values.length > 0 && !rule.values.includes(v)) {
+      return `ERROR: yaml \u5C5E\u6027"${rule.key}"\u7684\u503C"${v}"\u4E0D\u5728\u53EF\u9009\u503C[${rule.values.join(" / ")}]\u5185\uFF08${rule.desc}\uFF09`;
+    }
+  }
+  return null;
+}
+function renderDefaultValue(raw, moment, now) {
+  const s = String(raw != null ? raw : "");
+  if (!s.includes("{{")) return s;
+  if (moment == null) return s;
+  const zeit = typeof now === "number" ? now : Date.now();
+  return s.replace(/\{\{(.*?)\}\}/g, (match, fmt) => {
+    const f = String(fmt).trim();
+    try {
+      if (typeof moment === "function") {
+        return moment(zeit).format(f);
+      }
+      const m = moment;
+      if (typeof (m == null ? void 0 : m.format) === "function") {
+        return m.format(f);
+      }
+    } catch (e) {
+      return match;
+    }
+    return match;
+  });
+}
+function applyDefaults(obj, rules, opts) {
+  var _a;
+  const out = {};
+  for (const key of Object.keys(obj)) {
+    out[key] = obj[key];
+  }
+  for (const rule of rules) {
+    if (!rule.key) continue;
+    if (obj[rule.key] !== void 0) continue;
+    if (String((_a = rule.default) != null ? _a : "").trim() === "") continue;
+    out[rule.key] = renderDefaultValue(rule.default, opts.moment, opts.now);
+  }
+  return out;
+}
+function needsQuoting(v) {
+  if (v === "") return true;
+  if (/^[\s]|\s$/.test(v)) return true;
+  if (/[:#\[\]{}'"]/.test(v)) return true;
+  return false;
+}
+function serializeValue(v) {
+  if (v === null || v === void 0) return "";
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (typeof v === "string") {
+    if (needsQuoting(v)) return '"' + v.replace(/"/g, '\\"') + '"';
+    return v;
+  }
+  return String(v);
+}
+function serializeYamlFromObj(obj) {
+  if (obj == null || typeof obj !== "object") return "";
+  return Object.entries(obj).map(([k, v]) => `${k}: ${serializeValue(v)}`).join("\n");
+}
+
 // src/utils/tools.ts
 var DAY_MS2 = 864e5;
 var FALLBACK_FORMATS2 = ["YYYY-MM-DD", "YYYY.MM.DD", "YYYY/MM/DD"];
-var ANTHROPIC_TOOLS = [
-  {
-    name: "list_recent_notes",
-    description: "\u5217\u51FA\u6E90\u6587\u4EF6\u5939\u5185\u6700\u8FD1 N \u5929\u7684 Markdown \u7B14\u8BB0\uFF08\u6807\u9898 + \u65F6\u95F4\uFF09\u3002",
-    input_schema: {
-      type: "object",
-      properties: { days: { type: "integer", description: "\u56DE\u770B\u5929\u6570\uFF1B\u7F3A\u7701\u7528\u8BBE\u7F6E\u7684\u6700\u8FD1 N \u5929" } },
-      required: []
+function buildAnthropicTools(yamlRules) {
+  var _a;
+  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  const yamlDesc = "frontmatter \u952E\u503C\u5BF9\u5BF9\u8C61\uFF08YAML frontmatter \u533A\uFF09\u3002\u9879\u76EE\u5DF2\u914D\u7F6E\u4EE5\u4E0B\u5C5E\u6027\u89C4\u5219\uFF1A" + rules.map(
+    (r) => {
+      var _a2;
+      return `- ${r.key}\uFF1A${r.desc}` + (((_a2 = r.values) == null ? void 0 : _a2.length) ? `\uFF08\u53EF\u9009\u503C\uFF1A${r.values.join("/")}\uFF09` : "") + (r.default ? `\uFF08\u9ED8\u8BA4\u503C\uFF1A${r.default}\uFF09` : "");
     }
-  },
-  {
-    name: "read_note",
-    description: "\u8BFB\u53D6\u6E90\u6587\u4EF6\u5939\u5185\u67D0\u7BC7\u7B14\u8BB0\u7684\u6B63\u6587\uFF08\u53BB\u9664 YAML frontmatter\uFF09\u3002",
-    input_schema: {
-      type: "object",
-      properties: { name: { type: "string", description: "\u7B14\u8BB0\u6587\u4EF6\u540D\uFF08\u53EF\u5E26\u6216\u4E0D\u5E26 .md \u540E\u7F00\uFF09" } },
-      required: ["name"]
+  ).join("\n") + "\n\u89C4\u5219\u672A\u5217\u51FA\u7684\u952E\u540D\u53EF\u4EE5\u968F\u610F\u6DFB\u52A0\uFF1B\u89C4\u5219\u5185\u952E\u540D\u8BF7\u4E25\u683C\u9075\u5B88\u53EF\u9009\u503C\uFF0C\u5426\u5219\u521B\u5EFA\u4F1A\u88AB\u62D2\u7EDD\u3002";
+  const yamlSchema = { type: "object", description: yamlDesc };
+  if (rules.length > 0) {
+    const props = {};
+    for (const r of rules) {
+      if (!r.key) continue;
+      props[r.key] = {
+        type: "string",
+        description: r.desc,
+        ...((_a = r.values) == null ? void 0 : _a.length) ? { enum: r.values } : {}
+      };
     }
-  },
-  {
-    name: "create_note",
-    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u521B\u5EFA\u4E00\u7BC7\u65B0\u7B14\u8BB0\u3002",
-    input_schema: {
-      type: "object",
-      properties: {
-        title: { type: "string", description: "\u6587\u4EF6\u540D\uFF08\u4E0D\u542B .md \u540E\u7F00\uFF09" },
-        yaml: { type: "object", description: "frontmatter \u952E\u503C\u5BF9" },
-        content: { type: "string", description: "\u6B63\u6587" }
-      },
-      required: ["title"]
-    }
+    yamlSchema.properties = props;
+    yamlSchema.required = [];
   }
-];
+  return [
+    {
+      name: "list_recent_notes",
+      description: "\u5217\u51FA\u6E90\u6587\u4EF6\u5939\u5185\u6700\u8FD1 N \u5929\u7684 Markdown \u7B14\u8BB0\uFF08\u6807\u9898 + \u65F6\u95F4\uFF09\u3002",
+      input_schema: {
+        type: "object",
+        properties: { days: { type: "integer", description: "\u56DE\u770B\u5929\u6570\uFF1B\u7F3A\u7701\u7528\u8BBE\u7F6E\u7684\u6700\u8FD1 N \u5929" } },
+        required: []
+      }
+    },
+    {
+      name: "read_note",
+      description: "\u8BFB\u53D6\u6E90\u6587\u4EF6\u5939\u5185\u67D0\u7BC7\u7B14\u8BB0\u7684\u6B63\u6587\uFF08\u53BB\u9664 YAML frontmatter\uFF09\u3002",
+      input_schema: {
+        type: "object",
+        properties: { name: { type: "string", description: "\u7B14\u8BB0\u6587\u4EF6\u540D\uFF08\u53EF\u5E26\u6216\u4E0D\u5E26 .md \u540E\u7F00\uFF09" } },
+        required: ["name"]
+      }
+    },
+    {
+      name: "create_note",
+      description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u521B\u5EFA\u4E00\u7BC7\u65B0\u7B14\u8BB0\u3002",
+      input_schema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "\u6587\u4EF6\u540D\uFF08\u4E0D\u542B .md \u540E\u7F00\uFF09" },
+          yaml: yamlSchema,
+          content: { type: "string", description: "\u6B63\u6587" }
+        },
+        required: ["title"]
+      }
+    }
+  ];
+}
+var ANTHROPIC_TOOLS = buildAnthropicTools([]);
 function stripExt(name) {
   return (name || "").replace(/\.md$/i, "");
 }
@@ -968,14 +1183,6 @@ function isValidFilename(title) {
 function joinVaultPath(folder, name) {
   const base = (folder || "/").trim() === "/" ? "" : (folder || "").trim().replace(/^\/+|\/+$/g, "");
   return (base ? base + "/" + name : name).replace(/\/+/g, "/").replace(/^\/+/, "");
-}
-function serializeYaml(yaml) {
-  if (yaml == null) return "";
-  if (typeof yaml === "string") return yaml.trim().replace(/^\n+|\n+$/g, "");
-  if (typeof yaml === "object") {
-    return Object.entries(yaml).map(([k, v]) => `${k}: ${v == null ? "" : v}`).join("\n");
-  }
-  return "";
 }
 async function listRecentNotesTool(ctx, args) {
   var _a, _b, _c, _d, _e, _f, _g, _h;
@@ -1025,15 +1232,21 @@ async function readNoteTool(ctx, args) {
   return { result: { title: stripExt((_h = (_g = match.basename) != null ? _g : match.name) != null ? _h : match.path), content: stripFrontmatter(raw) } };
 }
 async function createNoteTool(ctx, args) {
-  var _a;
+  var _a, _b, _c;
   const settings = ctx.settings;
   const title = ((args == null ? void 0 : args.title) || "").trim();
   if (!isValidFilename(title)) return { error: "ERROR: \u975E\u6CD5\u6587\u4EF6\u540D" };
+  const rules = (_a = settings.yamlRules) != null ? _a : [];
+  const obj = parseYamlObject(args == null ? void 0 : args.yaml);
+  const err = validateYamlRules(obj, rules);
+  if (err) return { error: err };
+  const moment = (_b = ctx.moment) != null ? _b : typeof window !== "undefined" ? window.moment : null;
+  const filled = applyDefaults(obj, rules, { moment, now: ctx.now });
   const folder = (settings.outputFolder || "/").trim();
   const name = title.toLowerCase().endsWith(".md") ? title : title + ".md";
   const path = joinVaultPath(folder, name);
-  const yamlStr = serializeYaml(args == null ? void 0 : args.yaml);
-  const body = `${(_a = args == null ? void 0 : args.content) != null ? _a : ""}`;
+  const yamlStr = serializeYamlFromObj(filled);
+  const body = `${(_c = args == null ? void 0 : args.content) != null ? _c : ""}`;
   const full = yamlStr ? `---
 ${yamlStr}
 ---
@@ -1074,6 +1287,20 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     this.activeController = null;
     this.turnBlocks = [];
     this.turnStopReason = null;
+    // Streaming incremental-render state (all reset per assistant turn).
+    this.bodyEl = null;
+    this.blockEls = {};
+    this.markdownEls = {};
+    this.thinkSubs = {};
+    this.toolSubs = {};
+    this.blockStopped = {};
+    this.blockSettled = {};
+    /** User's open/collapsed override per thinking block; `null` = follow stream state. */
+    this.thinkExpanded = {};
+    this.renderPending = false;
+    this.renderTimer = null;
+    this.streamState = "idle";
+    this.streamCursorEl = null;
     this.plugin = plugin;
   }
   getViewType() {
@@ -1093,36 +1320,60 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     const bar = container.createDiv({ cls: "ks-chat-inputbar" });
     this.inputEl = bar.createEl("textarea", { cls: "ks-chat-textarea" });
     this.inputEl.placeholder = "\u8F93\u5165\u6D88\u606F\u2026\uFF08Enter \u53D1\u9001 / Shift+Enter \u6362\u884C\uFF09";
+    this.inputEl.rows = 2;
     this.inputEl.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" && !ev.shiftKey) {
         ev.preventDefault();
         void this.send();
       }
     });
-    const sendBtn = bar.createEl("button", { cls: "mod-cta ks-chat-send" });
-    (0, import_obsidian5.setIcon)(sendBtn, "send");
-    sendBtn.addEventListener("click", () => void this.send());
-    const testBtn = bar.createEl("button", { cls: "ks-chat-test" });
-    (0, import_obsidian5.setIcon)(testBtn, "play");
-    testBtn.setAttribute("title", "\u6D4B\u8BD5\u4EFB\u52A1");
-    testBtn.addEventListener("click", () => void this.send(TEST_PROMPT));
+    this.inputEl.addEventListener("input", () => this.onInputChanged());
+    this.sendBtn = bar.createEl("button", { cls: "ks-chat-send" });
+    this.sendBtn.setAttribute("aria-label", "\u53D1\u9001");
+    (0, import_obsidian5.setIcon)(this.sendBtn, "arrow-up");
+    this.sendBtn.addEventListener("click", () => {
+      var _a;
+      if (this.busy) {
+        (_a = this.activeController) == null ? void 0 : _a.abort();
+      } else {
+        void this.send();
+      }
+    });
+    this.testBtn = bar.createEl("button", { cls: "ks-chat-test" });
+    this.testBtn.setAttribute("title", "\u6D4B\u8BD5\u4EFB\u52A1");
+    (0, import_obsidian5.setIcon)(this.testBtn, "play");
+    this.testBtn.addEventListener("click", () => void this.send(TEST_PROMPT));
+    this.streamState = "idle";
+    this.onInputChanged();
   }
   async onClose() {
     var _a;
     (_a = this.activeController) == null ? void 0 : _a.abort();
+    this.resolvePending();
+    this.streamState = "idle";
+    this.streamCursorEl = null;
     this.contentEl.empty();
   }
   // -------------------------------------------------------------------------
   // send / render helpers
   // -------------------------------------------------------------------------
+  /** Render a right-aligned user bubble with a「你」head line. */
   userBubble(text) {
-    const el = this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-user" }).createDiv({ cls: "ks-chat-content" });
+    const root = this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-user" });
+    const head = root.createDiv({ cls: "ks-chat-head" });
+    head.createSpan({ cls: "ks-chat-head-name", text: "\u4F60" });
+    const el = root.createDiv({ cls: "ks-chat-content" });
     el.style.whiteSpace = "pre-wrap";
     el.setText(text);
-    return el;
   }
+  /** Render an assistant bubble with an「AI · 模型名」head badge and bot icon. */
   assistantBubble() {
     const root = this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-ai" });
+    const head = root.createDiv({ cls: "ks-chat-head" });
+    const icon = head.createSpan({ cls: "ks-chat-head-icon" });
+    (0, import_obsidian5.setIcon)(icon, "bot");
+    const model = (this.plugin.settings.model || "").trim();
+    head.createSpan({ cls: "ks-chat-head-name", text: model ? `AI \xB7 ${model}` : "AI" });
     const body = root.createDiv({ cls: "ks-chat-content markdown-rendered" });
     return { root, body };
   }
@@ -1193,6 +1444,40 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     void this.plugin.saveSettings();
     new import_obsidian5.Notice(`\u5DF2\u81EA\u52A8\u66F4\u6B63\u7AEF\u70B9\uFF1A${url}\uFF08\u8BBE\u7F6E\u4E2D\u7684 Base URL \u5DF2\u540C\u6B65\u66F4\u65B0\uFF09`);
   }
+  /** Keep the input bar in sync: auto-grow + send button enable/stop state. */
+  onInputChanged() {
+    const el = this.inputEl;
+    el.style.height = "auto";
+    const cap = 12 * 16;
+    el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
+    this.updateSendBtn();
+  }
+  /** Toggle the send button between arrow-up (send), disabled (empty), and square (stop). */
+  updateSendBtn() {
+    const btn = this.sendBtn;
+    if (this.busy) {
+      btn.disabled = false;
+      (0, import_obsidian5.setIcon)(btn, "square");
+      btn.addClass("ks-chat-send-stop");
+      btn.setAttribute("title", "\u505C\u6B62\u751F\u6210");
+    } else {
+      (0, import_obsidian5.setIcon)(btn, "arrow-up");
+      btn.removeClass("ks-chat-send-stop");
+      const empty = !(this.inputEl.value || "").trim();
+      btn.disabled = empty;
+      btn.setAttribute("title", empty ? "\u8F93\u5165\u6D88\u606F" : "\u53D1\u9001");
+    }
+  }
+  forceScroll() {
+    if (this.scrollEl) this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+  }
+  /** Follow the stream only when the user is near the bottom (<80px of slack). */
+  maybeAutoScroll() {
+    const el = this.scrollEl;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
+  }
   async send(text) {
     var _a, _b;
     if (this.busy) return;
@@ -1201,44 +1486,59 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     this.inputEl.value = "";
     (_a = this.activeController) == null ? void 0 : _a.abort();
     this.busy = true;
+    this.updateSendBtn();
+    this.onInputChanged();
     try {
       this.apiHistory.push({ role: "user", content: userText });
       this.userBubble(userText);
+      this.forceScroll();
       await this.runTurn();
     } catch (e) {
       this.errorBlock("\u8BF7\u6C42\u5F02\u5E38\uFF1A" + ((_b = e == null ? void 0 : e.message) != null ? _b : "\u672A\u77E5\u9519\u8BEF"), null);
     } finally {
       this.busy = false;
-      this.activeController = null;
-      this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+      this.updateSendBtn();
+      this.forceScroll();
     }
   }
   async runTurn() {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     const { body } = this.assistantBubble();
-    this.turnBlocks = [];
-    this.turnStopReason = null;
-    this.turnError = void 0;
+    this.beginTurn(body);
     const ac = new AbortController();
     this.activeController = ac;
     let streamOk = false;
     let streamErr = null;
+    let aborted = false;
     try {
       const st = await streamAnthropicMessages(this.plugin.settings, this.apiHistory, {
-        tools: ANTHROPIC_TOOLS,
+        tools: buildAnthropicTools(this.plugin.settings.yamlRules),
         signal: ac.signal,
-        onEvent: (event) => this.handleChatEvent(body, event),
+        onEvent: (event) => this.handleChatEvent(event),
         onAutoCorrect: (url) => this.handleAutoCorrect(url)
       });
+      console.info("[ks-stream]", { chunks: st.chunks, events: st.events, url: st.url });
       if (st.ok) {
-        streamOk = true;
+        if (((_a = st.events) != null ? _a : 0) > 0) {
+          streamOk = true;
+        } else {
+          streamErr = "\u6D41\u5F0F\u54CD\u5E94\u672A\u89E3\u6790\u5230\u4E8B\u4EF6";
+        }
       } else {
-        streamErr = st.status != null ? `HTTP ${st.status}\uFF08POST ${(_a = st.url) != null ? _a : "\u672A\u77E5"}\uFF09` : (_b = st.error) != null ? _b : "\u7F51\u7EDC\u9519\u8BEF";
+        streamErr = st.status != null ? `HTTP ${st.status}\uFF08POST ${(_b = st.url) != null ? _b : "\u672A\u77E5"}\uFF09` : (_c = st.error) != null ? _c : "\u7F51\u7EDC\u9519\u8BEF";
       }
     } catch (e) {
-      streamErr = (_c = e == null ? void 0 : e.message) != null ? _c : "\u7F51\u7EDC\u9519\u8BEF";
+      if ((e == null ? void 0 : e.name) === "AbortError" || ac.signal.aborted) {
+        aborted = true;
+      } else {
+        streamErr = (_d = e == null ? void 0 : e.message) != null ? _d : "\u7F51\u7EDC\u9519\u8BEF";
+      }
     } finally {
       this.activeController = null;
+    }
+    if (aborted) {
+      this.finishStream(body);
+      return;
     }
     if (streamOk) {
       if (this.turnError) {
@@ -1248,20 +1548,24 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       await this.finishTurn(body, this.turnBlocks.filter(Boolean), this.turnStopReason);
       return;
     }
+    this.streamState = "done";
+    this.removeStreamCursor();
+    this.renderAll();
+    this.resolvePending();
     let res;
     let nonStreamErr = null;
     try {
       res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, {
-        tools: ANTHROPIC_TOOLS,
+        tools: buildAnthropicTools(this.plugin.settings.yamlRules),
         onAutoCorrect: (url) => this.handleAutoCorrect(url)
       });
       if (res.requestError != null) {
-        nonStreamErr = `\u7F51\u7EDC\u9519\u8BEF\uFF08POST ${(_d = res.url) != null ? _d : "\u672A\u77E5"}\uFF09\uFF1A${res.requestError}`;
+        nonStreamErr = `\u7F51\u7EDC\u9519\u8BEF\uFF08POST ${(_e = res.url) != null ? _e : "\u672A\u77E5"}\uFF09\uFF1A${res.requestError}`;
       } else if (res.status < 200 || res.status >= 300) {
-        nonStreamErr = `HTTP ${res.status}\uFF08POST ${(_e = res.url) != null ? _e : "\u672A\u77E5"}\uFF09`;
+        nonStreamErr = `HTTP ${res.status}\uFF08POST ${(_f = res.url) != null ? _f : "\u672A\u77E5"}\uFF09`;
       }
     } catch (e) {
-      nonStreamErr = `\u7F51\u7EDC\u9519\u8BEF\uFF08POST ${(_f = res == null ? void 0 : res.url) != null ? _f : "\u672A\u77E5"}\uFF09\uFF1A${(_g = e == null ? void 0 : e.message) != null ? _g : "\u672A\u77E5"}`;
+      nonStreamErr = `\u7F51\u7EDC\u9519\u8BEF\uFF08POST ${(_g = res == null ? void 0 : res.url) != null ? _g : "\u672A\u77E5"}\uFF09\uFF1A${(_h = e == null ? void 0 : e.message) != null ? _h : "\u672A\u77E5"}`;
     }
     if (res && res.status >= 200 && res.status < 300) {
       let json = null;
@@ -1271,17 +1575,41 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
         json = null;
       }
       const parsed = parseAnthropicResponse(json);
-      await this.finishTurn(body, parsed.blocks, (_h = parsed.stop_reason) != null ? _h : null);
+      await this.finishTurn(body, parsed.blocks, (_i = parsed.stop_reason) != null ? _i : null);
       return;
     }
     this.errorBlock(streamErr, nonStreamErr);
   }
-  handleChatEvent(body, ev) {
+  /** Reset per-turn streaming/render state before a new assistant bubble. */
+  beginTurn(body) {
+    this.bodyEl = body;
+    this.turnBlocks = [];
+    this.turnStopReason = null;
+    this.turnError = void 0;
+    this.blockEls = {};
+    this.markdownEls = {};
+    this.thinkSubs = {};
+    this.toolSubs = {};
+    this.blockStopped = {};
+    this.blockSettled = {};
+    this.thinkExpanded = {};
+    this.streamState = "streaming";
+    this.streamCursorEl = null;
+    this.resolvePending();
+  }
+  /** Finalize an aborted partial turn: paint what streamed, drop the cursor. */
+  finishStream(body) {
+    this.streamState = "done";
+    this.renderAll();
+    this.resolvePending();
+  }
+  handleChatEvent(ev) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
     const d = ev.data;
     if (!d || typeof d !== "object") return;
     if (d.type === "error") {
       this.turnError = `\u9519\u8BEF\uFF1A${(_c = (_b = (_a = d.error) == null ? void 0 : _a.message) != null ? _b : d.message) != null ? _c : "\u672A\u77E5"}`;
+      this.renderAll();
       return;
     }
     if (d.type === "content_block_start") {
@@ -1291,14 +1619,27 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       this.turnBlocks[idx].id = (_g = cb.id) != null ? _g : "";
       this.turnBlocks[idx].name = (_h = cb.name) != null ? _h : "";
       if (cb.type === "thinking") this.turnBlocks[idx].signature = (_i = cb.signature) != null ? _i : "";
+      const container = this.ensureBlockEl(idx);
+      this.paintBlock(idx, container, this.turnBlocks[idx], void 0, false);
+      this.updateStreamCursor();
+      this.scheduleRender();
     } else if (d.type === "content_block_delta") {
       const blk = this.turnBlocks[d.index];
       const delta = (_j = d.delta) != null ? _j : {};
       if (!blk) return;
-      if (delta.type === "text_delta") blk.text += (_k = delta.text) != null ? _k : "";
-      else if (delta.type === "thinking_delta") blk.thinking += (_l = delta.thinking) != null ? _l : "";
-      else if (delta.type === "signature_delta") blk.signature += (_m = delta.signature) != null ? _m : "";
-      else if (delta.type === "input_json_delta") blk.partialJson += (_n = delta.partial_json) != null ? _n : "";
+      if (delta.type === "text_delta") {
+        blk.text += (_k = delta.text) != null ? _k : "";
+        this.refreshBlockText(d.index, blk.text);
+      } else if (delta.type === "thinking_delta") {
+        blk.thinking += (_l = delta.thinking) != null ? _l : "";
+        this.refreshThinking(d.index, blk.thinking);
+      } else if (delta.type === "signature_delta") {
+        blk.signature += (_m = delta.signature) != null ? _m : "";
+      } else if (delta.type === "input_json_delta") {
+        blk.partialJson += (_n = delta.partial_json) != null ? _n : "";
+        this.refreshToolSub(d.index, blk);
+      }
+      this.scheduleRender();
     } else if (d.type === "content_block_stop") {
       const blk = this.turnBlocks[d.index];
       if (blk && blk.partialJson) {
@@ -1308,13 +1649,18 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
           blk.input = blk.partialJson;
         }
       }
+      this.blockStopped[d.index] = true;
+      if ((blk == null ? void 0 : blk.type) === "text") this.settleTextMarkdown(d.index, blk);
+      this.updateStreamCursor();
+      this.scheduleRender();
     } else if (d.type === "message_delta") {
       this.turnStopReason = (_p = (_o = d.delta) == null ? void 0 : _o.stop_reason) != null ? _p : null;
     }
-    this.renderBlocks(body, this.turnBlocks.filter(Boolean), {});
   }
   async finishTurn(body, blocks, stopReason) {
+    this.streamState = "done";
     this.renderBlocks(body, blocks, {});
+    this.resolvePending();
     if (stopReason === "tool_use") {
       const ctx = { app: this.plugin.app, settings: this.plugin.settings, moment: window.moment };
       const toolResults = {};
@@ -1332,41 +1678,214 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       this.apiHistory.push({ role: "assistant", content: blocksToApi(blocks) });
     }
   }
-  renderBlocks(body, blocks, toolResults) {
-    body.empty();
-    for (const block of blocks) {
-      if (block.type === "thinking") {
-        this.renderThinking(body, block.thinking);
-      } else if (block.type === "text") {
-        const el = body.createDiv({ cls: "ks-chat-markdown markdown-rendered" });
-        void import_obsidian5.MarkdownRenderer.render(this.app, block.text, el, "", this);
-      } else if (block.type === "tool_use") {
-        this.renderToolCard(body, block, toolResults[block.id]);
+  // -------------------------------------------------------------------------
+  // Streaming render: persistent per-block containers
+  // -------------------------------------------------------------------------
+  /** Get (or create) the persistent container for block `index` under the body. */
+  ensureBlockEl(index) {
+    var _a;
+    let el = this.blockEls[index];
+    if (!el || !el.isConnected) {
+      el = this.bodyEl.createDiv({ cls: "ks-chat-block" });
+      this.blockEls[index] = el;
+      if ((_a = this.streamCursorEl) == null ? void 0 : _a.isConnected) {
+        this.bodyEl.insertBefore(el, this.streamCursorEl);
+      } else {
+        this.bodyEl.appendChild(el);
       }
     }
+    return el;
   }
-  renderThinking(body, thinking) {
-    const wrap = body.createDiv({ cls: "ks-think is-collapsed" });
+  /** Repaint every block into its persistent container (throttled 120 ms). */
+  renderAll() {
+    this.renderPending = false;
+    const body = this.bodyEl;
+    if (!body) return;
+    const blocks = this.turnBlocks;
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      if (!b) continue;
+      const container = this.ensureBlockEl(i);
+      const stopped = !!this.blockStopped[i] || this.streamState === "done";
+      this.paintBlock(i, container, b, void 0, stopped);
+    }
+    this.updateStreamCursor();
+    this.maybeAutoScroll();
+  }
+  /** Coalesce renders to one 120 ms frame (with a per-token textContent fast path). */
+  scheduleRender() {
+    if (this.renderPending) return;
+    this.renderPending = true;
+    this.renderTimer = window.setTimeout(() => {
+      this.renderPending = false;
+      this.renderTimer = null;
+      this.renderAll();
+    }, 120);
+  }
+  resolvePending() {
+    if (this.renderTimer != null) {
+      window.clearTimeout(this.renderTimer);
+      this.renderTimer = null;
+    }
+    this.renderPending = false;
+  }
+  paintBlock(index, container, block, toolResult, stopped) {
+    if (block.type === "thinking") {
+      this.ensureThinkingStructure(index, container);
+      this.updateThinking(index, block.thinking, stopped);
+    } else if (block.type === "text") {
+      this.ensureTextStructure(index, container);
+      this.updateText(index, block.text, stopped);
+    } else if (block.type === "tool_use") {
+      this.ensureToolStructure(index, container, block);
+      this.updateTool(index, block, toolResult);
+    }
+  }
+  // --- text blocks -----------------------------------------------------------
+  ensureTextStructure(index, container) {
+    var _a;
+    if ((_a = this.markdownEls[index]) == null ? void 0 : _a.isConnected) return;
+    const el = container.createDiv({ cls: "ks-chat-markdown markdown-rendered" });
+    this.markdownEls[index] = el;
+  }
+  /** Update a text block in place: plain text while streaming, markdown once settled. */
+  updateText(index, text, stopped) {
+    const el = this.markdownEls[index];
+    if (!(el == null ? void 0 : el.isConnected)) return;
+    if (stopped && this.blockSettled[index]) return;
+    if (stopped) {
+      this.blockSettled[index] = true;
+      el.setText(text);
+      void import_obsidian5.MarkdownRenderer.render(this.app, text, el, "", this);
+    } else {
+      el.setText(text);
+    }
+  }
+  /** O(1) per-token update for a streaming text block. */
+  refreshBlockText(index, text) {
+    const el = this.markdownEls[index];
+    if (el == null ? void 0 : el.isConnected) el.setText(text);
+  }
+  /** Final markdown render for a just-stopped text block. */
+  settleTextMarkdown(index, block) {
+    this.blockSettled[index] = true;
+    const el = this.markdownEls[index];
+    if (!(el == null ? void 0 : el.isConnected)) return;
+    el.setText(block.text);
+    void import_obsidian5.MarkdownRenderer.render(this.app, block.text, el, "", this);
+  }
+  // --- thinking blocks -------------------------------------------------------
+  ensureThinkingStructure(index, container) {
+    var _a;
+    if ((_a = this.thinkSubs[index]) == null ? void 0 : _a.wrap.isConnected) return;
+    const wrap = container.createDiv({ cls: "ks-think is-collapsed" });
     const head = wrap.createDiv({ cls: "ks-think-head" });
     const chev = head.createSpan({ cls: "ks-think-icon" });
     (0, import_obsidian5.setIcon)(chev, "chevron-right");
+    const icon = head.createSpan({ cls: "ks-think-icon-2" });
+    (0, import_obsidian5.setIcon)(icon, "brain");
     head.createSpan({ cls: "ks-think-label", text: "\u601D\u8003\u4E2D" });
-    const contentEl = wrap.createDiv({ cls: "ks-think-body" });
-    contentEl.setText(thinking);
-    head.addEventListener("click", () => {
+    const body = wrap.createDiv({ cls: "ks-think-body" });
+    this.thinkExpanded[index] = null;
+    wrap.addEventListener("click", () => {
       const collapsed = wrap.hasClass("is-collapsed");
-      wrap.toggleClass("is-collapsed", !collapsed);
-      (0, import_obsidian5.setIcon)(chev, collapsed ? "chevron-down" : "chevron-right");
+      const newCollapsed = !collapsed;
+      wrap.toggleClass("is-collapsed", newCollapsed);
+      (0, import_obsidian5.setIcon)(chev, newCollapsed ? "chevron-right" : "chevron-down");
+      this.thinkExpanded[index] = !newCollapsed;
     });
+    this.thinkSubs[index] = { wrap, chev, body };
   }
-  renderToolCard(body, block, result) {
-    const card = body.createDiv({ cls: "ks-tool-card" });
+  updateThinking(index, thinking, stopped) {
+    const sub = this.thinkSubs[index];
+    if (!(sub == null ? void 0 : sub.wrap.isConnected)) return;
+    sub.body.setText(thinking);
+    const streaming = !stopped && this.streamState === "streaming";
+    const override = this.thinkExpanded[index];
+    const expanded = override != null ? override : streaming;
+    sub.wrap.toggleClass("is-collapsed", !expanded);
+    (0, import_obsidian5.setIcon)(sub.chev, expanded ? "chevron-down" : "chevron-right");
+    sub.wrap.toggleClass("ks-think-streaming", streaming);
+  }
+  refreshThinking(index, thinking) {
+    const sub = this.thinkSubs[index];
+    if (sub == null ? void 0 : sub.body.isConnected) sub.body.setText(thinking);
+  }
+  // --- tool_use cards --------------------------------------------------------
+  ensureToolStructure(index, container, block) {
+    var _a;
+    if ((_a = this.toolSubs[index]) == null ? void 0 : _a.card.isConnected) return;
+    const card = container.createDiv({ cls: "ks-tool-card" });
     const title = card.createDiv({ cls: "ks-tool-name" });
     (0, import_obsidian5.setIcon)(title.createSpan({ cls: "ks-tool-icon" }), "wrench");
     title.createSpan({ text: block.name || "tool" });
-    card.createDiv({ cls: "ks-tool-input", text: summarizeInput(block.input) });
+    const inputEl = card.createDiv({ cls: "ks-tool-input" });
     const resultEl = card.createDiv({ cls: "ks-tool-result" });
-    resultEl.setText(result == null ? "\u6267\u884C\u4E2D\u2026" : truncate(result, 300));
+    this.toolSubs[index] = { card, inputEl, resultEl };
+  }
+  toolInputPreview(block) {
+    return block.input && Object.keys(block.input).length > 0 ? summarizeInput(block.input) : block.partialJson || "";
+  }
+  updateTool(index, block, toolResult) {
+    const sub = this.toolSubs[index];
+    if (!(sub == null ? void 0 : sub.card.isConnected)) return;
+    sub.inputEl.setText(this.toolInputPreview(block));
+    sub.resultEl.setText(toolResult == null ? "\u6267\u884C\u4E2D\u2026" : truncate(toolResult, 300));
+  }
+  refreshToolSub(index, block) {
+    const sub = this.toolSubs[index];
+    if (sub == null ? void 0 : sub.card.isConnected) sub.inputEl.setText(this.toolInputPreview(block));
+  }
+  /** Show/hide the AI streaming cursor at the end of the last text/thinking block. */
+  updateStreamCursor() {
+    var _a, _b;
+    const active = this.streamState === "streaming";
+    const blocks = this.turnBlocks;
+    let lastIdx = -1;
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i]) {
+        lastIdx = i;
+        break;
+      }
+    }
+    const last = lastIdx >= 0 ? blocks[lastIdx] : null;
+    const lastStreamingText = !!last && (last.type === "text" || last.type === "thinking") && !this.blockStopped[lastIdx];
+    const shouldShow = active && lastStreamingText;
+    if (shouldShow) {
+      if (!((_a = this.streamCursorEl) == null ? void 0 : _a.isConnected)) {
+        const span = this.bodyEl.createSpan({ cls: "ks-stream-cursor" });
+        this.streamCursorEl = span;
+      }
+    } else if ((_b = this.streamCursorEl) == null ? void 0 : _b.isConnected) {
+      this.streamCursorEl.remove();
+      this.streamCursorEl = null;
+    }
+  }
+  removeStreamCursor() {
+    var _a;
+    if ((_a = this.streamCursorEl) == null ? void 0 : _a.isConnected) this.streamCursorEl.remove();
+    this.streamCursorEl = null;
+  }
+  /** Final static render: clear the body and rebuild every block (used at turn end). */
+  renderBlocks(body, blocks, toolResults) {
+    this.bodyEl = body;
+    this.streamState = "done";
+    this.blockEls = {};
+    this.markdownEls = {};
+    this.thinkSubs = {};
+    this.toolSubs = {};
+    this.blockStopped = {};
+    this.blockSettled = {};
+    this.thinkExpanded = {};
+    this.removeStreamCursor();
+    body.empty();
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      if (!b) continue;
+      const container = body.createDiv({ cls: "ks-chat-block" });
+      this.blockEls[i] = container;
+      this.paintBlock(i, container, b, toolResults == null ? void 0 : toolResults[b.id], true);
+    }
   }
   async executeTool(ctx, name, input) {
     var _a;

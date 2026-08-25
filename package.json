@@ -1,7 +1,7 @@
 {
   "name": "obsidian-knowledge-system",
-  "version": "0.3.2",
-  "description": "配置驱动的 AI 知识系统框架（v0.3.2）：Base URL 端点自动探测（/anthropic 聊天端点 + 根端点模型列表）、错误可复制诊断、AI 聊天视图（原生 fetch 流式，失败自动降级非流式）、内置工具集、测试按钮。",
+  "version": "0.4.0",
+  "description": "配置驱动的 AI 知识系统框架（v0.4.0）：真正逐字流式渲染（增量 SSE 解析 + 120ms 节流低闪烁 DOM）+ 聊天 UI 美化（lucide 图标 / AI 徽标 / 流式光标 / 移动端触控）+ create_note 属性规则；Base URL 端点自动探测、错误可复制诊断、AI 聊天视图（原生 fetch 流式，失败自动降级非流式）、内置工具集、测试按钮。",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

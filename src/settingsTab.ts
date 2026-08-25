@@ -1,0 +1,351 @@
+import { App, DropdownComponent, PluginSettingTab, Setting, setIcon } from 'obsidian';
+import { KnowledgeSystemSettings } from './settings';
+import { FolderSuggest } from './folderSuggest';
+import { fetchDeepSeekModels } from './core';
+import type KnowledgeSystemPlugin from './main';
+
+/**
+ * Settings tab. Renders a top search box plus grouped, collapsible sections
+ * (style-settings-inspired but on Obsidian's native `Setting` controls). The
+ * glyphs are Lucide icons — no emoji — so they follow the active theme.
+ */
+export class KnowledgeSystemSettingTab extends PluginSettingTab {
+  plugin: KnowledgeSystemPlugin;
+
+  private modelDropdown: DropdownComponent | null = null;
+  private currentModels: string[] = [];
+  private groupEls: HTMLElement[] = [];
+  private groupCollapsed = new Map<HTMLElement, boolean>();
+
+  constructor(app: App, plugin: KnowledgeSystemPlugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  // -------------------------------------------------------------------------
+  // rendering
+  // -------------------------------------------------------------------------
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    this.modelDropdown = null;
+    this.currentModels = [];
+    this.groupEls = [];
+    this.groupCollapsed.clear();
+
+    this.renderSearch(containerEl);
+    this.renderConnectionGroup(containerEl);
+    this.renderCustomProviderGroup(containerEl);
+    this.renderFolderGroup(containerEl);
+    this.renderTimeGroup(containerEl);
+    this.renderOutputGroup(containerEl);
+  }
+
+  private renderSearch(containerEl: HTMLElement): void {
+    const wrap = containerEl.createDiv({ cls: 'ks-search' });
+    const iconEl = wrap.createSpan({ cls: 'ks-search-icon' });
+    setIcon(iconEl, 'search');
+    const input = wrap.createEl('input', { cls: 'ks-search-input' });
+    input.type = 'text';
+    input.placeholder = '搜索设置...';
+    input.addEventListener('input', () => this.filterSettings(input.value));
+  }
+
+  private createGroup(
+    containerEl: HTMLElement,
+    title: string,
+    collapsed: boolean
+  ): HTMLElement {
+    const groupEl = containerEl.createDiv({ cls: 'ks-group' });
+    const headingEl = groupEl.createDiv({ cls: 'ks-group-heading' });
+    const iconEl = headingEl.createSpan({ cls: 'ks-group-icon' });
+    setIcon(iconEl, collapsed ? 'chevron-right' : 'chevron-down');
+    headingEl.createSpan({ cls: 'ks-group-title', text: title });
+    const bodyEl = groupEl.createDiv({ cls: 'ks-group-body' });
+
+    if (collapsed) groupEl.addClass('ks-collapsed');
+    this.groupCollapsed.set(groupEl, collapsed);
+    this.groupEls.push(groupEl);
+
+    headingEl.addEventListener('click', () => {
+      const isCollapsed = groupEl.hasClass('ks-collapsed');
+      groupEl.toggleClass('ks-collapsed', !isCollapsed);
+      this.groupCollapsed.set(groupEl, !isCollapsed);
+      setIcon(iconEl, isCollapsed ? 'chevron-down' : 'chevron-right');
+    });
+
+    return bodyEl;
+  }
+
+  private markSearchable(setting: Setting, text: string): void {
+    setting.settingEl.setAttribute('data-search', text);
+  }
+
+  private updateSetting<K extends keyof KnowledgeSystemSettings>(
+    key: K,
+    value: KnowledgeSystemSettings[K]
+  ): void {
+    this.plugin.settings[key] = value;
+    void this.plugin.saveSettings();
+  }
+
+  // -------------------------------------------------------------------------
+  // filter / collapse
+  // -------------------------------------------------------------------------
+
+  private filterSettings(query: string): void {
+    const q = (query || '').trim().toLowerCase();
+    const allItems = this.containerEl.querySelectorAll('.setting-item');
+    allItems.forEach((el) => {
+      const elm = el as HTMLElement;
+      const hay = ((elm.getAttribute('data-search') || '') + ' ' + (elm.textContent || '')).toLowerCase();
+      elm.style.display = q && hay.includes(q) ? '' : q ? 'none' : '';
+    });
+    // While searching, expand every group so matched rows are visible.
+    for (const groupEl of this.groupEls) {
+      if (q) {
+        groupEl.removeClass('ks-collapsed');
+      } else if (this.groupCollapsed.get(groupEl)) {
+        groupEl.addClass('ks-collapsed');
+      } else {
+        groupEl.removeClass('ks-collapsed');
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // groups
+  // -------------------------------------------------------------------------
+
+  private renderConnectionGroup(containerEl: HTMLElement): void {
+    const bodyEl = this.createGroup(containerEl, '连接', false);
+
+    const apiKey = new Setting(bodyEl)
+      .setName('API Key')
+      .setDesc('DeepSeek 或自定义服务商的 API Key，用于获取模型列表。')
+      .addText((text) => {
+        text.inputEl.type = 'password';
+        text
+          .setPlaceholder('sk-...')
+          .setValue(this.plugin.settings.apiKey)
+          .onChange((value) => this.updateSetting('apiKey', value));
+      });
+    this.markSearchable(apiKey, '连接 api key API Key 密钥');
+
+    const test = new Setting(bodyEl)
+      .setName('测试并获取模型')
+      .setDesc('调用服务商 GET /models 接口，并填充下方模型下拉框。')
+      .addButton((btn) =>
+        btn.setButtonText('测试并获取模型').setCta().onClick(async () => {
+          await this.refreshModels();
+        })
+      );
+    this.markSearchable(test, '连接 测试 获取 模型 刷新');
+
+    const model = new Setting(bodyEl)
+      .setName('默认模型')
+      .setDesc('可用的模型列表（来自服务商 /models 接口）。')
+      .addDropdown((drop) => {
+        this.modelDropdown = drop;
+        this.populateModelDropdown(drop);
+        drop.onChange((value) => this.updateSetting('defaultModel', value));
+      });
+    this.markSearchable(model, '连接 默认模型 下拉 模型');
+  }
+
+  private renderCustomProviderGroup(containerEl: HTMLElement): void {
+    const bodyEl = this.createGroup(containerEl, '自定义服务商', true);
+
+    const baseUrl = new Setting(bodyEl)
+      .setName('Base URL')
+      .setDesc('OpenAI 兼容服务的基础地址，默认 DeepSeek。')
+      .addText((text) =>
+        text
+          .setPlaceholder('https://api.deepseek.com')
+          .setValue(this.plugin.settings.baseUrl)
+          .onChange((value) => this.updateSetting('baseUrl', value))
+      );
+    this.markSearchable(baseUrl, '自定义服务商 base_url 地址 base url');
+
+    const customApiKey = new Setting(bodyEl)
+      .setName('API Key')
+      .setDesc('自定义服务商的 API Key（预留）。')
+      .addText((text) => {
+        text.inputEl.type = 'password';
+        text
+          .setPlaceholder('sk-...')
+          .setValue(this.plugin.settings.customApiKey)
+          .onChange((value) => this.updateSetting('customApiKey', value));
+      });
+    this.markSearchable(customApiKey, '自定义服务商 api_key 密钥');
+
+    const customModel = new Setting(bodyEl)
+      .setName('模型')
+      .setDesc('自定义服务商的模型 ID（预留）。')
+      .addText((text) =>
+        text
+          .setPlaceholder('model-id')
+          .setValue(this.plugin.settings.customModel)
+          .onChange((value) => this.updateSetting('customModel', value))
+      );
+    this.markSearchable(customModel, '自定义服务商 model 模型');
+  }
+
+  private renderFolderGroup(containerEl: HTMLElement): void {
+    const bodyEl = this.createGroup(containerEl, '文件夹', false);
+
+    const source = new Setting(bodyEl)
+      .setName('源文件夹')
+      .setDesc('统计最近文件数时扫描的文件夹。')
+      .addText((text) => {
+        text
+          .setPlaceholder('/')
+          .setValue(this.plugin.settings.sourceFolder)
+          .onChange((value) => this.updateSetting('sourceFolder', value));
+        new FolderSuggest(this.app, text.inputEl);
+      });
+    this.markSearchable(source, '文件夹 源文件夹 输入 目录');
+
+    const output = new Setting(bodyEl)
+      .setName('输出文件夹')
+      .setDesc('输出最新内容测试生成文件的文件夹。')
+      .addText((text) => {
+        text
+          .setPlaceholder('/')
+          .setValue(this.plugin.settings.outputFolder)
+          .onChange((value) => this.updateSetting('outputFolder', value));
+        new FolderSuggest(this.app, text.inputEl);
+      });
+    this.markSearchable(output, '文件夹 输出文件夹 输入 目录');
+  }
+
+  private renderTimeGroup(containerEl: HTMLElement): void {
+    const bodyEl = this.createGroup(containerEl, '时间', false);
+
+    const timeProp = new Setting(bodyEl)
+      .setName('时间属性名')
+      .setDesc('读取文件时间使用的 frontmatter 属性名；留空则使用文件创建时间。')
+      .addText((text) =>
+        text
+          .setPlaceholder('如：date')
+          .setValue(this.plugin.settings.timePropertyName)
+          .onChange((value) => this.updateSetting('timePropertyName', value))
+      );
+    this.markSearchable(timeProp, '时间 时间属性名 属性 字段');
+
+    const timeFormat = new Setting(bodyEl)
+      .setName('时间戳格式')
+      .setDesc('moment 兼容的时间格式，例如 YYYY-MM-DD。')
+      .addText((text) =>
+        text
+          .setPlaceholder('YYYY-MM-DD')
+          .setValue(this.plugin.settings.timeFormat)
+          .onChange((value) => this.updateSetting('timeFormat', value))
+      );
+    this.markSearchable(timeFormat, '时间 时间戳格式 时间格式');
+
+    const recentDays = new Setting(bodyEl)
+      .setName('最近 N 天')
+      .setDesc('统计最近文件数时回看的天数。')
+      .addText((text) => {
+        text.inputEl.type = 'number';
+        text
+          .setPlaceholder('7')
+          .setValue(String(this.plugin.settings.recentDays))
+          .onChange((value) => {
+            const n = parseInt(value, 10);
+            if (!Number.isNaN(n) && n > 0) this.updateSetting('recentDays', n);
+          });
+      });
+    this.markSearchable(recentDays, '时间 最近N天 天数 最近');
+  }
+
+  private renderOutputGroup(containerEl: HTMLElement): void {
+    const bodyEl = this.createGroup(containerEl, '输出属性', false);
+
+    const reviewProp = new Setting(bodyEl)
+      .setName('审核状态属性名')
+      .setDesc('写入输出文件的审核状态属性名。')
+      .addText((text) =>
+        text
+          .setPlaceholder('approved')
+          .setValue(this.plugin.settings.reviewStatusProperty)
+          .onChange((value) => this.updateSetting('reviewStatusProperty', value))
+      );
+    this.markSearchable(reviewProp, '输出属性 审核状态属性名 状态');
+
+    const reviewVal = new Setting(bodyEl)
+      .setName('审核状态默认值')
+      .setDesc('写入审核状态属性的默认值。')
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.reviewStatusValue)
+          .onChange((value) => this.updateSetting('reviewStatusValue', value))
+      );
+    this.markSearchable(reviewVal, '输出属性 审核状态默认值');
+
+    const categoryProp = new Setting(bodyEl)
+      .setName('分类属性名')
+      .setDesc('写入输出文件的分类属性名。')
+      .addText((text) =>
+        text
+          .setPlaceholder('category')
+          .setValue(this.plugin.settings.categoryProperty)
+          .onChange((value) => this.updateSetting('categoryProperty', value))
+      );
+    this.markSearchable(categoryProp, '输出属性 分类属性名 分类');
+
+    const categoryVal = new Setting(bodyEl)
+      .setName('分类默认值')
+      .setDesc('写入分类属性的默认值。')
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.categoryValue)
+          .onChange((value) => this.updateSetting('categoryValue', value))
+      );
+    this.markSearchable(categoryVal, '输出属性 分类默认值');
+
+    const timestampProp = new Setting(bodyEl)
+      .setName('时间戳属性名')
+      .setDesc('写入输出文件的当前时间戳属性名。')
+      .addText((text) =>
+        text
+          .setPlaceholder('created')
+          .setValue(this.plugin.settings.timestampProperty)
+          .onChange((value) => this.updateSetting('timestampProperty', value))
+      );
+    this.markSearchable(timestampProp, '输出属性 时间戳属性名 created');
+  }
+
+  // -------------------------------------------------------------------------
+  // model fetching
+  // -------------------------------------------------------------------------
+
+  private populateModelDropdown(drop: DropdownComponent): void {
+    drop.selectEl.empty();
+    if (this.currentModels.length === 0) {
+      drop.addOption('', '（请先点击“测试并获取模型”）');
+      drop.setValue('');
+      drop.setDisabled(true);
+      return;
+    }
+    drop.setDisabled(false);
+    const options: Record<string, string> = {};
+    for (const model of this.currentModels) options[model] = model;
+    drop.addOptions(options);
+    const keep = this.plugin.settings.defaultModel;
+    const value = this.currentModels.includes(keep) ? keep : this.currentModels[0];
+    drop.setValue(value);
+    this.updateSetting('defaultModel', value);
+  }
+
+  private async refreshModels(): Promise<void> {
+    const result = await fetchDeepSeekModels(this.plugin);
+    if (result.ok) {
+      this.currentModels = result.models;
+      if (this.modelDropdown) this.populateModelDropdown(this.modelDropdown);
+    }
+  }
+}

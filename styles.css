@@ -1,0 +1,70 @@
+/* obsidian-knowledge-system — settings tab styles.
+   Uses Obsidian CSS variables so user themes control the look. */
+
+.ks-search {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-4-2) 0;
+  margin-bottom: var(--size-4-2);
+}
+
+.ks-search-icon {
+  color: var(--text-muted);
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.ks-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+  padding: var(--size-2-1) 0;
+  outline: none;
+  font-family: var(--font-interface);
+}
+
+.ks-search-input:focus {
+  border-bottom-color: var(--interactive-accent);
+}
+
+.ks-group {
+  margin-bottom: var(--size-4-2);
+}
+
+.ks-group-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-4-2) var(--size-4-2);
+  cursor: pointer;
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+  border-radius: var(--radius-s);
+}
+
+.ks-group-heading:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ks-group-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ks-group-title {
+  flex: 1 1 auto;
+}
+
+.ks-group-body {
+  padding: var(--size-2-1) 0 0 var(--size-4-2);
+}
+
+.ks-collapsed .ks-group-body {
+  display: none;
+}

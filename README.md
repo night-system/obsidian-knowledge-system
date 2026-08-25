@@ -1,12 +1,12 @@
 # obsidian-knowledge-system
 
-配置驱动的 AI 知识系统框架。v0.3.1 接入 **Anthropic 兼容协议**（`POST {baseUrl}/v1/messages`，`x-api-key`）、**内置工具集**（`list_recent_notes` / `read_note` / `create_note`）、**AI 聊天视图**与「测试任务」按钮；桌面端聊天为流式，**移动端自动回退为非流式**（Obsidian 移动端 `requestUrl` 无法解析分块 SSE）；v0.2.0 起还含独立**设置视图**、**动态输出属性**、**测试工具**标签页。
+配置驱动的 AI 知识系统框架。v0.3.1 接入 **Anthropic 兼容协议**（`POST {baseUrl}/v1/messages`，`x-api-key`）、**内置工具集**（`list_recent_notes` / `read_note` / `create_note`）、**AI 聊天视图**与「测试任务」按钮；聊天用**原生 `fetch` 流式**（桌面 Electron + 移动端 WebView 均可，端点 CORS 已放行），**兼容性不佳时自动降级为非流式**（`requestUrl` + `stream:false`）；v0.2.0 起还含独立**设置视图**、**动态输出属性**、**测试工具**标签页。
 
 ---
 
 ## 功能简介
 
-- **AI 聊天视图**：命令面板 "Open Knowledge System chat" 在中间标签页打开聊天，气泡式用户/助手消息，助手用 markdown 渲染，**thinking 块可折叠**，**tool_use 工具卡片**（名称 + 参数摘要 + 结果），支持多轮 tool_use/tool_result 往返，出错在 UI 内显示错误气泡。**桌面端流式增量，移动端回退为非流式**（同一 UI 复用渲染）。
+- **AI 聊天视图**：命令面板 "Open Knowledge System chat" 在中间标签页打开聊天，气泡式用户/助手消息，助手用 markdown 渲染，**thinking 块可折叠**，**tool_use 工具卡片**（名称 + 参数摘要 + 结果），支持多轮 tool_use/tool_result 往返，出错在 UI 内显示错误气泡。**原生 `fetch` 流式（桌面 + 移动端，浏览器直连）**；若 `fetch` 流式失败/不支持，自动回退 `requestUrl` 非流式（复用同一 UI 渲染）。
 - **Anthropic 兼容协议**：调用 `POST {settings.baseUrl}/v1/messages`，请求头 `x-api-key: <key>` + `anthropic-version: 2023-06-01`；`baseUrl` 默认 `https://api.deepseek.com/anthropic`。
 - **内置工具集**（供 AI 调用）：`list_recent_notes`（浏览源文件夹最近笔记）、`read_note`（读取笔记正文，去 YAML）、`create_note`（在输出文件夹创建笔记，防路径穿越）。
 - **测试任务按钮**：在聊天视图一键发送内置中文 prompt，要求 AI 依次调用 `list_recent_notes → read_note → create_note`。
@@ -146,7 +146,7 @@ source: notes/example.md
 ## 移动端说明
 
 - `isDesktopOnly: false`，可在 Obsidian 移动端运行。
-- **移动端聊天回退非流式**：移动端 Obsidian `requestUrl`（Capacitor）无法解析分块 SSE，插件自动发送 `stream:false`，收到完整响应后按非流式渲染（thinking 折叠 / 工具卡片 / markdown 结果均复用同一 UI）。
+- **移动端支持流式（浏览器直连）**：聊天用原生 `window.fetch`（`stream:true`，端点头 `anthropic-dangerous-direct-browser-access: true`，CORS 已放行）；若 `fetch` 流式失败/不支持，自动降级为 `requestUrl` 非流式（`stream:false` + `parseAnthropicResponse`），两者复用同一 UI 渲染。
 - 网络请求仅使用 Obsidian 原生 `requestUrl` 通道，不依赖 `fetch` 或 Node 的 `http` / `fs` / `path`。
 - 文件夹选择器使用 Obsidian 原生 `AbstractInputSuggest`（设置页、命令、Notice 在移动端均正常）。
 - 不使用任何桌面端专属 API，也不引入运行时依赖。
@@ -157,4 +157,4 @@ source: notes/example.md
 
 - 不做 Base5 / 多服务商完整 UI（仅保留自定义服务商折叠区作为预留）。
 - 不做审批闭环。
-- 聊天 UI 的流式（桌面端）为 `requestUrl` 聚合后按 SSE 事件逐段渲染（非浏览器 `fetch` 逐字节流）；移动端则回退为非流式（`stream:false` + `parseAnthropicResponse`）。若需桌面端真正逐 token 增量，可改用 Obsidian 桌面端 fetch + ReadableStream。
+- 聊天 UI 的流式用**原生 `fetch` + `res.body.getReader()`**（桌面 Electron / 移动端 WebView 均可用）；`fetch` 失败/不支持时回退 `requestUrl` 非流式（`stream:false` + `parseAnthropicResponse`）。若某环境 `fetch` 流式被 CORS 拦截，会自动走 `requestUrl` 回退。

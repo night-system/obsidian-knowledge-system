@@ -128,9 +128,6 @@ function parseAnthropicSSE(lines) {
   flush();
   return out;
 }
-function shouldStream(isMobile) {
-  return !isMobile;
-}
 function parseAnthropicResponse(json) {
   var _a;
   const obj = json && typeof json === "object" ? json : {};
@@ -403,18 +400,15 @@ async function fetchModelList(apiKey, baseUrl) {
   }
 }
 async function fetchAnthropicMessages(settings, messages, opts) {
-  var _a, _b;
   const base = (settings.baseUrl || "https://api.deepseek.com/anthropic").trim().replace(/\/+$/, "");
-  const isMobile = (_a = opts == null ? void 0 : opts.isMobile) != null ? _a : typeof import_obsidian2.Platform !== "undefined" ? import_obsidian2.Platform.isMobile : false;
-  const stream = (_b = opts == null ? void 0 : opts.stream) != null ? _b : shouldStream(isMobile);
   const body = {
     model: settings.model,
     max_tokens: 4096,
     ...(opts == null ? void 0 : opts.system) ? { system: opts.system } : {},
     messages,
-    ...(opts == null ? void 0 : opts.tools) && opts.tools.length > 0 ? { tools: opts.tools } : {}
+    ...(opts == null ? void 0 : opts.tools) && opts.tools.length > 0 ? { tools: opts.tools } : {},
+    stream: false
   };
-  if (stream) body.stream = true;
   const res = await (0, import_obsidian2.requestUrl)({
     url: `${base}/v1/messages`,
     method: "POST",
@@ -426,8 +420,46 @@ async function fetchAnthropicMessages(settings, messages, opts) {
     body: JSON.stringify(body),
     throw: false
   });
-  const text = await extractResponseText(res);
-  return { status: res.status, text, stream };
+  return { status: res.status, text: await extractResponseText(res) };
+}
+async function streamAnthropicMessages(settings, messages, opts) {
+  var _a;
+  const base = (settings.baseUrl || "https://api.deepseek.com/anthropic").trim().replace(/\/+$/, "");
+  const body = {
+    model: settings.model,
+    max_tokens: 4096,
+    ...opts.system ? { system: opts.system } : {},
+    messages,
+    ...opts.tools && opts.tools.length > 0 ? { tools: opts.tools } : {},
+    stream: true
+  };
+  try {
+    const res = await window.fetch(`${base}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": settings.apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify(body),
+      signal: opts.signal
+    });
+    if (!res.ok || !res.body) return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    const events = parseAnthropicSSE(text.split("\n"));
+    for (const event of events) opts.onEvent(event);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (_a = e == null ? void 0 : e.message) != null ? _a : "\u7F51\u7EDC\u9519\u8BEF" };
+  }
 }
 async function extractResponseText(res) {
   if (typeof (res == null ? void 0 : res.text) === "string" && res.text) return res.text;
@@ -967,6 +999,9 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     super(leaf);
     this.apiHistory = [];
     this.busy = false;
+    this.activeController = null;
+    this.turnBlocks = [];
+    this.turnStopReason = null;
     this.plugin = plugin;
   }
   getViewType() {
@@ -1001,6 +1036,8 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     testBtn.addEventListener("click", () => void this.send(TEST_PROMPT));
   }
   async onClose() {
+    var _a;
+    (_a = this.activeController) == null ? void 0 : _a.abort();
     this.contentEl.empty();
   }
   // -------------------------------------------------------------------------
@@ -1021,63 +1058,117 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-error" }).setText(text);
   }
   async send(text) {
-    var _a;
+    var _a, _b;
     if (this.busy) return;
     const userText = (text != null ? text : this.inputEl.value).trim();
     if (!userText) return;
     this.inputEl.value = "";
+    (_a = this.activeController) == null ? void 0 : _a.abort();
     this.busy = true;
     try {
       this.apiHistory.push({ role: "user", content: userText });
       this.userBubble(userText);
       await this.runTurn();
     } catch (e) {
-      this.errorBubble("\u8BF7\u6C42\u5F02\u5E38\uFF1A" + ((_a = e == null ? void 0 : e.message) != null ? _a : "\u672A\u77E5\u9519\u8BEF"));
+      this.errorBubble("\u8BF7\u6C42\u5F02\u5E38\uFF1A" + ((_b = e == null ? void 0 : e.message) != null ? _b : "\u672A\u77E5\u9519\u8BEF"));
     } finally {
       this.busy = false;
+      this.activeController = null;
       this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
     }
   }
   async runTurn() {
-    var _a, _b;
+    var _a, _b, _c, _d;
     const { body } = this.assistantBubble();
-    const isMobile = typeof import_obsidian5.Platform !== "undefined" ? import_obsidian5.Platform.isMobile : false;
-    const stream = shouldStream(isMobile);
+    this.turnBlocks = [];
+    this.turnStopReason = null;
+    this.turnError = void 0;
+    const ac = new AbortController();
+    this.activeController = ac;
+    let streamOk = false;
+    let streamErr = null;
+    try {
+      const st = await streamAnthropicMessages(this.plugin.settings, this.apiHistory, {
+        tools: ANTHROPIC_TOOLS,
+        signal: ac.signal,
+        onEvent: (event) => this.handleChatEvent(body, event)
+      });
+      if (st.ok) {
+        streamOk = true;
+      } else {
+        streamErr = (_a = st.error) != null ? _a : st.status != null ? `HTTP ${st.status}` : "\u7F51\u7EDC\u9519\u8BEF";
+      }
+    } catch (e) {
+      streamErr = (_b = e == null ? void 0 : e.message) != null ? _b : "\u7F51\u7EDC\u9519\u8BEF";
+    } finally {
+      this.activeController = null;
+    }
+    if (streamOk) {
+      if (this.turnError) {
+        this.errorBubble(this.turnError);
+        return;
+      }
+      await this.finishTurn(body, this.turnBlocks.filter(Boolean), this.turnStopReason);
+      return;
+    }
     let res;
     try {
-      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS, stream });
+      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS });
     } catch (e) {
-      this.errorBubble("\u7F51\u7EDC\u9519\u8BEF\uFF1A" + ((_a = e == null ? void 0 : e.message) != null ? _a : "\u672A\u77E5\u9519\u8BEF"));
+      this.errorBubble(`\u6D41\u5F0F\u5931\u8D25\uFF1A${streamErr != null ? streamErr : "\u672A\u77E5"}\uFF1B\u975E\u6D41\u5F0F\u5931\u8D25\uFF1A${(_c = e == null ? void 0 : e.message) != null ? _c : "\u672A\u77E5"}`);
       return;
     }
     if (res.status < 200 || res.status >= 300) {
-      this.errorBubble(`\u8BF7\u6C42\u5931\u8D25\uFF1AHTTP ${res.status}`);
+      this.errorBubble(`\u6D41\u5F0F\u5931\u8D25\uFF1A${streamErr != null ? streamErr : "\u672A\u77E5"}\uFF1B\u975E\u6D41\u5F0F\u5931\u8D25\uFF1AHTTP ${res.status}`);
       return;
     }
-    let blocks;
-    let stopReason;
-    let error;
-    if (stream) {
-      const p = this.processEvents(parseAnthropicSSE(res.text.split("\n")));
-      blocks = p.blocks;
-      stopReason = p.stopReason;
-      error = p.error;
-    } else {
-      let json = null;
-      try {
-        json = JSON.parse(res.text);
-      } catch (e) {
-        json = null;
+    let json = null;
+    try {
+      json = JSON.parse(res.text);
+    } catch (e) {
+      json = null;
+    }
+    const parsed = parseAnthropicResponse(json);
+    await this.finishTurn(body, parsed.blocks, (_d = parsed.stop_reason) != null ? _d : null);
+  }
+  handleChatEvent(body, ev) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    const d = ev.data;
+    if (!d || typeof d !== "object") return;
+    if (d.type === "error") {
+      this.turnError = `\u9519\u8BEF\uFF1A${(_c = (_b = (_a = d.error) == null ? void 0 : _a.message) != null ? _b : d.message) != null ? _c : "\u672A\u77E5"}`;
+      return;
+    }
+    if (d.type === "content_block_start") {
+      const cb = (_d = d.content_block) != null ? _d : {};
+      const idx = (_e = d.index) != null ? _e : 0;
+      this.turnBlocks[idx] = emptyBlock((_f = cb.type) != null ? _f : "text");
+      this.turnBlocks[idx].id = (_g = cb.id) != null ? _g : "";
+      this.turnBlocks[idx].name = (_h = cb.name) != null ? _h : "";
+      if (cb.type === "thinking") this.turnBlocks[idx].signature = (_i = cb.signature) != null ? _i : "";
+    } else if (d.type === "content_block_delta") {
+      const blk = this.turnBlocks[d.index];
+      const delta = (_j = d.delta) != null ? _j : {};
+      if (!blk) return;
+      if (delta.type === "text_delta") blk.text += (_k = delta.text) != null ? _k : "";
+      else if (delta.type === "thinking_delta") blk.thinking += (_l = delta.thinking) != null ? _l : "";
+      else if (delta.type === "signature_delta") blk.signature += (_m = delta.signature) != null ? _m : "";
+      else if (delta.type === "input_json_delta") blk.partialJson += (_n = delta.partial_json) != null ? _n : "";
+    } else if (d.type === "content_block_stop") {
+      const blk = this.turnBlocks[d.index];
+      if (blk && blk.partialJson) {
+        try {
+          blk.input = JSON.parse(blk.partialJson);
+        } catch (e) {
+          blk.input = blk.partialJson;
+        }
       }
-      const parsed = parseAnthropicResponse(json);
-      blocks = parsed.blocks;
-      stopReason = (_b = parsed.stop_reason) != null ? _b : null;
-      error = void 0;
+    } else if (d.type === "message_delta") {
+      this.turnStopReason = (_p = (_o = d.delta) == null ? void 0 : _o.stop_reason) != null ? _p : null;
     }
-    if (error) {
-      this.errorBubble(error);
-      return;
-    }
+    this.renderBlocks(body, this.turnBlocks.filter(Boolean), {});
+  }
+  async finishTurn(body, blocks, stopReason) {
     this.renderBlocks(body, blocks, {});
     if (stopReason === "tool_use") {
       const ctx = { app: this.plugin.app, settings: this.plugin.settings, moment: window.moment };
@@ -1095,52 +1186,6 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     } else {
       this.apiHistory.push({ role: "assistant", content: blocksToApi(blocks) });
     }
-  }
-  processEvents(events) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
-    const blocks = [];
-    let stopReason = null;
-    let error;
-    for (const ev of events) {
-      const d = ev.data;
-      if (!d || typeof d !== "object") continue;
-      if (d.type === "error") {
-        error = `\u9519\u8BEF\uFF1A${(_c = (_b = (_a = d.error) == null ? void 0 : _a.message) != null ? _b : d.message) != null ? _c : "\u672A\u77E5"}`;
-        continue;
-      }
-      if (d.type === "content_block_start") {
-        const cb = (_d = d.content_block) != null ? _d : {};
-        const idx = (_e = d.index) != null ? _e : 0;
-        blocks[idx] = emptyBlock((_f = cb.type) != null ? _f : "text");
-        blocks[idx].id = (_g = cb.id) != null ? _g : "";
-        blocks[idx].name = (_h = cb.name) != null ? _h : "";
-        if (cb.type === "thinking") blocks[idx].signature = (_i = cb.signature) != null ? _i : "";
-        continue;
-      }
-      if (d.type === "content_block_delta") {
-        const blk = blocks[d.index];
-        const delta = (_j = d.delta) != null ? _j : {};
-        if (!blk) continue;
-        if (delta.type === "text_delta") blk.text += (_k = delta.text) != null ? _k : "";
-        else if (delta.type === "thinking_delta") blk.thinking += (_l = delta.thinking) != null ? _l : "";
-        else if (delta.type === "signature_delta") blk.signature += (_m = delta.signature) != null ? _m : "";
-        else if (delta.type === "input_json_delta") blk.partialJson += (_n = delta.partial_json) != null ? _n : "";
-        continue;
-      }
-      if (d.type === "content_block_stop") {
-        const blk = blocks[d.index];
-        if (blk && blk.partialJson) {
-          try {
-            blk.input = JSON.parse(blk.partialJson);
-          } catch (e) {
-            blk.input = blk.partialJson;
-          }
-        }
-        continue;
-      }
-      if (d.type === "message_delta") stopReason = (_p = (_o = d.delta) == null ? void 0 : _o.stop_reason) != null ? _p : null;
-    }
-    return { blocks: blocks.filter(Boolean), stopReason, error };
   }
   renderBlocks(body, blocks, toolResults) {
     body.empty();

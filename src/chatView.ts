@@ -1,7 +1,7 @@
-import { ItemView, MarkdownRenderer, Platform, WorkspaceLeaf, setIcon } from 'obsidian';
+import { ItemView, MarkdownRenderer, WorkspaceLeaf, setIcon } from 'obsidian';
 import type KnowledgeSystemPlugin from './main';
-import { fetchAnthropicMessages, AnthropicChatMessage } from './core';
-import { parseAnthropicSSE, parseAnthropicResponse, shouldStream, AnthropicBlock } from './utils/sse';
+import { fetchAnthropicMessages, streamAnthropicMessages, AnthropicChatMessage } from './core';
+import { parseAnthropicResponse, AnthropicBlock } from './utils/sse';
 import { ANTHROPIC_TOOLS, listRecentNotesTool, readNoteTool, createNoteTool, ToolCtx } from './utils/tools';
 
 /** The workspace view type for the chat view. Contract value. */
@@ -54,6 +54,10 @@ export class KnowledgeChatView extends ItemView {
   private scrollEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private busy = false;
+  private activeController: AbortController | null = null;
+  private turnBlocks: AnthropicBlock[] = [];
+  private turnStopReason: string | null = null;
+  private turnError: string | undefined;
 
   constructor(plugin: KnowledgeSystemPlugin, leaf: WorkspaceLeaf) {
     super(leaf);
@@ -100,6 +104,7 @@ export class KnowledgeChatView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.activeController?.abort();
     this.contentEl.empty();
   }
 
@@ -129,6 +134,7 @@ export class KnowledgeChatView extends ItemView {
     const userText = (text ?? this.inputEl.value).trim();
     if (!userText) return;
     this.inputEl.value = '';
+    this.activeController?.abort(); // cancel any in-flight request when sending anew
     this.busy = true;
     try {
       this.apiHistory.push({ role: 'user', content: userText });
@@ -138,54 +144,108 @@ export class KnowledgeChatView extends ItemView {
       this.errorBubble('请求异常：' + ((e as { message?: string })?.message ?? '未知错误'));
     } finally {
       this.busy = false;
+      this.activeController = null;
       this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
     }
   }
 
   private async runTurn(): Promise<void> {
     const { body } = this.assistantBubble();
-    const isMobile = typeof Platform !== 'undefined' ? Platform.isMobile : false;
-    const stream = shouldStream(isMobile);
+    this.turnBlocks = [];
+    this.turnStopReason = null;
+    this.turnError = undefined;
+
+    const ac = new AbortController();
+    this.activeController = ac;
+    let streamOk = false;
+    let streamErr: string | null = null;
+    try {
+      const st = await streamAnthropicMessages(this.plugin.settings, this.apiHistory, {
+        tools: ANTHROPIC_TOOLS,
+        signal: ac.signal,
+        onEvent: (event) => this.handleChatEvent(body, event),
+      });
+      if (st.ok) {
+        streamOk = true;
+      } else {
+        streamErr = st.error ?? (st.status != null ? `HTTP ${st.status}` : '网络错误');
+      }
+    } catch (e) {
+      streamErr = (e as { message?: string })?.message ?? '网络错误';
+    } finally {
+      this.activeController = null;
+    }
+
+    if (streamOk) {
+      if (this.turnError) {
+        this.errorBubble(this.turnError);
+        return;
+      }
+      await this.finishTurn(body, this.turnBlocks.filter(Boolean), this.turnStopReason);
+      return;
+    }
+
+    // Fallback: requestUrl + non-stream (mobile requestUrl can't parse chunked SSE).
     let res;
     try {
-      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS, stream });
+      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS });
     } catch (e) {
-      this.errorBubble('网络错误：' + ((e as { message?: string })?.message ?? '未知错误'));
+      this.errorBubble(`流式失败：${streamErr ?? '未知'}；非流式失败：${(e as { message?: string })?.message ?? '未知'}`);
       return;
     }
     if (res.status < 200 || res.status >= 300) {
-      this.errorBubble(`请求失败：HTTP ${res.status}`);
+      this.errorBubble(`流式失败：${streamErr ?? '未知'}；非流式失败：HTTP ${res.status}`);
       return;
     }
+    let json: any = null;
+    try {
+      json = JSON.parse(res.text);
+    } catch {
+      json = null;
+    }
+    const parsed = parseAnthropicResponse(json);
+    await this.finishTurn(body, parsed.blocks, parsed.stop_reason ?? null);
+  }
 
-    let blocks: AnthropicBlock[];
-    let stopReason: string | null;
-    let error: string | undefined;
-    if (stream) {
-      const p = this.processEvents(parseAnthropicSSE(res.text.split('\n')));
-      blocks = p.blocks;
-      stopReason = p.stopReason;
-      error = p.error;
-    } else {
-      // Mobile: requestUrl returns a full (non-streamed) JSON message body.
-      let json: any = null;
-      try {
-        json = JSON.parse(res.text);
-      } catch {
-        json = null;
+  private handleChatEvent(body: HTMLElement, ev: { event: string; data: unknown }): void {
+    const d = ev.data as Record<string, any> | null;
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'error') {
+      this.turnError = `错误：${d.error?.message ?? d.message ?? '未知'}`;
+      return;
+    }
+    if (d.type === 'content_block_start') {
+      const cb = d.content_block ?? {};
+      const idx = d.index ?? 0;
+      this.turnBlocks[idx] = emptyBlock(cb.type ?? 'text');
+      this.turnBlocks[idx].id = cb.id ?? '';
+      this.turnBlocks[idx].name = cb.name ?? '';
+      if (cb.type === 'thinking') this.turnBlocks[idx].signature = cb.signature ?? '';
+    } else if (d.type === 'content_block_delta') {
+      const blk = this.turnBlocks[d.index];
+      const delta = d.delta ?? {};
+      if (!blk) return;
+      if (delta.type === 'text_delta') blk.text += delta.text ?? '';
+      else if (delta.type === 'thinking_delta') blk.thinking += delta.thinking ?? '';
+      else if (delta.type === 'signature_delta') blk.signature += delta.signature ?? '';
+      else if (delta.type === 'input_json_delta') blk.partialJson += delta.partial_json ?? '';
+    } else if (d.type === 'content_block_stop') {
+      const blk = this.turnBlocks[d.index];
+      if (blk && blk.partialJson) {
+        try {
+          blk.input = JSON.parse(blk.partialJson);
+        } catch {
+          blk.input = blk.partialJson;
+        }
       }
-      const parsed = parseAnthropicResponse(json);
-      blocks = parsed.blocks;
-      stopReason = parsed.stop_reason ?? null;
-      error = undefined;
+    } else if (d.type === 'message_delta') {
+      this.turnStopReason = d.delta?.stop_reason ?? null;
     }
-    if (error) {
-      this.errorBubble(error);
-      return;
-    }
+    this.renderBlocks(body, this.turnBlocks.filter(Boolean), {});
+  }
 
+  private async finishTurn(body: HTMLElement, blocks: AnthropicBlock[], stopReason: string | null): Promise<void> {
     this.renderBlocks(body, blocks, {});
-
     if (stopReason === 'tool_use') {
       const ctx: ToolCtx = { app: this.plugin.app, settings: this.plugin.settings, moment: window.moment };
       const toolResults: Record<string, string> = {};
@@ -203,58 +263,6 @@ export class KnowledgeChatView extends ItemView {
     } else {
       this.apiHistory.push({ role: 'assistant', content: blocksToApi(blocks) });
     }
-  }
-
-  private processEvents(events: { event: string; data: unknown }[]): {
-    blocks: AnthropicBlock[];
-    stopReason: string | null;
-    error?: string;
-  } {
-    const blocks: AnthropicBlock[] = [];
-    let stopReason: string | null = null;
-    let error: string | undefined;
-
-    for (const ev of events) {
-      const d = ev.data as Record<string, any> | null;
-      if (!d || typeof d !== 'object') continue;
-      if (d.type === 'error') {
-        error = `错误：${d.error?.message ?? d.message ?? '未知'}`;
-        continue;
-      }
-      if (d.type === 'content_block_start') {
-        const cb = d.content_block ?? {};
-        const idx = d.index ?? 0;
-        blocks[idx] = emptyBlock(cb.type ?? 'text');
-        blocks[idx].id = cb.id ?? '';
-        blocks[idx].name = cb.name ?? '';
-        if (cb.type === 'thinking') blocks[idx].signature = cb.signature ?? '';
-        continue;
-      }
-      if (d.type === 'content_block_delta') {
-        const blk = blocks[d.index];
-        const delta = d.delta ?? {};
-        if (!blk) continue;
-        if (delta.type === 'text_delta') blk.text += delta.text ?? '';
-        else if (delta.type === 'thinking_delta') blk.thinking += delta.thinking ?? '';
-        else if (delta.type === 'signature_delta') blk.signature += delta.signature ?? '';
-        else if (delta.type === 'input_json_delta') blk.partialJson += delta.partial_json ?? '';
-        continue;
-      }
-      if (d.type === 'content_block_stop') {
-        const blk = blocks[d.index];
-        if (blk && blk.partialJson) {
-          try {
-            blk.input = JSON.parse(blk.partialJson);
-          } catch {
-            blk.input = blk.partialJson;
-          }
-        }
-        continue;
-      }
-      if (d.type === 'message_delta') stopReason = d.delta?.stop_reason ?? null;
-    }
-
-    return { blocks: blocks.filter(Boolean), stopReason, error };
   }
 
   private renderBlocks(body: HTMLElement, blocks: AnthropicBlock[], toolResults: Record<string, string>): void {

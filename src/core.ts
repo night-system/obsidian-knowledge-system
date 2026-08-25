@@ -1,7 +1,7 @@
-import { Notice, Platform, requestUrl, TFile, TFolder } from 'obsidian';
+import { Notice, requestUrl, TFile, TFolder } from 'obsidian';
 import type { App, Command } from 'obsidian';
 import { KnowledgeSystemSettings } from './settings';
-import { shouldStream } from './utils/sse';
+import { parseAnthropicSSE } from './utils/sse';
 import {
   buildFrontmatter,
   countRecent,
@@ -269,29 +269,26 @@ export interface AnthropicChatMessage {
 }
 
 /**
- * POST to `{baseUrl}/v1/messages` (Anthropic-compatible). Uses the module-level
- * `requestUrl` with `x-api-key` + `anthropic-version`. Streaming is enabled by
- * default on desktop; on mobile Obsidian's `requestUrl` (Capacitor) cannot parse
- * a chunked SSE body, so we fall back to a non-streaming request (see
- * `shouldStream`). Returns `{ status, text, stream }` — `text` is the SSE body
- * when streaming, otherwise the full JSON response body.
+ * Fallback chat request: POST `{baseUrl}/v1/messages` non-streaming via the
+ * module-level `requestUrl` (mobile `requestUrl` cannot parse a chunked SSE
+ * body). Returns `{ status, text }` where `text` is the full JSON body, which
+ * the caller parses with `parseAnthropicResponse`. Used when native `fetch`
+ * streaming fails or is unsupported.
  */
 export async function fetchAnthropicMessages(
   settings: { baseUrl: string; apiKey: string; model: string },
   messages: AnthropicChatMessage[],
-  opts?: { system?: string; tools?: unknown[]; stream?: boolean; isMobile?: boolean }
-): Promise<{ status: number; text: string; stream: boolean }> {
+  opts?: { system?: string; tools?: unknown[] }
+): Promise<{ status: number; text: string }> {
   const base = (settings.baseUrl || 'https://api.deepseek.com/anthropic').trim().replace(/\/+$/, '');
-  const isMobile = opts?.isMobile ?? (typeof Platform !== 'undefined' ? Platform.isMobile : false);
-  const stream = opts?.stream ?? shouldStream(isMobile);
   const body: Record<string, unknown> = {
     model: settings.model,
     max_tokens: 4096,
     ...(opts?.system ? { system: opts.system } : {}),
     messages,
     ...(opts?.tools && opts.tools.length > 0 ? { tools: opts.tools } : {}),
+    stream: false,
   };
-  if (stream) body.stream = true;
 
   const res = await requestUrl({
     url: `${base}/v1/messages`,
@@ -304,8 +301,60 @@ export async function fetchAnthropicMessages(
     body: JSON.stringify(body),
     throw: false,
   });
-  const text = await extractResponseText(res);
-  return { status: res.status, text, stream };
+  return { status: res.status, text: await extractResponseText(res) };
+}
+
+/**
+ * Primary chat request: native `window.fetch` streaming (works on desktop
+ * Electron and mobile WebView; the endpoint's CORS preflight allows the headers
+ * below). Reads the SSE body chunk-by-chunk with `res.body.getReader()`,
+ * accumulates it, then hands each parsed event to `onEvent` so the UI can re-render
+ * incrementally. `opts.signal` supports abort. On failure/unsupported it resolves
+ * `{ ok:false }` so the caller can fall back to `fetchAnthropicMessages`.
+ */
+export async function streamAnthropicMessages(
+  settings: { baseUrl: string; apiKey: string; model: string },
+  messages: AnthropicChatMessage[],
+  opts: { system?: string; tools?: unknown[]; signal?: AbortSignal; onEvent: (event: { event: string; data: unknown }) => void }
+): Promise<{ ok: boolean; status?: number; error?: string }> {
+  const base = (settings.baseUrl || 'https://api.deepseek.com/anthropic').trim().replace(/\/+$/, '');
+  const body: Record<string, unknown> = {
+    model: settings.model,
+    max_tokens: 4096,
+    ...(opts.system ? { system: opts.system } : {}),
+    messages,
+    ...(opts.tools && opts.tools.length > 0 ? { tools: opts.tools } : {}),
+    stream: true,
+  };
+
+  try {
+    const res = await window.fetch(`${base}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': settings.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
+    if (!res.ok || !res.body) return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    const events = parseAnthropicSSE(text.split('\n'));
+    for (const event of events) opts.onEvent(event);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as { message?: string })?.message ?? '网络错误' };
+  }
 }
 
 /** Read the raw body text from a `requestUrl` response (Obsidian or mock). */

@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, WorkspaceLeaf, Notice, setIcon } from 'obsidian';
+import { ItemView, MarkdownRenderer, WorkspaceLeaf, Notice, setIcon, Platform } from 'obsidian';
 import type KnowledgeSystemPlugin from './main';
 import { fetchAnthropicMessages, streamAnthropicMessages, AnthropicChatMessage } from './core';
 import { parseAnthropicResponse, AnthropicBlock } from './utils/sse';
@@ -15,13 +15,6 @@ import { resolveToolConfig, ResolvedToolConfig } from './utils/presets';
 
 /** The workspace view type for the chat view. Contract value. */
 export const VIEW_TYPE_CHAT = 'knowledge-system-chat-view';
-
-/** Built-in Chinese prompt for the test button. */
-const TEST_PROMPT =
-  '请按顺序完成以下任务，并在每一步简要说明你的思考与依据：\n' +
-  '第一步：调用 list_recent_notes 查看源文件夹最近几天的笔记；\n' +
-  '第二步：从中选择一篇笔记并调用 read_note 阅读它的正文；\n' +
-  '第三步：调用 create_note 在输出文件夹创建一篇总结笔记（frontmatter 包含 来源 source、分类 category、审核状态 approved）。';
 
 function emptyBlock(type: AnthropicBlock['type']): AnthropicBlock {
   return { type, text: '', thinking: '', signature: '', id: '', name: '', input: {}, partialJson: '' };
@@ -51,10 +44,28 @@ function summarizeInput(input: unknown): string {
   }
 }
 
+/** Join the plain text of every text block (used for the AI message copy). */
+function joinTextBlocks(blocks: AnthropicBlock[]): string {
+  return blocks
+    .filter((b) => b?.type === 'text')
+    .map((b) => b.text ?? '')
+    .join('\n');
+}
+
+/** One-line thinking summary: first line, clamped to ~80 chars (CSS ellipsis). */
+function thinkSummary(thinking: string): string {
+  const text = thinking ?? '';
+  const lineEnd = text.indexOf('\n');
+  const first = lineEnd === -1 ? text : text.slice(0, lineEnd);
+  const cps = [...first];
+  return cps.length > 80 ? cps.slice(0, 80).join('') : first;
+}
+
 /** Per-index DOM sub-elements for a collapsible thinking block. */
 interface ThinkSub {
   wrap: HTMLElement;
   chev: HTMLElement;
+  summary: HTMLElement;
   body: HTMLElement;
 }
 
@@ -68,14 +79,14 @@ interface ToolSub {
 /**
  * A workspace leaf that renders a streaming Anthropic chat UI: user bubbles as
  * plain text, assistant replies as markdown with collapsible thinking blocks and
- * tool_use cards, and a built-in test task. It drives the tool_use/tool_result
- * round-trip automatically against the local tool set.
+ * tool_use cards, driving the tool_use/tool_result round-trip automatically
+ * against the local tool set.
  *
- * Streaming rendering is incremental: each block keeps a persistent DOM
- * container (`blockEls`), text/thinking updates its inner element via O(1)
- * `textContent`, and a 120 ms throttle coalesces the heavier reconciliation
- * (markdown settle, cursor, scroll). Markdown is only re-parsed once per block
- * at `content_block_stop`, not on every token — the low-flicker fix.
+ * v0.6.0 渲染契约：**单一写入者**。每个文本块的 `markdownEls[index]` 只由一条路径写
+ * ——流式期间 `scheduleMarkdownRender`（180ms 节流）、块结算 `settleTextMarkdown`
+ * ——一律**先 `empty()` 再 `MarkdownRenderer.render`**（render 为 append 语义），
+ * 杜绝「裸 Text 节点 + 渲染子节点」并存造成的「渲染两份」。`renderAll`（120ms 结构
+ * 调和）只负责「新块出现 / 工具卡 / 思考块 / 光标 / 滚动」，**不再写文本内容**。
  */
 export class KnowledgeChatView extends ItemView {
   plugin: KnowledgeSystemPlugin;
@@ -83,7 +94,7 @@ export class KnowledgeChatView extends ItemView {
   private scrollEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
-  private testBtn!: HTMLButtonElement;
+  private copyLogBtn!: HTMLButtonElement;
   private busy = false;
   private activeController: AbortController | null = null;
   private turnBlocks: AnthropicBlock[] = [];
@@ -92,6 +103,7 @@ export class KnowledgeChatView extends ItemView {
 
   // Streaming incremental-render state (all reset per assistant turn).
   private bodyEl: HTMLElement | null = null;
+  private currentAiBody: HTMLElement | null = null;
   private blockEls: Record<number, HTMLElement> = {};
   private markdownEls: Record<number, HTMLElement> = {};
   private thinkSubs: Record<number, ThinkSub> = {};
@@ -110,11 +122,18 @@ export class KnowledgeChatView extends ItemView {
   private streamCursorEl: HTMLElement | null = null;
   /** 输入栏上方的 AI 流式状态行（dsh shimmer），流式期间显示。 */
   private statusEl!: HTMLElement;
-  /** 预设选择器条（v0.5.0 DOM，input bar 上方一行）。 */
+  /** 预设选择器条（v0.5.0 DOM，现移入输入卡左工具区）。 */
   private presetBarEl: HTMLElement | null = null;
   private presetSelect: HTMLSelectElement | null = null;
   /** 本轮发送时解析的生效工具/系统配置，供 executeTool 读取。 */
   private resolvedConfig: ResolvedToolConfig | null = null;
+
+  // 诊断日志数据（A.5）：最近一次流式统计 / 渲染检查 / 错误，供「复制诊断日志」打包。
+  private lastStreamLog: Record<string, unknown> | null = null;
+  private lastRenderCheck: string[] | null = null;
+  private lastErrorText: string | null = null;
+  /** 已定型消息的纯文本缓存（keyed by 消息 body），供多轮历史消息的复制按钮使用。 */
+  private aiMsgTextCache = new WeakMap<HTMLElement, string>();
 
   constructor(plugin: KnowledgeSystemPlugin, leaf: WorkspaceLeaf) {
     super(leaf);
@@ -140,14 +159,11 @@ export class KnowledgeChatView extends ItemView {
 
     this.scrollEl = container.createDiv({ cls: 'ks-chat-scroll' });
 
-    // 流式状态行：输入栏上方，流式期间显示「正在思考… / DeepSeek 正在输出…」，
-    // 用 dsh 的蓝色 shimmer 渐变（`--interactive-accent` 主题自适应）。
+    // 流式状态行：输入栏上方（dsh 的 shimmer），流式期间显示。
     this.statusEl = container.createDiv({ cls: 'ks-chat-status is-hidden' });
     this.statusEl.setText('DeepSeek 正在输出…');
 
-    // 预设选择器条（v0.5.0）：input bar 上方一行，切换即生效。
-    this.buildPresetBar(container);
-
+    // 输入卡片（dsh InputBar .card）：列式——上部 textarea 区 + 下部按钮行 .row。
     const bar = container.createDiv({ cls: 'ks-chat-inputbar' });
     this.inputEl = bar.createEl('textarea', { cls: 'ks-chat-textarea' });
     this.inputEl.placeholder = '输入消息…（Enter 发送 / Shift+Enter 换行）';
@@ -160,9 +176,22 @@ export class KnowledgeChatView extends ItemView {
     });
     this.inputEl.addEventListener('input', () => this.onInputChanged());
 
-    this.sendBtn = bar.createEl('button', { cls: 'ks-chat-send' });
+    // 按钮行（dsh .row）：左 .tools（预设选择器 + 复制日志）、右 .trailing（发送）。
+    const row = bar.createDiv({ cls: 'ks-chat-input-row' });
+    const tools = row.createDiv({ cls: 'ks-chat-input-tools' });
+    this.buildPresetBar(tools);
+
+    // 复制诊断日志按钮（A.5，放工具区，与预设选择器同排；lucide clipboard-copy）。
+    this.copyLogBtn = tools.createEl('button', { cls: 'ks-chat-action ks-chat-copy-log' });
+    this.copyLogBtn.setAttribute('aria-label', '复制诊断日志');
+    this.copyLogBtn.setAttribute('title', '复制诊断日志');
+    this.setIconWithFallback(this.copyLogBtn, 'clipboard-copy', '复制');
+    this.copyLogBtn.addEventListener('click', () => this.copyDiagnosticLog());
+
+    const trailing = row.createDiv({ cls: 'ks-chat-input-trailing' });
+    this.sendBtn = trailing.createEl('button', { cls: 'ks-chat-send' });
     this.sendBtn.setAttribute('aria-label', '发送');
-    setIcon(this.sendBtn, 'arrow-up');
+    this.setIconWithFallback(this.sendBtn, 'arrow-up', '↑');
     this.sendBtn.addEventListener('click', () => {
       if (this.busy) {
         this.activeController?.abort();
@@ -170,11 +199,6 @@ export class KnowledgeChatView extends ItemView {
         void this.send();
       }
     });
-
-    this.testBtn = bar.createEl('button', { cls: 'ks-chat-test' });
-    this.testBtn.setAttribute('title', '测试任务');
-    setIcon(this.testBtn, 'play');
-    this.testBtn.addEventListener('click', () => void this.send(TEST_PROMPT));
 
     this.streamState = 'idle';
     this.onInputChanged();
@@ -190,12 +214,12 @@ export class KnowledgeChatView extends ItemView {
   }
 
   // -------------------------------------------------------------------------
-  // preset selector (v0.5.0)
+  // preset selector (v0.5.0) — moved into the input card's tools row
   // -------------------------------------------------------------------------
 
-  /** Build the preset dropdown bar above the input bar (one-off DOM). */
-  private buildPresetBar(container: HTMLElement): void {
-    this.presetBarEl = container.createDiv({ cls: 'ks-preset-bar' });
+  /** Build the preset dropdown inside `parent` (the input card's tools row). */
+  private buildPresetBar(parent: HTMLElement): void {
+    this.presetBarEl = parent.createDiv({ cls: 'ks-preset-bar' });
     const label = this.presetBarEl.createSpan({ cls: 'ks-preset-label', text: '预设' });
     const select = this.presetBarEl.createEl('select', { cls: 'ks-preset-select' });
     this.presetSelect = select;
@@ -233,26 +257,39 @@ export class KnowledgeChatView extends ItemView {
   // send / render helpers
   // -------------------------------------------------------------------------
 
-  /** Render a right-aligned capsule user bubble (dsh: r22px capsule, timestamp below). */
+  /** Render a right-aligned capsule user bubble (dsh UserStyleBubble, r22px). */
   private userBubble(text: string): void {
     const root = this.scrollEl.createDiv({ cls: 'ks-chat-msg ks-chat-user' });
     const el = root.createDiv({ cls: 'ks-chat-content' });
     el.style.whiteSpace = 'pre-wrap';
     el.setText(text);
+    // 底部 hover 显现时间（触屏常显）。
     root.createDiv({ cls: 'ks-chat-time' }).setText(this.nowLabel());
   }
 
-  /** Render an assistant message: full-width narration, no bubble/edge/avatar,
-   *  a muted model caption (dsh has no role label, but the model is useful), and
-   *  a hover-reveal timestamp. Returns the markdown body container. */
+  /** Render an assistant message: pure body (no model header, dsh has none),
+   *  a hover-reveal timestamp and a hover-reveal IconActions row (clock + copy).
+   *  Returns the markdown body container. */
   private assistantBubble(): { root: HTMLElement; body: HTMLElement } {
     const root = this.scrollEl.createDiv({ cls: 'ks-chat-msg ks-chat-ai' });
-    const head = root.createDiv({ cls: 'ks-chat-head' });
-    const model = (this.plugin.settings.model || '').trim();
-    head.createSpan({ cls: 'ks-chat-head-name', text: model ? `AI · ${model}` : 'AI' });
     const body = root.createDiv({ cls: 'ks-chat-content markdown-rendered' });
-    root.createDiv({ cls: 'ks-chat-time' }).setText(this.nowLabel());
+    // 消息操作行（dsh MessageIconActions）：copy 图标常显，clock（时间）hover 显现。
+    const actions = root.createDiv({ cls: 'ks-chat-msg-actions' });
+    actions.createSpan({ cls: 'ks-chat-time', text: this.nowLabel() });
+    const copyBtn = actions.createEl('button', { cls: 'ks-chat-action ks-chat-copy-msg' });
+    copyBtn.setAttribute('aria-label', '复制消息');
+    this.setIconWithFallback(copyBtn, 'copy', '复制');
+    copyBtn.addEventListener('click', () => this.copyText(this.aiMsgText(body), copyBtn, 'copy'));
+    this.currentAiBody = body;
     return { root, body };
+  }
+
+  /** Plain text of an assistant message body: finalized cache when available,
+   *  else the live text blocks of the current turn (summarizable while streaming). */
+  private aiMsgText(body: HTMLElement): string {
+    const cached = this.aiMsgTextCache.get(body);
+    if (cached !== undefined) return cached;
+    return joinTextBlocks(this.turnBlocks);
   }
 
   /** Current wall-clock time label (HH:mm) for the hover-reveal timestamp. */
@@ -274,6 +311,7 @@ export class KnowledgeChatView extends ItemView {
     lines.push(`提示：${this.errorHint()}`);
     const text = lines.join('\n');
     pre.setText(text);
+    this.lastErrorText = text;
 
     const copyBtn = block.createEl('button', { cls: 'ks-chat-copy ks-chat-copy-btn' });
     copyBtn.setText('一键复制');
@@ -293,13 +331,32 @@ export class KnowledgeChatView extends ItemView {
     return '请检查 API Key、模型名与网络连接。';
   }
 
-  /** Copy `text` to the clipboard, keeping the UI under `btn` in sync. */
+  /** Copy `text` to the clipboard, keeping the UI under `btn` in sync (text
+   *  button variant:「一键复制」↔「已复制」). */
   private copyToClipboard(text: string, btn: HTMLElement): void {
     if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
       navigator.clipboard.writeText(text).then(
         () => this.markCopied(btn),
         () => this.clipboardFallback(text, btn)
       );
+    } else {
+      this.clipboardFallback(text, btn);
+    }
+  }
+
+  /** Icon-button copy variant (message / log copy): swap to a check glyph and
+   *  restore `iconName` after 1.5s. */
+  private copyText(text: string, btn: HTMLElement, iconName: string): void {
+    const done = () => {
+      btn.setText('');
+      this.setIconWithFallback(btn, 'check', '✓');
+      window.setTimeout(() => {
+        btn.setText('');
+        this.setIconWithFallback(btn, iconName, '复制');
+      }, 1500);
+    };
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(text).then(done, () => this.clipboardFallback(text, btn));
     } else {
       this.clipboardFallback(text, btn);
     }
@@ -346,16 +403,26 @@ export class KnowledgeChatView extends ItemView {
     this.updateSendBtn();
   }
 
+  /** `setIcon` 后兜底：若渲染出的 svg 无可见绘制内容（icon 名不存在/字体缺失），
+   *  退化为文本字形，确保按钮图标始终可见（dsh 风格白描图标）。 */
+  private setIconWithFallback(btn: HTMLElement, name: string, glyph: string): void {
+    btn.empty();
+    setIcon(btn, name);
+    const svg = btn.querySelector('svg');
+    const hasDrawable = !!svg && !!svg.querySelector('path, rect, circle, polygon, line');
+    if (!hasDrawable) btn.setText(glyph);
+  }
+
   /** Toggle the send button between arrow-up (send), disabled (empty), and square (stop). */
   private updateSendBtn(): void {
     const btn = this.sendBtn;
     if (this.busy) {
       btn.disabled = false;
-      setIcon(btn, 'square');
+      this.setIconWithFallback(btn, 'square', '■');
       btn.addClass('ks-chat-send-stop');
       btn.setAttribute('title', '停止生成');
     } else {
-      setIcon(btn, 'arrow-up');
+      this.setIconWithFallback(btn, 'arrow-up', '↑');
       btn.removeClass('ks-chat-send-stop');
       const empty = !(this.inputEl.value || '').trim();
       btn.disabled = empty;
@@ -421,7 +488,7 @@ export class KnowledgeChatView extends ItemView {
         onEvent: (event) => this.handleChatEvent(event),
         onAutoCorrect: (url) => this.handleAutoCorrect(url),
       });
-      console.info('[ks-stream]', {
+      const streamLog = {
         startAtMs,
         ttfbMs: st.ttfbMs,
         firstEventMs: st.firstEventMs,
@@ -430,7 +497,9 @@ export class KnowledgeChatView extends ItemView {
         url: st.url,
         model: this.plugin.settings.model,
         toolsCount: (tools || []).length,
-      });
+      };
+      this.lastStreamLog = streamLog;
+      console.info('[ks-stream]', streamLog);
       if (st.ok) {
         // 2xx but no frames parsed → treat as a parse failure and fall back to
         // the non-streaming requestUrl path (more stable than an empty reply).
@@ -528,12 +597,15 @@ export class KnowledgeChatView extends ItemView {
     this.showStatus('DeepSeek 正在输出…');
   }
 
-  /** Finalize an aborted partial turn: paint what streamed, drop the cursor. */
+  /** Finalize an aborted partial turn: paint what streamed, drop the cursor,
+   *  cache the message text for its copy button, then run the render check. */
   private finishStream(body: HTMLElement): void {
     this.streamState = 'done';
     this.hideStatus();
     this.renderAll();
     this.resolvePending();
+    this.aiMsgTextCache.set(body, joinTextBlocks(this.turnBlocks));
+    this.runRenderCheck(body);
   }
 
   private handleChatEvent(ev: { event: string; data: unknown }): void {
@@ -647,6 +719,8 @@ export class KnowledgeChatView extends ItemView {
     } else {
       this.apiHistory.push({ role: 'assistant', content: blocksToApi(blocks) });
     }
+    this.aiMsgTextCache.set(body, joinTextBlocks(blocks));
+    this.runRenderCheck(body);
   }
 
   // -------------------------------------------------------------------------
@@ -669,7 +743,9 @@ export class KnowledgeChatView extends ItemView {
     return el;
   }
 
-  /** Repaint every block into its persistent container (throttled 120 ms). */
+  /** 结构调和（120ms 节流）：新块出现 / 工具卡 / 思考块 / 光标 / 滚动。**不再写文本
+   *  内容**——文本块的 markdown 渲染统一由 `scheduleMarkdownRender`（180ms）或
+   *  `settleTextMarkdown`（stop）完成，保证每个 `markdownEls[index]` 单一写入者。 */
   private renderAll(): void {
     this.renderPending = false;
     const body = this.bodyEl;
@@ -686,7 +762,7 @@ export class KnowledgeChatView extends ItemView {
     this.maybeAutoScroll();
   }
 
-  /** Coalesce renders to one 120 ms frame (with a per-token textContent fast path). */
+  /** Coalesce structural renders to one 120 ms frame. */
   private scheduleRender(): void {
     if (this.renderPending) return;
     this.renderPending = true;
@@ -717,7 +793,11 @@ export class KnowledgeChatView extends ItemView {
       this.updateThinking(index, block.thinking, stopped);
     } else if (block.type === 'text') {
       this.ensureTextStructure(index, container);
-      this.updateText(index, block.text, stopped);
+      // 文本内容不在此写：仅在「已停/未 settle」时安排一次终稿渲染（其余由
+      // scheduleMarkdownRender 节流写），保证单一写入者。
+      if ((stopped || !!this.blockStopped[index]) && !this.blockSettled[index]) {
+        this.settleTextMarkdown(index, block);
+      }
     } else if (block.type === 'tool_use') {
       this.ensureToolStructure(index, container, block);
       this.updateTool(index, block, toolResult);
@@ -732,20 +812,13 @@ export class KnowledgeChatView extends ItemView {
     this.markdownEls[index] = el;
   }
 
-  /** Update a text block in place. 流式期间用 180ms 节流 markdown 渲染（DOM 恒为
-   *  markdown，不再写纯文本 —— 用户核心诉求「第一次输出就直接 markdown 渲染」）；
-   *  块结算（stopped）时立即渲染一次终稿并冻结。 */
-  private updateText(index: number, text: string, stopped: boolean): void {
+  /** 单一写入者：`el.empty()` 后调 `MarkdownRenderer.render`（append 语义），
+   *  杜绝「裸 Text 节点 + 渲染子节点」并存。已 settle 的块冻结不重渲。 */
+  private paintMarkdownText(index: number, text: string): void {
     const el = this.markdownEls[index];
-    if (!el?.isConnected) return;
-    if (stopped) {
-      if (this.blockSettled[index]) return; // 已渲染终稿 → 冻结不重渲
-      this.blockSettled[index] = true;
-      el.setText(text);
-      void MarkdownRenderer.render(this.app, text, el, '', this);
-    } else {
-      this.scheduleMarkdownRender(index, text);
-    }
+    if (!el?.isConnected || this.blockSettled[index]) return;
+    el.empty();
+    void MarkdownRenderer.render(this.app, text ?? '', el, '', this);
   }
 
   /** 流式 per-token 入口：只记数据（text 已存入 blk.text），触发节流 markdown 渲染。 */
@@ -754,7 +827,7 @@ export class KnowledgeChatView extends ItemView {
   }
 
   /**
-   * 节流 markdown 渲染器：同一文本块 180ms 内只进行一次 `setText` + 全量
+   * 节流 markdown 渲染器：同一文本块 180ms 内只进行一次 `empty()` + 全量
    * `MarkdownRenderer.render`，让流式途中 DOM 始终是 markdown 但刷新被节流到
    * 每 ~180ms 一次（对常见回复 <2000 字，移动端可接受；卡顿可调大节流）。已
    * settle 的块冻结不重渲（保留 blockSettled 机制）。异步 render 会自替换子节点。
@@ -765,22 +838,24 @@ export class KnowledgeChatView extends ItemView {
     this.mdRenderTimers[index] = window.setTimeout(() => {
       this.mdRenderPending[index] = false;
       this.mdRenderTimers[index] = 0;
-      const el = this.markdownEls[index];
-      if (el?.isConnected && !this.blockSettled[index]) {
-        el.setText(text);
-        void MarkdownRenderer.render(this.app, text, el, '', this);
-      }
+      // 取触发时刻的最新文本（而非计划时快照），减少节流期间的滞后。
+      const latest = this.turnBlocks[index]?.text ?? text ?? '';
+      this.paintMarkdownText(index, latest);
     }, 180);
   }
 
   /** 块 content_block_stop：立即渲染终稿，并取消挂起的节流定时器。 */
   private settleTextMarkdown(index: number, block: AnthropicBlock): void {
+    if (this.blockSettled[index]) {
+      this.clearMarkdownTimer(index);
+      return;
+    }
     this.blockSettled[index] = true;
     this.clearMarkdownTimer(index);
     const el = this.markdownEls[index];
     if (!el?.isConnected) return;
-    el.setText(block.text);
-    void MarkdownRenderer.render(this.app, block.text, el, '', this);
+    el.empty();
+    void MarkdownRenderer.render(this.app, block.text ?? '', el, '', this);
   }
 
   private clearMarkdownTimer(index: number): void {
@@ -798,7 +873,9 @@ export class KnowledgeChatView extends ItemView {
     }
   }
 
-  // --- thinking blocks -------------------------------------------------------
+  // --- thinking blocks (dsh ReasoningRow 复刻) -------------------------------
+  // dsh：title「Think」+ chevron + 单行摘要（省略号）+ body 缩进 22px + running
+  // 300px 扫光。经用户拍板，标题保留中文「思考中」。
 
   private ensureThinkingStructure(index: number, container: HTMLElement): void {
     if (this.thinkSubs[index]?.wrap.isConnected) return;
@@ -806,9 +883,8 @@ export class KnowledgeChatView extends ItemView {
     const head = wrap.createDiv({ cls: 'ks-think-head' });
     const chev = head.createSpan({ cls: 'ks-think-icon' });
     setIcon(chev, 'chevron-right');
-    const icon = head.createSpan({ cls: 'ks-think-icon-2' });
-    setIcon(icon, 'brain');
-    head.createSpan({ cls: 'ks-think-label', text: '思考中' }); // 可折叠
+    head.createSpan({ cls: 'ks-think-title', text: '思考中' }); // 可折叠
+    const summary = head.createSpan({ cls: 'ks-think-summary' });
     const body = wrap.createDiv({ cls: 'ks-think-body' });
     this.thinkExpanded[index] = null; // follow stream state until the user toggles
     wrap.addEventListener('click', () => {
@@ -818,16 +894,17 @@ export class KnowledgeChatView extends ItemView {
       setIcon(chev, newCollapsed ? 'chevron-right' : 'chevron-down');
       this.thinkExpanded[index] = !newCollapsed;
     });
-    this.thinkSubs[index] = { wrap, chev, body };
+    this.thinkSubs[index] = { wrap, chev, summary, body };
   }
 
   private updateThinking(index: number, thinking: string, stopped: boolean): void {
     const sub = this.thinkSubs[index];
     if (!sub?.wrap.isConnected) return;
+    sub.summary.setText(thinkSummary(thinking));
     sub.body.setText(thinking);
     const streaming = !stopped && this.streamState === 'streaming';
-    // Auto: expand while streaming (so the live reasoning + blinking「…」show),
-    // collapse when done; a manual click overrides both.
+    // Auto: expand while streaming (so the live reasoning shows), collapse when
+    // done; a manual click overrides both.
     const override = this.thinkExpanded[index];
     const expanded = override != null ? override : streaming;
     sub.wrap.toggleClass('is-collapsed', !expanded);
@@ -837,7 +914,9 @@ export class KnowledgeChatView extends ItemView {
 
   private refreshThinking(index: number, thinking: string): void {
     const sub = this.thinkSubs[index];
-    if (sub?.body.isConnected) sub.body.setText(thinking);
+    if (!sub?.wrap.isConnected) return;
+    sub.summary.setText(thinkSummary(thinking));
+    sub.body.setText(thinking);
   }
 
   // --- tool_use cards --------------------------------------------------------
@@ -922,6 +1001,82 @@ export class KnowledgeChatView extends ItemView {
       this.blockEls[i] = container;
       this.paintBlock(i, container, b, toolResults?.[b.id], true);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // 渲染单份闭环检查（用户点名：输出后检查，有问题就循环修复）
+  // -------------------------------------------------------------------------
+
+  /** 递归检查 body 下每个 `.ks-chat-markdown`：① 直接子节点无非空裸 `#text`
+   *  （markdown 渲染后应是元素子节点；裸文本 = 原文泄漏/未渲染）②「原文+渲染」
+   *  并存（`children.length>0` 且首子为裸文本）——返回违规说明列表。
+   *  注意：不校验 `textContent === 原文`——markdown 渲染后 textContent 是渲染文本，
+   *  与源不同是正常现象；这里只检测「能否对应到单一来源」的回归。 */
+  private validateSingleRender(body: HTMLElement): string[] {
+    const violations: string[] = [];
+    const mdEls = body?.querySelectorAll('.ks-chat-markdown') ?? [];
+    for (let i = 0; i < mdEls.length; i++) {
+      const el = mdEls[i] as HTMLElement;
+      let bareText = '';
+      for (const child of Array.from(el.childNodes)) {
+        if (child.nodeType === 3) {
+          const t = (child.textContent ?? '').trim();
+          if (t) bareText += t;
+        }
+      }
+      if (bareText) {
+        violations.push(`文本块#${i}: 存在非空裸文本「${bareText.slice(0, 30)}」（疑似原文泄漏）`);
+      }
+      if (el.children.length > 0 && el.firstChild?.nodeType === 3) {
+        violations.push(`文本块#${i}: 原文+渲染并存（children=${el.children.length} 且首子=裸文本）`);
+      }
+    }
+    return violations;
+  }
+
+  /** 在流结束（finishTurn / abort 后）调用：跑一遍渲染检查，记录 `lastRenderCheck`
+   *  并输出 `[ks-render-check]`（无违规 info、有违规 warn），供闭环测试断言。 */
+  private runRenderCheck(body: HTMLElement): void {
+    const violations = this.validateSingleRender(body);
+    this.lastRenderCheck = violations;
+    if (violations.length === 0) {
+      console.info('[ks-render-check]', '无违规');
+    } else {
+      console.warn('[ks-render-check]', violations);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 诊断日志复制（A.5）
+  // -------------------------------------------------------------------------
+
+  /** 打包全部诊断字段；apiKey 脱敏。字段来自 view 成员，缺失则显示「无」。 */
+  private buildDiagnosticLog(): string {
+    const settings = this.plugin.settings;
+    const stream = this.lastStreamLog;
+    const render = this.lastRenderCheck;
+    const err = this.lastErrorText;
+    const lines: string[] = [];
+    lines.push('[Knowledge System 诊断日志]');
+    lines.push('版本: 0.6.0');
+    const model = (settings.model || '').trim();
+    lines.push(`模型: ${model || '（未设置）'}${stream?.toolsCount != null ? `（toolsCount: ${stream.toolsCount}）` : ''}`);
+    lines.push(`平台: ${Platform.isMobile ? '移动端' : '桌面'}`);
+    lines.push(`Base URL: ${(settings.baseUrl || '').trim() || '（未设置）'}`);
+    // 脱敏：不把 apiKey 打进日志。
+    lines.push(`API Key: ${settings.apiKey ? '已配置(隐藏)' : '未配置'}`);
+    lines.push('=== 最近一次流式 ===');
+    lines.push(stream != null ? `[ks-stream]: ${JSON.stringify(stream)}` : '无');
+    lines.push('=== 最近一次渲染检查 ===');
+    lines.push(!render || render.length === 0 ? '[ks-render-check]: 无违规' : `[ks-render-check]: ${JSON.stringify(render)}`);
+    lines.push('=== 最近一次错误 ===');
+    lines.push(err || '无');
+    return lines.join('\n');
+  }
+
+  /** 复制诊断日志到剪贴板（按钮短暂显示「已复制」）。 */
+  private copyDiagnosticLog(): void {
+    this.copyText(this.buildDiagnosticLog(), this.copyLogBtn, 'clipboard-copy');
   }
 
   private async executeTool(ctx: ToolCtx, name: string, input: unknown): Promise<string> {

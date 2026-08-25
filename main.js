@@ -864,7 +864,7 @@ var SettingsRenderer = class {
    */
   renderYamlRules(containerEl) {
     containerEl.empty();
-    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u63A7\u5236 AI \u4F7F\u7528 create_note \u5DE5\u5177\u65F6\u7684 frontmatter \u952E\u503C\u5BF9\uFF1A\u952E\u540D+\u89E3\u91CA+\u53EF\u9009\u503C\uFF08\u56DE\u8F66\u9010\u4E2A\u6DFB\u52A0\uFF0C\u663E\u793A\u4E3A chip\uFF09+\u9ED8\u8BA4\u503C\uFF1B\u9ED8\u8BA4\u503C\u652F\u6301 {{YYYY.MM.DD}} \u7B49 moment \u6A21\u677F\uFF0C{{}} \u5185\u4E3A moment \u517C\u5BB9\u683C\u5F0F\uFF1B\u53EF\u9009\u503C\u7528\u4E8E\u7EA6\u675F AI \u53EA\u80FD\u9009\u8FD9\u4E9B\u503C\uFF0C\u7559\u7A7A=\u4EFB\u610F\u3002");
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u63A7\u5236 AI \u4F7F\u7528 create_note \u5DE5\u5177\u65F6\u7684 frontmatter \u952E\u503C\u5BF9\uFF1A\u952E\u540D+\u89E3\u91CA+\u53EF\u9009\u503C\uFF08\u56DE\u8F66\u9010\u4E2A\u6DFB\u52A0\uFF0C\u663E\u793A\u4E3A chip\uFF09+\u9ED8\u8BA4\u503C\uFF1B\u9ED8\u8BA4\u503C\u652F\u6301 {{YYYY.MM.DD}} \u7B49 moment \u6A21\u677F\uFF0C{{}} \u5185\u4E3A moment \u517C\u5BB9\u683C\u5F0F\uFF1B\u53EF\u9009\u503C\u7528\u4E8E\u7EA6\u675F AI \u53EA\u80FD\u9009\u8FD9\u4E9B\u503C\uFF0C\u7559\u7A7A=\u4EFB\u610F\u3002\u9ED8\u8BA4\u503C\u4E0D\u4F1A\u66B4\u9732\u7ED9 AI\u2014\u2014AI \u521B\u5EFA\u6587\u4EF6\u65F6\u81EA\u52A8\u8FFD\u52A0\uFF08AI \u4E0D\u77E5\u60C5\uFF09\uFF1B\u53EA\u914D\u4E86\u9ED8\u8BA4\u503C\u3001\u65E0\u53EF\u9009\u503C\u7EA6\u675F\u7684\u5C5E\u6027\u952E\u4E5F\u4E0D\u5BF9 AI \u663E\u793A\u3002");
     this.markSearchable(info, "AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 \u952E\u540D \u89E3\u91CA \u53EF\u9009\u503C \u9ED8\u8BA4\u503C moment \u6A21\u677F frontmatter");
     const list = this.plugin.settings.yamlRules || [];
     list.forEach((rule, index) => {
@@ -1335,23 +1335,17 @@ ${body}`;
 var DAY_MS2 = 864e5;
 var FALLBACK_FORMATS2 = ["YYYY-MM-DD", "YYYY.MM.DD", "YYYY/MM/DD"];
 function buildAnthropicTools(yamlRules) {
-  var _a;
   const rules = Array.isArray(yamlRules) ? yamlRules : [];
-  const yamlDesc = "frontmatter \u952E\u503C\u5BF9\u5BF9\u8C61\uFF08YAML frontmatter \u533A\uFF09\u3002\u9879\u76EE\u5DF2\u914D\u7F6E\u4EE5\u4E0B\u5C5E\u6027\u89C4\u5219\uFF1A" + rules.map(
-    (r) => {
-      var _a2;
-      return `- ${r.key}\uFF1A${r.desc}` + (((_a2 = r.values) == null ? void 0 : _a2.length) ? `\uFF08\u53EF\u9009\u503C\uFF1A${r.values.join("/")}\uFF09` : "") + (r.default ? `\uFF08\u9ED8\u8BA4\u503C\uFF1A${r.default}\uFF09` : "");
-    }
-  ).join("\n") + "\n\u89C4\u5219\u672A\u5217\u51FA\u7684\u952E\u540D\u53EF\u4EE5\u968F\u610F\u6DFB\u52A0\uFF1B\u89C4\u5219\u5185\u952E\u540D\u8BF7\u4E25\u683C\u9075\u5B88\u53EF\u9009\u503C\uFF0C\u5426\u5219\u521B\u5EFA\u4F1A\u88AB\u62D2\u7EDD\u3002";
+  const exposedRules = rules.filter((r) => r.key && r.values && r.values.length > 0);
+  const yamlDesc = "frontmatter \u952E\u503C\u5BF9\u5BF9\u8C61\uFF08YAML frontmatter \u533A\uFF09\u3002\u9879\u76EE\u5DF2\u914D\u7F6E\u4EE5\u4E0B\u5C5E\u6027\u89C4\u5219\uFF1A" + exposedRules.map((r) => `- ${r.key}\uFF1A${r.desc}\uFF08\u53EF\u9009\u503C\uFF1A${r.values.join("/")}\uFF09`).join("\n") + "\n\u89C4\u5219\u672A\u5217\u51FA\u7684\u952E\u540D\u53EF\u4EE5\u968F\u610F\u6DFB\u52A0\uFF1B\u89C4\u5219\u5185\u952E\u540D\u8BF7\u4E25\u683C\u9075\u5B88\u53EF\u9009\u503C\uFF0C\u5426\u5219\u521B\u5EFA\u4F1A\u88AB\u62D2\u7EDD\u3002";
   const yamlSchema = { type: "object", description: yamlDesc };
-  if (rules.length > 0) {
+  if (exposedRules.length > 0) {
     const props = {};
-    for (const r of rules) {
-      if (!r.key) continue;
+    for (const r of exposedRules) {
       props[r.key] = {
         type: "string",
         description: r.desc,
-        ...((_a = r.values) == null ? void 0 : _a.length) ? { enum: r.values } : {}
+        ...r.values.length ? { enum: r.values } : {}
       };
     }
     yamlSchema.properties = props;
@@ -1705,7 +1699,6 @@ function resolveToolConfig(settings) {
 
 // src/chatView.ts
 var VIEW_TYPE_CHAT = "knowledge-system-chat-view";
-var TEST_PROMPT = "\u8BF7\u6309\u987A\u5E8F\u5B8C\u6210\u4EE5\u4E0B\u4EFB\u52A1\uFF0C\u5E76\u5728\u6BCF\u4E00\u6B65\u7B80\u8981\u8BF4\u660E\u4F60\u7684\u601D\u8003\u4E0E\u4F9D\u636E\uFF1A\n\u7B2C\u4E00\u6B65\uFF1A\u8C03\u7528 list_recent_notes \u67E5\u770B\u6E90\u6587\u4EF6\u5939\u6700\u8FD1\u51E0\u5929\u7684\u7B14\u8BB0\uFF1B\n\u7B2C\u4E8C\u6B65\uFF1A\u4ECE\u4E2D\u9009\u62E9\u4E00\u7BC7\u7B14\u8BB0\u5E76\u8C03\u7528 read_note \u9605\u8BFB\u5B83\u7684\u6B63\u6587\uFF1B\n\u7B2C\u4E09\u6B65\uFF1A\u8C03\u7528 create_note \u5728\u8F93\u51FA\u6587\u4EF6\u5939\u521B\u5EFA\u4E00\u7BC7\u603B\u7ED3\u7B14\u8BB0\uFF08frontmatter \u5305\u542B \u6765\u6E90 source\u3001\u5206\u7C7B category\u3001\u5BA1\u6838\u72B6\u6001 approved\uFF09\u3002";
 function emptyBlock(type) {
   return { type, text: "", thinking: "", signature: "", id: "", name: "", input: {}, partialJson: "" };
 }
@@ -1725,6 +1718,19 @@ function summarizeInput(input) {
     return String(input);
   }
 }
+function joinTextBlocks(blocks) {
+  return blocks.filter((b) => (b == null ? void 0 : b.type) === "text").map((b) => {
+    var _a;
+    return (_a = b.text) != null ? _a : "";
+  }).join("\n");
+}
+function thinkSummary(thinking) {
+  const text = thinking != null ? thinking : "";
+  const lineEnd = text.indexOf("\n");
+  const first = lineEnd === -1 ? text : text.slice(0, lineEnd);
+  const cps = [...first];
+  return cps.length > 80 ? cps.slice(0, 80).join("") : first;
+}
 var KnowledgeChatView = class extends import_obsidian5.ItemView {
   constructor(plugin, leaf) {
     super(leaf);
@@ -1735,6 +1741,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     this.turnStopReason = null;
     // Streaming incremental-render state (all reset per assistant turn).
     this.bodyEl = null;
+    this.currentAiBody = null;
     this.blockEls = {};
     this.markdownEls = {};
     this.thinkSubs = {};
@@ -1751,11 +1758,17 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     this.mdRenderTimers = {};
     this.streamState = "idle";
     this.streamCursorEl = null;
-    /** 预设选择器条（v0.5.0 DOM，input bar 上方一行）。 */
+    /** 预设选择器条（v0.5.0 DOM，现移入输入卡左工具区）。 */
     this.presetBarEl = null;
     this.presetSelect = null;
     /** 本轮发送时解析的生效工具/系统配置，供 executeTool 读取。 */
     this.resolvedConfig = null;
+    // 诊断日志数据（A.5）：最近一次流式统计 / 渲染检查 / 错误，供「复制诊断日志」打包。
+    this.lastStreamLog = null;
+    this.lastRenderCheck = null;
+    this.lastErrorText = null;
+    /** 已定型消息的纯文本缓存（keyed by 消息 body），供多轮历史消息的复制按钮使用。 */
+    this.aiMsgTextCache = /* @__PURE__ */ new WeakMap();
     this.plugin = plugin;
   }
   getViewType() {
@@ -1774,7 +1787,6 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     this.scrollEl = container.createDiv({ cls: "ks-chat-scroll" });
     this.statusEl = container.createDiv({ cls: "ks-chat-status is-hidden" });
     this.statusEl.setText("DeepSeek \u6B63\u5728\u8F93\u51FA\u2026");
-    this.buildPresetBar(container);
     const bar = container.createDiv({ cls: "ks-chat-inputbar" });
     this.inputEl = bar.createEl("textarea", { cls: "ks-chat-textarea" });
     this.inputEl.placeholder = "\u8F93\u5165\u6D88\u606F\u2026\uFF08Enter \u53D1\u9001 / Shift+Enter \u6362\u884C\uFF09";
@@ -1786,9 +1798,18 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       }
     });
     this.inputEl.addEventListener("input", () => this.onInputChanged());
-    this.sendBtn = bar.createEl("button", { cls: "ks-chat-send" });
+    const row = bar.createDiv({ cls: "ks-chat-input-row" });
+    const tools = row.createDiv({ cls: "ks-chat-input-tools" });
+    this.buildPresetBar(tools);
+    this.copyLogBtn = tools.createEl("button", { cls: "ks-chat-action ks-chat-copy-log" });
+    this.copyLogBtn.setAttribute("aria-label", "\u590D\u5236\u8BCA\u65AD\u65E5\u5FD7");
+    this.copyLogBtn.setAttribute("title", "\u590D\u5236\u8BCA\u65AD\u65E5\u5FD7");
+    this.setIconWithFallback(this.copyLogBtn, "clipboard-copy", "\u590D\u5236");
+    this.copyLogBtn.addEventListener("click", () => this.copyDiagnosticLog());
+    const trailing = row.createDiv({ cls: "ks-chat-input-trailing" });
+    this.sendBtn = trailing.createEl("button", { cls: "ks-chat-send" });
     this.sendBtn.setAttribute("aria-label", "\u53D1\u9001");
-    (0, import_obsidian5.setIcon)(this.sendBtn, "arrow-up");
+    this.setIconWithFallback(this.sendBtn, "arrow-up", "\u2191");
     this.sendBtn.addEventListener("click", () => {
       var _a;
       if (this.busy) {
@@ -1797,10 +1818,6 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
         void this.send();
       }
     });
-    this.testBtn = bar.createEl("button", { cls: "ks-chat-test" });
-    this.testBtn.setAttribute("title", "\u6D4B\u8BD5\u4EFB\u52A1");
-    (0, import_obsidian5.setIcon)(this.testBtn, "play");
-    this.testBtn.addEventListener("click", () => void this.send(TEST_PROMPT));
     this.streamState = "idle";
     this.onInputChanged();
   }
@@ -1814,11 +1831,11 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     this.contentEl.empty();
   }
   // -------------------------------------------------------------------------
-  // preset selector (v0.5.0)
+  // preset selector (v0.5.0) — moved into the input card's tools row
   // -------------------------------------------------------------------------
-  /** Build the preset dropdown bar above the input bar (one-off DOM). */
-  buildPresetBar(container) {
-    this.presetBarEl = container.createDiv({ cls: "ks-preset-bar" });
+  /** Build the preset dropdown inside `parent` (the input card's tools row). */
+  buildPresetBar(parent) {
+    this.presetBarEl = parent.createDiv({ cls: "ks-preset-bar" });
     const label = this.presetBarEl.createSpan({ cls: "ks-preset-label", text: "\u9884\u8BBE" });
     const select = this.presetBarEl.createEl("select", { cls: "ks-preset-select" });
     this.presetSelect = select;
@@ -1852,7 +1869,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
   // -------------------------------------------------------------------------
   // send / render helpers
   // -------------------------------------------------------------------------
-  /** Render a right-aligned capsule user bubble (dsh: r22px capsule, timestamp below). */
+  /** Render a right-aligned capsule user bubble (dsh UserStyleBubble, r22px). */
   userBubble(text) {
     const root = this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-user" });
     const el = root.createDiv({ cls: "ks-chat-content" });
@@ -1860,17 +1877,27 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     el.setText(text);
     root.createDiv({ cls: "ks-chat-time" }).setText(this.nowLabel());
   }
-  /** Render an assistant message: full-width narration, no bubble/edge/avatar,
-   *  a muted model caption (dsh has no role label, but the model is useful), and
-   *  a hover-reveal timestamp. Returns the markdown body container. */
+  /** Render an assistant message: pure body (no model header, dsh has none),
+   *  a hover-reveal timestamp and a hover-reveal IconActions row (clock + copy).
+   *  Returns the markdown body container. */
   assistantBubble() {
     const root = this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-ai" });
-    const head = root.createDiv({ cls: "ks-chat-head" });
-    const model = (this.plugin.settings.model || "").trim();
-    head.createSpan({ cls: "ks-chat-head-name", text: model ? `AI \xB7 ${model}` : "AI" });
     const body = root.createDiv({ cls: "ks-chat-content markdown-rendered" });
-    root.createDiv({ cls: "ks-chat-time" }).setText(this.nowLabel());
+    const actions = root.createDiv({ cls: "ks-chat-msg-actions" });
+    actions.createSpan({ cls: "ks-chat-time", text: this.nowLabel() });
+    const copyBtn = actions.createEl("button", { cls: "ks-chat-action ks-chat-copy-msg" });
+    copyBtn.setAttribute("aria-label", "\u590D\u5236\u6D88\u606F");
+    this.setIconWithFallback(copyBtn, "copy", "\u590D\u5236");
+    copyBtn.addEventListener("click", () => this.copyText(this.aiMsgText(body), copyBtn, "copy"));
+    this.currentAiBody = body;
     return { root, body };
+  }
+  /** Plain text of an assistant message body: finalized cache when available,
+   *  else the live text blocks of the current turn (summarizable while streaming). */
+  aiMsgText(body) {
+    const cached = this.aiMsgTextCache.get(body);
+    if (cached !== void 0) return cached;
+    return joinTextBlocks(this.turnBlocks);
   }
   /** Current wall-clock time label (HH:mm) for the hover-reveal timestamp. */
   nowLabel() {
@@ -1890,6 +1917,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     lines.push(`\u63D0\u793A\uFF1A${this.errorHint()}`);
     const text = lines.join("\n");
     pre.setText(text);
+    this.lastErrorText = text;
     const copyBtn = block.createEl("button", { cls: "ks-chat-copy ks-chat-copy-btn" });
     copyBtn.setText("\u4E00\u952E\u590D\u5236");
     copyBtn.addEventListener("click", () => this.copyToClipboard(text, copyBtn));
@@ -1906,13 +1934,31 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     }
     return "\u8BF7\u68C0\u67E5 API Key\u3001\u6A21\u578B\u540D\u4E0E\u7F51\u7EDC\u8FDE\u63A5\u3002";
   }
-  /** Copy `text` to the clipboard, keeping the UI under `btn` in sync. */
+  /** Copy `text` to the clipboard, keeping the UI under `btn` in sync (text
+   *  button variant:「一键复制」↔「已复制」). */
   copyToClipboard(text, btn) {
     if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
       navigator.clipboard.writeText(text).then(
         () => this.markCopied(btn),
         () => this.clipboardFallback(text, btn)
       );
+    } else {
+      this.clipboardFallback(text, btn);
+    }
+  }
+  /** Icon-button copy variant (message / log copy): swap to a check glyph and
+   *  restore `iconName` after 1.5s. */
+  copyText(text, btn, iconName) {
+    const done = () => {
+      btn.setText("");
+      this.setIconWithFallback(btn, "check", "\u2713");
+      window.setTimeout(() => {
+        btn.setText("");
+        this.setIconWithFallback(btn, iconName, "\u590D\u5236");
+      }, 1500);
+    };
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      navigator.clipboard.writeText(text).then(done, () => this.clipboardFallback(text, btn));
     } else {
       this.clipboardFallback(text, btn);
     }
@@ -1954,16 +2000,25 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
     this.updateSendBtn();
   }
+  /** `setIcon` 后兜底：若渲染出的 svg 无可见绘制内容（icon 名不存在/字体缺失），
+   *  退化为文本字形，确保按钮图标始终可见（dsh 风格白描图标）。 */
+  setIconWithFallback(btn, name, glyph) {
+    btn.empty();
+    (0, import_obsidian5.setIcon)(btn, name);
+    const svg = btn.querySelector("svg");
+    const hasDrawable = !!svg && !!svg.querySelector("path, rect, circle, polygon, line");
+    if (!hasDrawable) btn.setText(glyph);
+  }
   /** Toggle the send button between arrow-up (send), disabled (empty), and square (stop). */
   updateSendBtn() {
     const btn = this.sendBtn;
     if (this.busy) {
       btn.disabled = false;
-      (0, import_obsidian5.setIcon)(btn, "square");
+      this.setIconWithFallback(btn, "square", "\u25A0");
       btn.addClass("ks-chat-send-stop");
       btn.setAttribute("title", "\u505C\u6B62\u751F\u6210");
     } else {
-      (0, import_obsidian5.setIcon)(btn, "arrow-up");
+      this.setIconWithFallback(btn, "arrow-up", "\u2191");
       btn.removeClass("ks-chat-send-stop");
       const empty = !(this.inputEl.value || "").trim();
       btn.disabled = empty;
@@ -2024,7 +2079,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
         onEvent: (event) => this.handleChatEvent(event),
         onAutoCorrect: (url) => this.handleAutoCorrect(url)
       });
-      console.info("[ks-stream]", {
+      const streamLog = {
         startAtMs,
         ttfbMs: st.ttfbMs,
         firstEventMs: st.firstEventMs,
@@ -2033,7 +2088,9 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
         url: st.url,
         model: this.plugin.settings.model,
         toolsCount: (tools || []).length
-      });
+      };
+      this.lastStreamLog = streamLog;
+      console.info("[ks-stream]", streamLog);
       if (st.ok) {
         if (((_a = st.events) != null ? _a : 0) > 0) {
           streamOk = true;
@@ -2118,12 +2175,15 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     this.resolvePending();
     this.showStatus("DeepSeek \u6B63\u5728\u8F93\u51FA\u2026");
   }
-  /** Finalize an aborted partial turn: paint what streamed, drop the cursor. */
+  /** Finalize an aborted partial turn: paint what streamed, drop the cursor,
+   *  cache the message text for its copy button, then run the render check. */
   finishStream(body) {
     this.streamState = "done";
     this.hideStatus();
     this.renderAll();
     this.resolvePending();
+    this.aiMsgTextCache.set(body, joinTextBlocks(this.turnBlocks));
+    this.runRenderCheck(body);
   }
   handleChatEvent(ev) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
@@ -2232,6 +2292,8 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     } else {
       this.apiHistory.push({ role: "assistant", content: blocksToApi(blocks) });
     }
+    this.aiMsgTextCache.set(body, joinTextBlocks(blocks));
+    this.runRenderCheck(body);
   }
   // -------------------------------------------------------------------------
   // Streaming render: persistent per-block containers
@@ -2251,7 +2313,9 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     }
     return el;
   }
-  /** Repaint every block into its persistent container (throttled 120 ms). */
+  /** 结构调和（120ms 节流）：新块出现 / 工具卡 / 思考块 / 光标 / 滚动。**不再写文本
+   *  内容**——文本块的 markdown 渲染统一由 `scheduleMarkdownRender`（180ms）或
+   *  `settleTextMarkdown`（stop）完成，保证每个 `markdownEls[index]` 单一写入者。 */
   renderAll() {
     this.renderPending = false;
     const body = this.bodyEl;
@@ -2267,7 +2331,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     this.updateStreamCursor();
     this.maybeAutoScroll();
   }
-  /** Coalesce renders to one 120 ms frame (with a per-token textContent fast path). */
+  /** Coalesce structural renders to one 120 ms frame. */
   scheduleRender() {
     if (this.renderPending) return;
     this.renderPending = true;
@@ -2290,7 +2354,9 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       this.updateThinking(index, block.thinking, stopped);
     } else if (block.type === "text") {
       this.ensureTextStructure(index, container);
-      this.updateText(index, block.text, stopped);
+      if ((stopped || !!this.blockStopped[index]) && !this.blockSettled[index]) {
+        this.settleTextMarkdown(index, block);
+      }
     } else if (block.type === "tool_use") {
       this.ensureToolStructure(index, container, block);
       this.updateTool(index, block, toolResult);
@@ -2303,27 +2369,20 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     const el = container.createDiv({ cls: "ks-chat-markdown markdown-rendered" });
     this.markdownEls[index] = el;
   }
-  /** Update a text block in place. 流式期间用 180ms 节流 markdown 渲染（DOM 恒为
-   *  markdown，不再写纯文本 —— 用户核心诉求「第一次输出就直接 markdown 渲染」）；
-   *  块结算（stopped）时立即渲染一次终稿并冻结。 */
-  updateText(index, text, stopped) {
+  /** 单一写入者：`el.empty()` 后调 `MarkdownRenderer.render`（append 语义），
+   *  杜绝「裸 Text 节点 + 渲染子节点」并存。已 settle 的块冻结不重渲。 */
+  paintMarkdownText(index, text) {
     const el = this.markdownEls[index];
-    if (!(el == null ? void 0 : el.isConnected)) return;
-    if (stopped) {
-      if (this.blockSettled[index]) return;
-      this.blockSettled[index] = true;
-      el.setText(text);
-      void import_obsidian5.MarkdownRenderer.render(this.app, text, el, "", this);
-    } else {
-      this.scheduleMarkdownRender(index, text);
-    }
+    if (!(el == null ? void 0 : el.isConnected) || this.blockSettled[index]) return;
+    el.empty();
+    void import_obsidian5.MarkdownRenderer.render(this.app, text != null ? text : "", el, "", this);
   }
   /** 流式 per-token 入口：只记数据（text 已存入 blk.text），触发节流 markdown 渲染。 */
   refreshBlockText(index, text) {
     this.scheduleMarkdownRender(index, text);
   }
   /**
-   * 节流 markdown 渲染器：同一文本块 180ms 内只进行一次 `setText` + 全量
+   * 节流 markdown 渲染器：同一文本块 180ms 内只进行一次 `empty()` + 全量
    * `MarkdownRenderer.render`，让流式途中 DOM 始终是 markdown 但刷新被节流到
    * 每 ~180ms 一次（对常见回复 <2000 字，移动端可接受；卡顿可调大节流）。已
    * settle 的块冻结不重渲（保留 blockSettled 机制）。异步 render 会自替换子节点。
@@ -2332,23 +2391,26 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     if (this.mdRenderPending[index]) return;
     this.mdRenderPending[index] = true;
     this.mdRenderTimers[index] = window.setTimeout(() => {
+      var _a, _b, _c;
       this.mdRenderPending[index] = false;
       this.mdRenderTimers[index] = 0;
-      const el = this.markdownEls[index];
-      if ((el == null ? void 0 : el.isConnected) && !this.blockSettled[index]) {
-        el.setText(text);
-        void import_obsidian5.MarkdownRenderer.render(this.app, text, el, "", this);
-      }
+      const latest = (_c = (_b = (_a = this.turnBlocks[index]) == null ? void 0 : _a.text) != null ? _b : text) != null ? _c : "";
+      this.paintMarkdownText(index, latest);
     }, 180);
   }
   /** 块 content_block_stop：立即渲染终稿，并取消挂起的节流定时器。 */
   settleTextMarkdown(index, block) {
+    var _a;
+    if (this.blockSettled[index]) {
+      this.clearMarkdownTimer(index);
+      return;
+    }
     this.blockSettled[index] = true;
     this.clearMarkdownTimer(index);
     const el = this.markdownEls[index];
     if (!(el == null ? void 0 : el.isConnected)) return;
-    el.setText(block.text);
-    void import_obsidian5.MarkdownRenderer.render(this.app, block.text, el, "", this);
+    el.empty();
+    void import_obsidian5.MarkdownRenderer.render(this.app, (_a = block.text) != null ? _a : "", el, "", this);
   }
   clearMarkdownTimer(index) {
     const timer = this.mdRenderTimers[index];
@@ -2363,7 +2425,9 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       this.clearMarkdownTimer(Number(index));
     }
   }
-  // --- thinking blocks -------------------------------------------------------
+  // --- thinking blocks (dsh ReasoningRow 复刻) -------------------------------
+  // dsh：title「Think」+ chevron + 单行摘要（省略号）+ body 缩进 22px + running
+  // 300px 扫光。经用户拍板，标题保留中文「思考中」。
   ensureThinkingStructure(index, container) {
     var _a;
     if ((_a = this.thinkSubs[index]) == null ? void 0 : _a.wrap.isConnected) return;
@@ -2371,9 +2435,8 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     const head = wrap.createDiv({ cls: "ks-think-head" });
     const chev = head.createSpan({ cls: "ks-think-icon" });
     (0, import_obsidian5.setIcon)(chev, "chevron-right");
-    const icon = head.createSpan({ cls: "ks-think-icon-2" });
-    (0, import_obsidian5.setIcon)(icon, "brain");
-    head.createSpan({ cls: "ks-think-label", text: "\u601D\u8003\u4E2D" });
+    head.createSpan({ cls: "ks-think-title", text: "\u601D\u8003\u4E2D" });
+    const summary = head.createSpan({ cls: "ks-think-summary" });
     const body = wrap.createDiv({ cls: "ks-think-body" });
     this.thinkExpanded[index] = null;
     wrap.addEventListener("click", () => {
@@ -2383,11 +2446,12 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       (0, import_obsidian5.setIcon)(chev, newCollapsed ? "chevron-right" : "chevron-down");
       this.thinkExpanded[index] = !newCollapsed;
     });
-    this.thinkSubs[index] = { wrap, chev, body };
+    this.thinkSubs[index] = { wrap, chev, summary, body };
   }
   updateThinking(index, thinking, stopped) {
     const sub = this.thinkSubs[index];
     if (!(sub == null ? void 0 : sub.wrap.isConnected)) return;
+    sub.summary.setText(thinkSummary(thinking));
     sub.body.setText(thinking);
     const streaming = !stopped && this.streamState === "streaming";
     const override = this.thinkExpanded[index];
@@ -2398,7 +2462,9 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
   }
   refreshThinking(index, thinking) {
     const sub = this.thinkSubs[index];
-    if (sub == null ? void 0 : sub.body.isConnected) sub.body.setText(thinking);
+    if (!(sub == null ? void 0 : sub.wrap.isConnected)) return;
+    sub.summary.setText(thinkSummary(thinking));
+    sub.body.setText(thinking);
   }
   // --- tool_use cards --------------------------------------------------------
   ensureToolStructure(index, container, block) {
@@ -2477,6 +2543,76 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       this.blockEls[i] = container;
       this.paintBlock(i, container, b, toolResults == null ? void 0 : toolResults[b.id], true);
     }
+  }
+  // -------------------------------------------------------------------------
+  // 渲染单份闭环检查（用户点名：输出后检查，有问题就循环修复）
+  // -------------------------------------------------------------------------
+  /** 递归检查 body 下每个 `.ks-chat-markdown`：① 直接子节点无非空裸 `#text`
+   *  （markdown 渲染后应是元素子节点；裸文本 = 原文泄漏/未渲染）②「原文+渲染」
+   *  并存（`children.length>0` 且首子为裸文本）——返回违规说明列表。
+   *  注意：不校验 `textContent === 原文`——markdown 渲染后 textContent 是渲染文本，
+   *  与源不同是正常现象；这里只检测「能否对应到单一来源」的回归。 */
+  validateSingleRender(body) {
+    var _a, _b, _c;
+    const violations = [];
+    const mdEls = (_a = body == null ? void 0 : body.querySelectorAll(".ks-chat-markdown")) != null ? _a : [];
+    for (let i = 0; i < mdEls.length; i++) {
+      const el = mdEls[i];
+      let bareText = "";
+      for (const child of Array.from(el.childNodes)) {
+        if (child.nodeType === 3) {
+          const t = ((_b = child.textContent) != null ? _b : "").trim();
+          if (t) bareText += t;
+        }
+      }
+      if (bareText) {
+        violations.push(`\u6587\u672C\u5757#${i}: \u5B58\u5728\u975E\u7A7A\u88F8\u6587\u672C\u300C${bareText.slice(0, 30)}\u300D\uFF08\u7591\u4F3C\u539F\u6587\u6CC4\u6F0F\uFF09`);
+      }
+      if (el.children.length > 0 && ((_c = el.firstChild) == null ? void 0 : _c.nodeType) === 3) {
+        violations.push(`\u6587\u672C\u5757#${i}: \u539F\u6587+\u6E32\u67D3\u5E76\u5B58\uFF08children=${el.children.length} \u4E14\u9996\u5B50=\u88F8\u6587\u672C\uFF09`);
+      }
+    }
+    return violations;
+  }
+  /** 在流结束（finishTurn / abort 后）调用：跑一遍渲染检查，记录 `lastRenderCheck`
+   *  并输出 `[ks-render-check]`（无违规 info、有违规 warn），供闭环测试断言。 */
+  runRenderCheck(body) {
+    const violations = this.validateSingleRender(body);
+    this.lastRenderCheck = violations;
+    if (violations.length === 0) {
+      console.info("[ks-render-check]", "\u65E0\u8FDD\u89C4");
+    } else {
+      console.warn("[ks-render-check]", violations);
+    }
+  }
+  // -------------------------------------------------------------------------
+  // 诊断日志复制（A.5）
+  // -------------------------------------------------------------------------
+  /** 打包全部诊断字段；apiKey 脱敏。字段来自 view 成员，缺失则显示「无」。 */
+  buildDiagnosticLog() {
+    const settings = this.plugin.settings;
+    const stream = this.lastStreamLog;
+    const render = this.lastRenderCheck;
+    const err = this.lastErrorText;
+    const lines = [];
+    lines.push("[Knowledge System \u8BCA\u65AD\u65E5\u5FD7]");
+    lines.push("\u7248\u672C: 0.6.0");
+    const model = (settings.model || "").trim();
+    lines.push(`\u6A21\u578B: ${model || "\uFF08\u672A\u8BBE\u7F6E\uFF09"}${(stream == null ? void 0 : stream.toolsCount) != null ? `\uFF08toolsCount: ${stream.toolsCount}\uFF09` : ""}`);
+    lines.push(`\u5E73\u53F0: ${import_obsidian5.Platform.isMobile ? "\u79FB\u52A8\u7AEF" : "\u684C\u9762"}`);
+    lines.push(`Base URL: ${(settings.baseUrl || "").trim() || "\uFF08\u672A\u8BBE\u7F6E\uFF09"}`);
+    lines.push(`API Key: ${settings.apiKey ? "\u5DF2\u914D\u7F6E(\u9690\u85CF)" : "\u672A\u914D\u7F6E"}`);
+    lines.push("=== \u6700\u8FD1\u4E00\u6B21\u6D41\u5F0F ===");
+    lines.push(stream != null ? `[ks-stream]: ${JSON.stringify(stream)}` : "\u65E0");
+    lines.push("=== \u6700\u8FD1\u4E00\u6B21\u6E32\u67D3\u68C0\u67E5 ===");
+    lines.push(!render || render.length === 0 ? "[ks-render-check]: \u65E0\u8FDD\u89C4" : `[ks-render-check]: ${JSON.stringify(render)}`);
+    lines.push("=== \u6700\u8FD1\u4E00\u6B21\u9519\u8BEF ===");
+    lines.push(err || "\u65E0");
+    return lines.join("\n");
+  }
+  /** 复制诊断日志到剪贴板（按钮短暂显示「已复制」）。 */
+  copyDiagnosticLog() {
+    this.copyText(this.buildDiagnosticLog(), this.copyLogBtn, "clipboard-copy");
   }
   async executeTool(ctx, name, input) {
     var _a, _b;

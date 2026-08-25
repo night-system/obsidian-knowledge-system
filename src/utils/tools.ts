@@ -66,30 +66,33 @@ const FALLBACK_FORMATS = ['YYYY-MM-DD', 'YYYY.MM.DD', 'YYYY/MM/DD'];
  * configured `create_note` YAML frontmatter rules so the AI sees the allowed
  * keys, their explanations, and the optional enum of allowed values. With no
  * rules the output is identical to the legacy static array.
+ *
+ * v0.6.0 B: 默认值信息完全不对 AI 暴露——AI 输出完 create_note 后，创建文件前由
+ * `applyDefaults` 自动补默认值，因此 AI 无需（也不应）知道默认值的存在。
+ * 为此：
+ * - 描述行只含「键名：解释（可选值：…）」，**不含默认值**；
+ * - 仅当某规则 `values` 非空（有可选值约束）时才把该键暴露进 schema properties
+ *   （enum 照旧）；「仅默认值」（values 空但 default 非空）与「无约束无默认」
+ *   （values 空且 default 空）的键一律不暴露——既不出现在描述，也不出现在
+ *   properties，AI 完全不知情，创建时由 applyDefaults 自动追加默认值。
  */
 export function buildAnthropicTools(yamlRules?: YamlRule[]): AnthropicTool[] {
   const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  // 只暴露「有可选值约束」的键；否则该键对 AI 隐藏（未配置约束规则，AI 不该知道）。
+  const exposedRules = rules.filter((r) => r.key && r.values && r.values.length > 0);
   const yamlDesc =
     'frontmatter 键值对对象（YAML frontmatter 区）。项目已配置以下属性规则：' +
-    rules
-      .map(
-        (r) =>
-          `- ${r.key}：${r.desc}` +
-          (r.values?.length ? `（可选值：${r.values.join('/')}）` : '') +
-          (r.default ? `（默认值：${r.default}）` : '')
-      )
-      .join('\n') +
+    exposedRules.map((r) => `- ${r.key}：${r.desc}（可选值：${r.values.join('/')}）`).join('\n') +
     '\n规则未列出的键名可以随意添加；规则内键名请严格遵守可选值，否则创建会被拒绝。';
 
   const yamlSchema: any = { type: 'object', description: yamlDesc };
-  if (rules.length > 0) {
+  if (exposedRules.length > 0) {
     const props: Record<string, any> = {};
-    for (const r of rules) {
-      if (!r.key) continue;
+    for (const r of exposedRules) {
       props[r.key] = {
         type: 'string',
         description: r.desc,
-        ...(r.values?.length ? { enum: r.values } : {}),
+        ...(r.values.length ? { enum: r.values } : {}),
       };
     }
     yamlSchema.properties = props;

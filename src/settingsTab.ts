@@ -444,7 +444,7 @@ class SettingsRenderer {
 
     const info = new Setting(containerEl)
       .setName('')
-      .setDesc('控制 AI 使用 create_note 工具时的 frontmatter 键值对：键名+解释+可选值（回车逐个添加，显示为 chip）+默认值；默认值支持 {{YYYY.MM.DD}} 等 moment 模板，{{}} 内为 moment 兼容格式；可选值用于约束 AI 只能选这些值，留空=任意。');
+      .setDesc('控制 AI 使用 create_note 工具时的 frontmatter 键值对：键名+解释+可选值（回车逐个添加，显示为 chip）+默认值；默认值支持 {{YYYY.MM.DD}} 等 moment 模板，{{}} 内为 moment 兼容格式；可选值用于约束 AI 只能选这些值，留空=任意。默认值不会暴露给 AI——AI 创建文件时自动追加（AI 不知情）；只配了默认值、无可选值约束的属性键也不对 AI 显示。');
     this.markSearchable(info, 'AI 创建属性规则 键名 解释 可选值 默认值 moment 模板 frontmatter');
 
     const list = this.plugin.settings.yamlRules || [];

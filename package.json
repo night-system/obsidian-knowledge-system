@@ -1,6 +1,6 @@
 {
   "name": "obsidian-knowledge-system",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "配置驱动的 AI 知识系统框架（v0.5.0）：流式期间直接 markdown 渲染（180ms 节流）+ 首 token（TTFT）检测点 + 聊天 UI 认真照抄 dsh + 默认模型建议标注 + 工具预设系统 + 新工具 update_note_yaml / search_output_notes + yaml 可选值逐个 tag 输入。v0.4.0 真正逐字流式 + 聊天 UI 美化 + create_note 属性规则；Base URL 端点自动探测、错误可复制诊断、AI 聊天视图（原生 fetch 流式，失败自动降级非流式）、内置工具集、测试按钮。",
   "main": "main.js",
   "scripts": {

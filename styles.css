@@ -191,20 +191,45 @@
   align-items: stretch;
 }
 
-.ks-chat-head {
-  display: flex;
-  align-items: center;
-  gap: var(--size-2-1);
-  font-size: var(--font-ui-small);
-  color: var(--text-muted);
-  margin-bottom: 4px;
-}
-
 .ks-chat-ai .ks-chat-content.markdown-rendered {
   font-size: 16px;
   line-height: 28px; /* 5★ 24 vs 28 =「像不像 dsh」的关键差异 */
   color: var(--text-normal);
   max-width: 100%;
+}
+
+/* 消息操作行（dsh MessageIconActions）：copy 图标常显，clock（时间）hover 显现。 */
+.ks-chat-msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  margin-top: 4px;
+}
+
+/* 28px 圆图标按钮（dsh .action）：hover 显示背景。 */
+.ks-chat-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  border: none;
+  border-radius: 28px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ks-chat-action:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ks-chat-action svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* 消息时间戳（清单第 10 条）：font 14/24、--text-faint，hover 才显现（80ms），
@@ -270,23 +295,25 @@
   }
 }
 
-/* 输入卡片（清单第 7 条）：border-radius:22px + 1px 边框 + 阴影。 */
+/* 输入卡片（dsh InputBar .card）：列式——上部 textarea 区 + 下部按钮行 .row。
+   border-radius:22px + 1px 边框 + 阴影，radius/pad 照抄 dsh。 */
 .ks-chat-inputbar {
   display: flex;
-  align-items: flex-end;
-  gap: var(--size-2-2);
+  flex-direction: column;
+  gap: 12px; /* dsh .card gap:12px（textarea 与按钮行之间） */
   width: 100%;
   max-width: 780px; /* 与消息列同轴（748 + 每侧 16px） */
   margin: 8px auto 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 22px;
-  padding: var(--size-2-2);
+  padding: 10px var(--size-2-2) var(--size-2-1); /* 顶部 10px（dsh .card padding-top:10px） */
   background: var(--background-primary);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02), 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 .ks-chat-textarea {
   flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
   border: none;
   outline: none;
@@ -300,7 +327,31 @@
   max-height: 12em;
 }
 
-/* 发送按钮（清单第 9 条）：34×34 圆、interactive-accent、disabled opacity .4。 */
+/* 按钮行（dsh .row）：左 .tools、右 .trailing。 */
+.ks-chat-input-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ks-chat-input-tools,
+.ks-chat-input-trailing {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+}
+
+.ks-chat-input-trailing {
+  flex: none;
+  margin-left: auto; /* 发送钮钉在右侧（dsh .trailing margin-left:auto） */
+}
+
+/* 发送按钮（dsh .primary 34:10465）：34×34 圆、interactive-accent、disabled opacity .4。
+   icon 必须可见：显式 `color` + `stroke: currentColor`，svg 描边继承按钮前景色。 */
 .ks-chat-send {
   width: 34px;
   height: 34px;
@@ -329,6 +380,8 @@
 .ks-chat-send svg {
   width: 18px;
   height: 18px;
+  stroke: currentColor;
+  color: var(--text-on-accent);
 }
 
 /* Busy → square stop button (dsh: rounded square, not a circle). */
@@ -338,33 +391,10 @@
 
 .ks-chat-send-stop svg {
   fill: currentColor;
+  color: var(--text-on-accent);
 }
 
-.ks-chat-test {
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  background: var(--background-secondary);
-  color: var(--text-normal);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  cursor: pointer;
-  flex: 0 0 auto;
-  padding: 0;
-}
-
-.ks-chat-test:hover {
-  background: var(--background-modifier-hover);
-}
-
-.ks-chat-test svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* Collapsible thinking block. */
+/* Collapsible thinking block（dsh ReasoningRow 复刻）. */
 .ks-think {
   position: relative;
   overflow: hidden;
@@ -384,15 +414,36 @@
   font-size: var(--font-ui-small);
 }
 
-.ks-think-icon,
-.ks-think-icon-2 {
+/* chevron + 标题「思考中」+ 单行摘要（省略号）。 */
+.ks-think-icon {
   display: inline-flex;
+  flex-shrink: 0;
 }
 
-.ks-think-body {
-  padding: var(--size-2-1) var(--size-2-2);
+.ks-think-title {
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.ks-think-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--text-muted);
+  font-size: 14px;
+  line-height: 24px;
+}
+
+/* body 折叠区：缩进 22px（dsh .thinkBody padding-left:22px）、14/24 弱化色。 */
+.ks-think-body {
+  padding: 4px 0 4px 22px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 24px;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .ks-think.is-collapsed .ks-think-body {
@@ -589,13 +640,11 @@
     padding: var(--size-2-1);
     border-radius: var(--radius-m);
   }
-  .ks-chat-send,
-  .ks-chat-test {
+  .ks-chat-send {
     width: 40px;
     height: 40px;
   }
-  .ks-chat-send svg,
-  .ks-chat-test svg {
+  .ks-chat-send svg {
     width: 20px;
     height: 20px;
   }
@@ -703,12 +752,12 @@
   margin-top: var(--size-2-1);
 }
 
-/* Chat preset selector bar: a single row above the input bar. */
+/* Chat preset selector row: sits inside the input card's tools group (left). */
 .ks-preset-bar {
   display: flex;
   align-items: center;
   gap: var(--size-2-2);
-  margin-bottom: var(--size-2-2);
+  min-width: 0;
 }
 
 .ks-preset-label {
@@ -717,14 +766,19 @@
   flex: 0 0 auto;
 }
 
+/* 小下拉（dsh .select 芯片化）：height 28px、透明底 + 圆角、13/20 medium。 */
 .ks-preset-select {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 220px;
+  height: 28px;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s);
+  border-radius: 8px;
   color: var(--text-normal);
-  padding: var(--size-2-1) var(--size-2-2);
-  font-size: var(--font-ui-small);
+  padding: 0 var(--size-2-2);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
   outline: none;
 }

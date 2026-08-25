@@ -44,6 +44,7 @@ export default class KnowledgeSystemPlugin extends Plugin {
     }
     const leaf = this.app.workspace.getLeaf('tab');
     await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
+    this.app.workspace.revealLeaf(leaf);
   }
 
   async loadSettings(): Promise<void> {

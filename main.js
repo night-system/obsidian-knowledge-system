@@ -705,6 +705,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian5.Plugin {
     }
     const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
+    this.app.workspace.revealLeaf(leaf);
   }
   async loadSettings() {
     this.settings = Object.assign(

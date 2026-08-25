@@ -1,6 +1,7 @@
-import { Notice, requestUrl, TFile, TFolder } from 'obsidian';
+import { Notice, Platform, requestUrl, TFile, TFolder } from 'obsidian';
 import type { App, Command } from 'obsidian';
 import { KnowledgeSystemSettings } from './settings';
+import { shouldStream } from './utils/sse';
 import {
   buildFrontmatter,
   countRecent,
@@ -269,24 +270,29 @@ export interface AnthropicChatMessage {
 
 /**
  * POST to `{baseUrl}/v1/messages` (Anthropic-compatible). Uses the module-level
- * `requestUrl` with `x-api-key` + `anthropic-version`. `stream:true` makes the
- * provider return an SSE stream as the response body text, which the caller
- * parses with `parseAnthropicSSE`. Returns `{ status, text }` (text = body).
+ * `requestUrl` with `x-api-key` + `anthropic-version`. Streaming is enabled by
+ * default on desktop; on mobile Obsidian's `requestUrl` (Capacitor) cannot parse
+ * a chunked SSE body, so we fall back to a non-streaming request (see
+ * `shouldStream`). Returns `{ status, text, stream }` — `text` is the SSE body
+ * when streaming, otherwise the full JSON response body.
  */
 export async function fetchAnthropicMessages(
   settings: { baseUrl: string; apiKey: string; model: string },
   messages: AnthropicChatMessage[],
-  opts?: { system?: string; tools?: unknown[] }
-): Promise<{ status: number; text: string }> {
+  opts?: { system?: string; tools?: unknown[]; stream?: boolean; isMobile?: boolean }
+): Promise<{ status: number; text: string; stream: boolean }> {
   const base = (settings.baseUrl || 'https://api.deepseek.com/anthropic').trim().replace(/\/+$/, '');
-  const body = {
+  const isMobile = opts?.isMobile ?? (typeof Platform !== 'undefined' ? Platform.isMobile : false);
+  const stream = opts?.stream ?? shouldStream(isMobile);
+  const body: Record<string, unknown> = {
     model: settings.model,
     max_tokens: 4096,
     ...(opts?.system ? { system: opts.system } : {}),
     messages,
     ...(opts?.tools && opts.tools.length > 0 ? { tools: opts.tools } : {}),
-    stream: true,
   };
+  if (stream) body.stream = true;
+
   const res = await requestUrl({
     url: `${base}/v1/messages`,
     method: 'POST',
@@ -299,7 +305,7 @@ export async function fetchAnthropicMessages(
     throw: false,
   });
   const text = await extractResponseText(res);
-  return { status: res.status, text };
+  return { status: res.status, text, stream };
 }
 
 /** Read the raw body text from a `requestUrl` response (Obsidian or mock). */

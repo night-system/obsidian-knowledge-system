@@ -89,6 +89,65 @@ var FolderSuggest = class extends import_obsidian.AbstractInputSuggest {
 // src/core.ts
 var import_obsidian2 = require("obsidian");
 
+// src/utils/sse.ts
+function tryParsed(raw) {
+  if (raw === "") return "";
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return raw;
+  }
+}
+function parseAnthropicSSE(lines) {
+  const out = [];
+  let event = "";
+  let dataLines = [];
+  const flush = () => {
+    if (event || dataLines.length > 0) {
+      out.push({ event: event || "", data: tryParsed(dataLines.join("\n")) });
+    }
+    event = "";
+    dataLines = [];
+  };
+  for (const rawLine of lines) {
+    const line = !!rawLine && rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (line === "") {
+      flush();
+      continue;
+    }
+    if (line.startsWith(":")) continue;
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
+      continue;
+    }
+  }
+  flush();
+  return out;
+}
+function shouldStream(isMobile) {
+  return !isMobile;
+}
+function parseAnthropicResponse(json) {
+  var _a;
+  const obj = json && typeof json === "object" ? json : {};
+  const content = Array.isArray(obj.content) ? obj.content : [];
+  const blocks = content.map((c) => {
+    var _a2, _b, _c, _d, _e, _f;
+    if ((c == null ? void 0 : c.type) === "thinking") {
+      return { type: "thinking", thinking: (_a2 = c.thinking) != null ? _a2 : "", text: "", signature: (_b = c.signature) != null ? _b : "", id: "", name: "", input: {}, partialJson: "" };
+    }
+    if ((c == null ? void 0 : c.type) === "tool_use") {
+      return { type: "tool_use", thinking: "", text: "", signature: "", id: (_c = c.id) != null ? _c : "", name: (_d = c.name) != null ? _d : "", input: (_e = c.input) != null ? _e : {}, partialJson: "" };
+    }
+    return { type: "text", thinking: "", text: (_f = c == null ? void 0 : c.text) != null ? _f : "", signature: "", id: "", name: "", input: {}, partialJson: "" };
+  });
+  return { blocks, stop_reason: (_a = obj.stop_reason) != null ? _a : null };
+}
+
 // src/utils/index.ts
 var DAY_MS = 864e5;
 function parseTimestamp(value, moment, formats) {
@@ -344,15 +403,18 @@ async function fetchModelList(apiKey, baseUrl) {
   }
 }
 async function fetchAnthropicMessages(settings, messages, opts) {
+  var _a, _b;
   const base = (settings.baseUrl || "https://api.deepseek.com/anthropic").trim().replace(/\/+$/, "");
+  const isMobile = (_a = opts == null ? void 0 : opts.isMobile) != null ? _a : typeof import_obsidian2.Platform !== "undefined" ? import_obsidian2.Platform.isMobile : false;
+  const stream = (_b = opts == null ? void 0 : opts.stream) != null ? _b : shouldStream(isMobile);
   const body = {
     model: settings.model,
     max_tokens: 4096,
     ...(opts == null ? void 0 : opts.system) ? { system: opts.system } : {},
     messages,
-    ...(opts == null ? void 0 : opts.tools) && opts.tools.length > 0 ? { tools: opts.tools } : {},
-    stream: true
+    ...(opts == null ? void 0 : opts.tools) && opts.tools.length > 0 ? { tools: opts.tools } : {}
   };
+  if (stream) body.stream = true;
   const res = await (0, import_obsidian2.requestUrl)({
     url: `${base}/v1/messages`,
     method: "POST",
@@ -365,7 +427,7 @@ async function fetchAnthropicMessages(settings, messages, opts) {
     throw: false
   });
   const text = await extractResponseText(res);
-  return { status: res.status, text };
+  return { status: res.status, text, stream };
 }
 async function extractResponseText(res) {
   if (typeof (res == null ? void 0 : res.text) === "string" && res.text) return res.text;
@@ -721,46 +783,6 @@ var KnowledgeSettingsView = class extends import_obsidian4.ItemView {
 // src/chatView.ts
 var import_obsidian5 = require("obsidian");
 
-// src/utils/sse.ts
-function tryParsed(raw) {
-  if (raw === "") return "";
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    return raw;
-  }
-}
-function parseAnthropicSSE(lines) {
-  const out = [];
-  let event = "";
-  let dataLines = [];
-  const flush = () => {
-    if (event || dataLines.length > 0) {
-      out.push({ event: event || "", data: tryParsed(dataLines.join("\n")) });
-    }
-    event = "";
-    dataLines = [];
-  };
-  for (const rawLine of lines) {
-    const line = !!rawLine && rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-    if (line === "") {
-      flush();
-      continue;
-    }
-    if (line.startsWith(":")) continue;
-    if (line.startsWith("event:")) {
-      event = line.slice(6).trim();
-      continue;
-    }
-    if (line.startsWith("data:")) {
-      dataLines.push(line.slice(5).trimStart());
-      continue;
-    }
-  }
-  flush();
-  return out;
-}
-
 // src/utils/tools.ts
 var DAY_MS2 = 864e5;
 var FALLBACK_FORMATS2 = ["YYYY-MM-DD", "YYYY.MM.DD", "YYYY/MM/DD"];
@@ -1017,11 +1039,13 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     }
   }
   async runTurn() {
-    var _a;
+    var _a, _b;
     const { body } = this.assistantBubble();
+    const isMobile = typeof import_obsidian5.Platform !== "undefined" ? import_obsidian5.Platform.isMobile : false;
+    const stream = shouldStream(isMobile);
     let res;
     try {
-      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS });
+      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS, stream });
     } catch (e) {
       this.errorBubble("\u7F51\u7EDC\u9519\u8BEF\uFF1A" + ((_a = e == null ? void 0 : e.message) != null ? _a : "\u672A\u77E5\u9519\u8BEF"));
       return;
@@ -1030,8 +1054,26 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       this.errorBubble(`\u8BF7\u6C42\u5931\u8D25\uFF1AHTTP ${res.status}`);
       return;
     }
-    const events = parseAnthropicSSE(res.text.split("\n"));
-    const { blocks, stopReason, error } = this.processEvents(events);
+    let blocks;
+    let stopReason;
+    let error;
+    if (stream) {
+      const p = this.processEvents(parseAnthropicSSE(res.text.split("\n")));
+      blocks = p.blocks;
+      stopReason = p.stopReason;
+      error = p.error;
+    } else {
+      let json = null;
+      try {
+        json = JSON.parse(res.text);
+      } catch (e) {
+        json = null;
+      }
+      const parsed = parseAnthropicResponse(json);
+      blocks = parsed.blocks;
+      stopReason = (_b = parsed.stop_reason) != null ? _b : null;
+      error = void 0;
+    }
     if (error) {
       this.errorBubble(error);
       return;

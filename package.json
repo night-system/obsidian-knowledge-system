@@ -1,7 +1,7 @@
 {
   "name": "obsidian-knowledge-system",
-  "version": "0.3.0",
-  "description": "配置驱动的 AI 知识系统框架（v0.3.0）：Anthropic 兼容协议、内置工具集、AI 流式聊天视图、测试按钮。",
+  "version": "0.3.1",
+  "description": "配置驱动的 AI 知识系统框架（v0.3.1）：Anthropic 兼容协议、内置工具集、AI 聊天视图（移动端回退非流式）、测试按钮。",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

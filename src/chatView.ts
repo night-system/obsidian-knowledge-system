@@ -1,7 +1,7 @@
-import { ItemView, MarkdownRenderer, WorkspaceLeaf, setIcon } from 'obsidian';
+import { ItemView, MarkdownRenderer, Platform, WorkspaceLeaf, setIcon } from 'obsidian';
 import type KnowledgeSystemPlugin from './main';
 import { fetchAnthropicMessages, AnthropicChatMessage } from './core';
-import { parseAnthropicSSE } from './utils/sse';
+import { parseAnthropicSSE, parseAnthropicResponse, shouldStream, AnthropicBlock } from './utils/sse';
 import { ANTHROPIC_TOOLS, listRecentNotesTool, readNoteTool, createNoteTool, ToolCtx } from './utils/tools';
 
 /** The workspace view type for the chat view. Contract value. */
@@ -14,23 +14,12 @@ const TEST_PROMPT =
   '第二步：从中选择一篇笔记并调用 read_note 阅读它的正文；\n' +
   '第三步：调用 create_note 在输出文件夹创建一篇总结笔记（frontmatter 包含 来源 source、分类 category、审核状态 approved）。';
 
-interface Block {
-  type: 'thinking' | 'text' | 'tool_use';
-  text: string;
-  thinking: string;
-  signature: string;
-  id: string;
-  name: string;
-  input: unknown;
-  partialJson: string;
-}
-
-function emptyBlock(type: Block['type']): Block {
+function emptyBlock(type: AnthropicBlock['type']): AnthropicBlock {
   return { type, text: '', thinking: '', signature: '', id: '', name: '', input: {}, partialJson: '' };
 }
 
-/** Convert `Block`s to Anthropic content blocks for the API. */
-function blocksToApi(blocks: Block[]): unknown[] {
+/** Convert blocks to Anthropic content blocks for the API. */
+function blocksToApi(blocks: AnthropicBlock[]): unknown[] {
   return blocks.map((b) =>
     b.type === 'tool_use'
       ? { type: 'tool_use', id: b.id, name: b.name, input: b.input }
@@ -155,9 +144,11 @@ export class KnowledgeChatView extends ItemView {
 
   private async runTurn(): Promise<void> {
     const { body } = this.assistantBubble();
+    const isMobile = typeof Platform !== 'undefined' ? Platform.isMobile : false;
+    const stream = shouldStream(isMobile);
     let res;
     try {
-      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS });
+      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS, stream });
     } catch (e) {
       this.errorBubble('网络错误：' + ((e as { message?: string })?.message ?? '未知错误'));
       return;
@@ -167,8 +158,27 @@ export class KnowledgeChatView extends ItemView {
       return;
     }
 
-    const events = parseAnthropicSSE(res.text.split('\n'));
-    const { blocks, stopReason, error } = this.processEvents(events);
+    let blocks: AnthropicBlock[];
+    let stopReason: string | null;
+    let error: string | undefined;
+    if (stream) {
+      const p = this.processEvents(parseAnthropicSSE(res.text.split('\n')));
+      blocks = p.blocks;
+      stopReason = p.stopReason;
+      error = p.error;
+    } else {
+      // Mobile: requestUrl returns a full (non-streamed) JSON message body.
+      let json: any = null;
+      try {
+        json = JSON.parse(res.text);
+      } catch {
+        json = null;
+      }
+      const parsed = parseAnthropicResponse(json);
+      blocks = parsed.blocks;
+      stopReason = parsed.stop_reason ?? null;
+      error = undefined;
+    }
     if (error) {
       this.errorBubble(error);
       return;
@@ -196,11 +206,11 @@ export class KnowledgeChatView extends ItemView {
   }
 
   private processEvents(events: { event: string; data: unknown }[]): {
-    blocks: Block[];
+    blocks: AnthropicBlock[];
     stopReason: string | null;
     error?: string;
   } {
-    const blocks: Block[] = [];
+    const blocks: AnthropicBlock[] = [];
     let stopReason: string | null = null;
     let error: string | undefined;
 
@@ -247,7 +257,7 @@ export class KnowledgeChatView extends ItemView {
     return { blocks: blocks.filter(Boolean), stopReason, error };
   }
 
-  private renderBlocks(body: HTMLElement, blocks: Block[], toolResults: Record<string, string>): void {
+  private renderBlocks(body: HTMLElement, blocks: AnthropicBlock[], toolResults: Record<string, string>): void {
     body.empty();
     for (const block of blocks) {
       if (block.type === 'thinking') {
@@ -276,7 +286,7 @@ export class KnowledgeChatView extends ItemView {
     });
   }
 
-  private renderToolCard(body: HTMLElement, block: Block, result?: string): void {
+  private renderToolCard(body: HTMLElement, block: AnthropicBlock, result?: string): void {
     const card = body.createDiv({ cls: 'ks-tool-card' });
     const title = card.createDiv({ cls: 'ks-tool-name' });
     setIcon(title.createSpan({ cls: 'ks-tool-icon' }), 'wrench');

@@ -36,13 +36,6 @@ function frontmatterOf(app: App, file: TFile): Record<string, unknown> {
   return (cache?.frontmatter ?? {}) as Record<string, unknown>;
 }
 
-/** Render a short (≤100 char) diagnostic snippet of an HTTP response body. */
-function bodySnippet(body: unknown): string {
-  if (body == null) return '';
-  const text = typeof body === 'string' ? body : JSON.stringify(body);
-  return text.slice(0, 100);
-}
-
 // ---------------------------------------------------------------------------
 // Folders & file discovery
 // ---------------------------------------------------------------------------
@@ -207,11 +200,24 @@ export function mapHttpError(status: number): string {
   return '请求失败';
 }
 
+/** Extract model ids from a requestUrl response; null on non-2xx. */
+async function listFromResponse(res: any): Promise<string[] | null> {
+  const body =
+    typeof res?.json === 'function' ? await res.json() : res?.json;
+  if (!(res?.status >= 200 && res?.status < 300)) return null;
+  const data = (body as { data?: unknown } | undefined)?.data;
+  return Array.isArray(data)
+    ? data
+        .map((m) => (m && typeof (m as { id?: unknown }).id === 'string' ? (m as { id: string }).id : ''))
+        .filter((x) => x.length > 0)
+    : [];
+}
+
 /**
- * Call GET /models on the base URL and return the model ids. Uses Obsidian's
- * module-level `requestUrl` (no fetch / Node http) and reads the response json
- * whether it is already parsed (Obsidian) or a resolver function (test
- * harness). The id list comes exclusively from the API — nothing is hardcoded.
+ * Fetch the provider's model list. Anthropic-compatible endpoints have no
+ * `GET /models`, so we try `{baseUrl}/models` first (OpenAI-compatible), then
+ * `{baseUrl}/v1/models`, and surface a readable error if both fail. Uses the
+ * module-level `requestUrl` (no fetch / Node http). Ids come only from the API.
  */
 export async function fetchModelList(
   apiKey: string,
@@ -226,34 +232,23 @@ export async function fetchModelList(
   const base = (baseUrl || 'https://api.deepseek.com').trim().replace(/\/+$/, '');
 
   try {
-    const res = await requestUrl({
-      url: `${base}/models`,
-      method: 'GET',
-      headers: { Authorization: `Bearer ${key}` },
-      throw: false,
-    });
-
-    const body =
-      typeof (res as { json?: unknown }).json === 'function'
-        ? await ((res as { json: () => unknown }).json)()
-        : (res as { json?: unknown }).json;
-
-    if (res.status >= 200 && res.status < 300) {
-      const data = (body as { data?: unknown } | undefined)?.data;
-      const modelIds = Array.isArray(data)
-        ? data
-            .map((m) => (m && typeof (m as { id?: unknown }).id === 'string' ? (m as { id: string }).id : ''))
-            .filter((x) => x.length > 0)
-        : [];
-      const message = modelIds.length > 0 ? `成功获取 ${modelIds.length} 个模型：${modelIds[0]}` : '未返回任何模型';
-      new Notice(message);
-      return { ok: true, modelIds, message };
+    let lastStatus = 0;
+    for (const suffix of ['/models', '/v1/models']) {
+      const res = await requestUrl({
+        url: `${base}${suffix}`,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${key}` },
+        throw: false,
+      });
+      const ids = await listFromResponse(res);
+      if (ids && ids.length > 0) {
+        const message = `成功获取 ${ids.length} 个模型：${ids[0]}`;
+        new Notice(message);
+        return { ok: true, modelIds: ids, message };
+      }
+      lastStatus = res.status;
     }
-
-    const detail = bodySnippet(body);
-    const message = detail
-      ? `${mapHttpError(res.status)}（HTTP ${res.status}）：${detail}`
-      : `${mapHttpError(res.status)}（HTTP ${res.status}）`;
+    const message = `${mapHttpError(lastStatus)}（HTTP ${lastStatus}）`;
     new Notice(message);
     return { ok: false, modelIds: [], message };
   } catch (e) {
@@ -261,4 +256,60 @@ export async function fetchModelList(
     new Notice(message);
     return { ok: false, modelIds: [], message };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Anthropic-compatible chat protocol
+// ---------------------------------------------------------------------------
+
+export interface AnthropicChatMessage {
+  role: 'user' | 'assistant';
+  content: unknown;
+}
+
+/**
+ * POST to `{baseUrl}/v1/messages` (Anthropic-compatible). Uses the module-level
+ * `requestUrl` with `x-api-key` + `anthropic-version`. `stream:true` makes the
+ * provider return an SSE stream as the response body text, which the caller
+ * parses with `parseAnthropicSSE`. Returns `{ status, text }` (text = body).
+ */
+export async function fetchAnthropicMessages(
+  settings: { baseUrl: string; apiKey: string; model: string },
+  messages: AnthropicChatMessage[],
+  opts?: { system?: string; tools?: unknown[] }
+): Promise<{ status: number; text: string }> {
+  const base = (settings.baseUrl || 'https://api.deepseek.com/anthropic').trim().replace(/\/+$/, '');
+  const body = {
+    model: settings.model,
+    max_tokens: 4096,
+    ...(opts?.system ? { system: opts.system } : {}),
+    messages,
+    ...(opts?.tools && opts.tools.length > 0 ? { tools: opts.tools } : {}),
+    stream: true,
+  };
+  const res = await requestUrl({
+    url: `${base}/v1/messages`,
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': settings.apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(body),
+    throw: false,
+  });
+  const text = await extractResponseText(res);
+  return { status: res.status, text };
+}
+
+/** Read the raw body text from a `requestUrl` response (Obsidian or mock). */
+async function extractResponseText(res: any): Promise<string> {
+  if (typeof res?.text === 'string' && res.text) return res.text;
+  const j = res?.json;
+  if (typeof j === 'string') return j;
+  if (typeof j === 'function') {
+    const v = await j();
+    return typeof v === 'string' ? v : JSON.stringify(v ?? '');
+  }
+  return String(j ?? '');
 }

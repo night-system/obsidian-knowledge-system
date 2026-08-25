@@ -27,12 +27,12 @@ __export(main_exports, {
   default: () => KnowledgeSystemPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/settings.ts
 var DEFAULT_SETTINGS = {
   apiKey: "",
-  baseUrl: "https://api.deepseek.com",
+  baseUrl: "https://api.deepseek.com/anthropic",
   model: "",
   models: [],
   sourceFolder: "/",
@@ -46,6 +46,7 @@ var DEFAULT_SETTINGS = {
   categoryDefault: "\u672A\u5206\u7C7B",
   timestampProperty: "created",
   sourceAttr: "source",
+  earliestTime: "",
   customApiKey: "",
   customModel: "",
   extraProperties: []
@@ -182,11 +183,6 @@ function frontmatterOf(app, file) {
   const cache = app.metadataCache.getFileCache(file);
   return (_a = cache == null ? void 0 : cache.frontmatter) != null ? _a : {};
 }
-function bodySnippet(body) {
-  if (body == null) return "";
-  const text = typeof body === "string" ? body : JSON.stringify(body);
-  return text.slice(0, 100);
-}
 function resolveSourceFolder(plugin) {
   const raw = (plugin.settings.sourceFolder || "/").trim();
   if (raw === "/" || raw === "") return vaultRoot(plugin.app);
@@ -306,6 +302,12 @@ function mapHttpError(status) {
   if (status === 429) return "\u9650\u6D41";
   return "\u8BF7\u6C42\u5931\u8D25";
 }
+async function listFromResponse(res) {
+  const body = typeof (res == null ? void 0 : res.json) === "function" ? await res.json() : res == null ? void 0 : res.json;
+  if (!((res == null ? void 0 : res.status) >= 200 && (res == null ? void 0 : res.status) < 300)) return null;
+  const data = body == null ? void 0 : body.data;
+  return Array.isArray(data) ? data.map((m) => m && typeof m.id === "string" ? m.id : "").filter((x) => x.length > 0) : [];
+}
 async function fetchModelList(apiKey, baseUrl) {
   var _a;
   const key = (apiKey || "").trim();
@@ -316,22 +318,23 @@ async function fetchModelList(apiKey, baseUrl) {
   }
   const base = (baseUrl || "https://api.deepseek.com").trim().replace(/\/+$/, "");
   try {
-    const res = await (0, import_obsidian2.requestUrl)({
-      url: `${base}/models`,
-      method: "GET",
-      headers: { Authorization: `Bearer ${key}` },
-      throw: false
-    });
-    const body = typeof res.json === "function" ? await res.json() : res.json;
-    if (res.status >= 200 && res.status < 300) {
-      const data = body == null ? void 0 : body.data;
-      const modelIds = Array.isArray(data) ? data.map((m) => m && typeof m.id === "string" ? m.id : "").filter((x) => x.length > 0) : [];
-      const message2 = modelIds.length > 0 ? `\u6210\u529F\u83B7\u53D6 ${modelIds.length} \u4E2A\u6A21\u578B\uFF1A${modelIds[0]}` : "\u672A\u8FD4\u56DE\u4EFB\u4F55\u6A21\u578B";
-      new import_obsidian2.Notice(message2);
-      return { ok: true, modelIds, message: message2 };
+    let lastStatus = 0;
+    for (const suffix of ["/models", "/v1/models"]) {
+      const res = await (0, import_obsidian2.requestUrl)({
+        url: `${base}${suffix}`,
+        method: "GET",
+        headers: { Authorization: `Bearer ${key}` },
+        throw: false
+      });
+      const ids = await listFromResponse(res);
+      if (ids && ids.length > 0) {
+        const message2 = `\u6210\u529F\u83B7\u53D6 ${ids.length} \u4E2A\u6A21\u578B\uFF1A${ids[0]}`;
+        new import_obsidian2.Notice(message2);
+        return { ok: true, modelIds: ids, message: message2 };
+      }
+      lastStatus = res.status;
     }
-    const detail = bodySnippet(body);
-    const message = detail ? `${mapHttpError(res.status)}\uFF08HTTP ${res.status}\uFF09\uFF1A${detail}` : `${mapHttpError(res.status)}\uFF08HTTP ${res.status}\uFF09`;
+    const message = `${mapHttpError(lastStatus)}\uFF08HTTP ${lastStatus}\uFF09`;
     new import_obsidian2.Notice(message);
     return { ok: false, modelIds: [], message };
   } catch (e) {
@@ -339,6 +342,40 @@ async function fetchModelList(apiKey, baseUrl) {
     new import_obsidian2.Notice(message);
     return { ok: false, modelIds: [], message };
   }
+}
+async function fetchAnthropicMessages(settings, messages, opts) {
+  const base = (settings.baseUrl || "https://api.deepseek.com/anthropic").trim().replace(/\/+$/, "");
+  const body = {
+    model: settings.model,
+    max_tokens: 4096,
+    ...(opts == null ? void 0 : opts.system) ? { system: opts.system } : {},
+    messages,
+    ...(opts == null ? void 0 : opts.tools) && opts.tools.length > 0 ? { tools: opts.tools } : {},
+    stream: true
+  };
+  const res = await (0, import_obsidian2.requestUrl)({
+    url: `${base}/v1/messages`,
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": settings.apiKey,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify(body),
+    throw: false
+  });
+  const text = await extractResponseText(res);
+  return { status: res.status, text };
+}
+async function extractResponseText(res) {
+  if (typeof (res == null ? void 0 : res.text) === "string" && res.text) return res.text;
+  const j = res == null ? void 0 : res.json;
+  if (typeof j === "string") return j;
+  if (typeof j === "function") {
+    const v = await j();
+    return typeof v === "string" ? v : JSON.stringify(v != null ? v : "");
+  }
+  return String(j != null ? j : "");
 }
 
 // src/settingsTab.ts
@@ -466,18 +503,18 @@ var SettingsRenderer = class {
   // -------------------------------------------------------------------------
   renderConnectionGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u8FDE\u63A5", false);
-    const apiKey = new import_obsidian3.Setting(bodyEl).setName("API Key").setDesc("DeepSeek \u6216\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684 API Key\uFF0C\u7528\u4E8E\u83B7\u53D6\u6A21\u578B\u5217\u8868\u3002").addText((text) => {
+    const apiKey = new import_obsidian3.Setting(bodyEl).setName("API Key").setDesc("Anthropic \u517C\u5BB9\u670D\u52A1\u7684 API Key\uFF08x-api-key\uFF09\uFF0C\u7528\u4E8E\u804A\u5929\u4E0E\u83B7\u53D6\u6A21\u578B\u5217\u8868\u3002").addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("\u7C98\u8D34\u4F60\u7684 API Key").setValue(this.plugin.settings.apiKey).onChange((value) => this.updateSetting("apiKey", value));
     });
-    this.markSearchable(apiKey, "\u8FDE\u63A5 api key API Key \u5BC6\u94A5");
-    const test = new import_obsidian3.Setting(bodyEl).setName("\u6D4B\u8BD5\u5E76\u83B7\u53D6\u6A21\u578B").setDesc("\u8C03\u7528\u670D\u52A1\u5546 GET /models \u63A5\u53E3\uFF0C\u5E76\u586B\u5145\u4E0B\u65B9\u6A21\u578B\u4E0B\u62C9\u6846\u3002").addButton(
+    this.markSearchable(apiKey, "\u8FDE\u63A5 anthropic API Key \u5BC6\u94A5");
+    const test = new import_obsidian3.Setting(bodyEl).setName("\u6D4B\u8BD5\u5E76\u83B7\u53D6\u6A21\u578B").setDesc("\u8C03\u7528\u670D\u52A1\u5546\u6A21\u578B\u5217\u8868\u63A5\u53E3\uFF08\u5148\u8BD5 /models\uFF0C\u56DE\u9000 /v1/models\uFF09\uFF0C\u586B\u5145\u4E0B\u65B9\u6A21\u578B\u4E0B\u62C9\u6846\u3002").addButton(
       (btn) => btn.setButtonText("\u6D4B\u8BD5\u5E76\u83B7\u53D6\u6A21\u578B").setCta().onClick(async () => {
         await this.refreshModels();
       })
     );
     this.markSearchable(test, "\u8FDE\u63A5 \u6D4B\u8BD5 \u83B7\u53D6 \u6A21\u578B \u5237\u65B0");
-    const model = new import_obsidian3.Setting(bodyEl).setName("\u9ED8\u8BA4\u6A21\u578B").setDesc("\u53EF\u7528\u7684\u6A21\u578B\u5217\u8868\uFF08\u6765\u81EA\u670D\u52A1\u5546 /models \u63A5\u53E3\uFF09\u3002").addDropdown((drop) => {
+    const model = new import_obsidian3.Setting(bodyEl).setName("\u9ED8\u8BA4\u6A21\u578B").setDesc("\u53EF\u7528\u7684\u6A21\u578B\u5217\u8868\uFF08\u6765\u81EA\u670D\u52A1\u5546\u6A21\u578B\u63A5\u53E3\uFF0C\u4E0D\u786C\u7F16\u7801\uFF09\u3002").addDropdown((drop) => {
       this.modelDropdown = drop;
       this.populateModelDropdown(drop);
       drop.onChange((value) => this.updateSetting("model", value));
@@ -486,10 +523,10 @@ var SettingsRenderer = class {
   }
   renderCustomProviderGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546", true);
-    const baseUrl = new import_obsidian3.Setting(bodyEl).setName("Base URL").setDesc("OpenAI \u517C\u5BB9\u670D\u52A1\u7684\u57FA\u7840\u5730\u5740\uFF0C\u9ED8\u8BA4 DeepSeek\u3002").addText(
-      (text) => text.setPlaceholder("https://api.deepseek.com").setValue(this.plugin.settings.baseUrl).onChange((value) => this.updateSetting("baseUrl", value))
+    const baseUrl = new import_obsidian3.Setting(bodyEl).setName("Base URL").setDesc("Anthropic \u517C\u5BB9\u670D\u52A1\u7684\u57FA\u7840\u5730\u5740\uFF0C\u9ED8\u8BA4 DeepSeek Anthropic \u7AEF\u70B9\u3002").addText(
+      (text) => text.setPlaceholder("https://api.deepseek.com/anthropic").setValue(this.plugin.settings.baseUrl).onChange((value) => this.updateSetting("baseUrl", value))
     );
-    this.markSearchable(baseUrl, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546 base_url \u5730\u5740 base url");
+    this.markSearchable(baseUrl, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546 base_url \u5730\u5740 base url anthropic");
     const customApiKey = new import_obsidian3.Setting(bodyEl).setName("API Key").setDesc("\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684 API Key\uFF08\u9884\u7559\uFF09\u3002").addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("\u7C98\u8D34\u4F60\u7684 API Key").setValue(this.plugin.settings.customApiKey).onChange((value) => this.updateSetting("customApiKey", value));
@@ -537,6 +574,10 @@ var SettingsRenderer = class {
       });
     });
     this.markSearchable(recentDays, "\u65F6\u95F4 \u6700\u8FD1N\u5929 \u5929\u6570 \u6700\u8FD1");
+    const earliestTime = new import_obsidian3.Setting(bodyEl).setName("\u6700\u65E9\u65F6\u95F4").setDesc("AI \u5DE5\u5177\u53EA\u80FD\u67E5\u770B\u4E0D\u65E9\u4E8E\u8BE5\u65F6\u95F4\u7684\u7B14\u8BB0\uFF08\u683C\u5F0F\u540C\u65F6\u95F4\u6233\u683C\u5F0F\uFF09\uFF1B\u7559\u7A7A\u5219\u4E0D\u9650\u5236\u3002").addText(
+      (text) => text.setPlaceholder("\u5982\uFF1A2026-01-01").setValue(this.plugin.settings.earliestTime).onChange((value) => this.updateSetting("earliestTime", value))
+    );
+    this.markSearchable(earliestTime, "\u65F6\u95F4 \u6700\u65E9\u65F6\u95F4 \u6700\u65E9 \u65F6\u95F4\u9650\u5236");
   }
   // -------------------------------------------------------------------------
   // output (fixed timestamp/source rows + dynamic key→default-value rows)
@@ -677,8 +718,449 @@ var KnowledgeSettingsView = class extends import_obsidian4.ItemView {
   }
 };
 
+// src/chatView.ts
+var import_obsidian5 = require("obsidian");
+
+// src/utils/sse.ts
+function tryParsed(raw) {
+  if (raw === "") return "";
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return raw;
+  }
+}
+function parseAnthropicSSE(lines) {
+  const out = [];
+  let event = "";
+  let dataLines = [];
+  const flush = () => {
+    if (event || dataLines.length > 0) {
+      out.push({ event: event || "", data: tryParsed(dataLines.join("\n")) });
+    }
+    event = "";
+    dataLines = [];
+  };
+  for (const rawLine of lines) {
+    const line = !!rawLine && rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (line === "") {
+      flush();
+      continue;
+    }
+    if (line.startsWith(":")) continue;
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
+      continue;
+    }
+  }
+  flush();
+  return out;
+}
+
+// src/utils/tools.ts
+var DAY_MS2 = 864e5;
+var FALLBACK_FORMATS2 = ["YYYY-MM-DD", "YYYY.MM.DD", "YYYY/MM/DD"];
+var ANTHROPIC_TOOLS = [
+  {
+    name: "list_recent_notes",
+    description: "\u5217\u51FA\u6E90\u6587\u4EF6\u5939\u5185\u6700\u8FD1 N \u5929\u7684 Markdown \u7B14\u8BB0\uFF08\u6807\u9898 + \u65F6\u95F4\uFF09\u3002",
+    input_schema: {
+      type: "object",
+      properties: { days: { type: "integer", description: "\u56DE\u770B\u5929\u6570\uFF1B\u7F3A\u7701\u7528\u8BBE\u7F6E\u7684\u6700\u8FD1 N \u5929" } },
+      required: []
+    }
+  },
+  {
+    name: "read_note",
+    description: "\u8BFB\u53D6\u6E90\u6587\u4EF6\u5939\u5185\u67D0\u7BC7\u7B14\u8BB0\u7684\u6B63\u6587\uFF08\u53BB\u9664 YAML frontmatter\uFF09\u3002",
+    input_schema: {
+      type: "object",
+      properties: { name: { type: "string", description: "\u7B14\u8BB0\u6587\u4EF6\u540D\uFF08\u53EF\u5E26\u6216\u4E0D\u5E26 .md \u540E\u7F00\uFF09" } },
+      required: ["name"]
+    }
+  },
+  {
+    name: "create_note",
+    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u521B\u5EFA\u4E00\u7BC7\u65B0\u7B14\u8BB0\u3002",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "\u6587\u4EF6\u540D\uFF08\u4E0D\u542B .md \u540E\u7F00\uFF09" },
+        yaml: { type: "object", description: "frontmatter \u952E\u503C\u5BF9" },
+        content: { type: "string", description: "\u6B63\u6587" }
+      },
+      required: ["title"]
+    }
+  }
+];
+function stripExt(name) {
+  return (name || "").replace(/\.md$/i, "");
+}
+function inFolder(path, folder) {
+  const f = (folder || "/").trim();
+  if (f === "/" || f === "") return true;
+  return path.startsWith(f + "/");
+}
+function parseEarliest(value, format, zeit) {
+  const s = (value || "").trim();
+  if (!s) return null;
+  const m = zeit(s, format, true);
+  if (m && typeof m.isValid === "function" && m.isValid()) return m.valueOf();
+  return null;
+}
+function fileTimestamp(file, ctx) {
+  var _a, _b, _c, _d, _e, _f;
+  const settings = ctx.settings;
+  const zeit = (_a = ctx.moment) != null ? _a : typeof window !== "undefined" ? window.moment : null;
+  const prop = (settings.timeAttr || "").trim();
+  const fm = (_d = (_c = (_b = ctx.app.metadataCache.getFileCache(file)) == null ? void 0 : _b.frontmatter) != null ? _c : file == null ? void 0 : file.frontmatter) != null ? _d : {};
+  if (prop && fm && fm[prop] != null) {
+    const formats = [settings.timeFormat, ...FALLBACK_FORMATS2].filter(
+      (f, i, arr) => !!f && arr.indexOf(f) === i
+    );
+    for (const format of formats) {
+      const m = zeit(String(fm[prop]), format, true);
+      if (m && typeof m.isValid === "function" && m.isValid()) return m.valueOf();
+    }
+  }
+  return (_f = (_e = file == null ? void 0 : file.stat) == null ? void 0 : _e.ctime) != null ? _f : 0;
+}
+function isValidFilename(title) {
+  const t = (title || "").trim();
+  if (!t) return false;
+  if (t === "." || t === "..") return false;
+  if (/[/\\]/.test(t)) return false;
+  if (/\.\./.test(t)) return false;
+  if (/^[A-Za-z]:/.test(t)) return false;
+  if (/^\//.test(t)) return false;
+  return true;
+}
+function joinVaultPath(folder, name) {
+  const base = (folder || "/").trim() === "/" ? "" : (folder || "").trim().replace(/^\/+|\/+$/g, "");
+  return (base ? base + "/" + name : name).replace(/\/+/g, "/").replace(/^\/+/, "");
+}
+function serializeYaml(yaml) {
+  if (yaml == null) return "";
+  if (typeof yaml === "string") return yaml.trim().replace(/^\n+|\n+$/g, "");
+  if (typeof yaml === "object") {
+    return Object.entries(yaml).map(([k, v]) => `${k}: ${v == null ? "" : v}`).join("\n");
+  }
+  return "";
+}
+async function listRecentNotesTool(ctx, args) {
+  var _a, _b, _c, _d, _e, _f, _g, _h;
+  const settings = ctx.settings;
+  const now = (_a = ctx.now) != null ? _a : Date.now();
+  const zeit = (_b = ctx.moment) != null ? _b : typeof window !== "undefined" ? window.moment : null;
+  const days = typeof (args == null ? void 0 : args.days) === "number" ? args.days : (_c = settings.recentDays) != null ? _c : 7;
+  const folder = (settings.sourceFolder || "/").trim();
+  const earliest = parseEarliest((_d = settings.earliestTime) != null ? _d : "", (_e = settings.timeFormat) != null ? _e : "", zeit);
+  const files = (_h = (_g = (_f = ctx.app.vault).getMarkdownFiles) == null ? void 0 : _g.call(_f)) != null ? _h : [];
+  const entries = files.filter((f) => inFolder(f.path, folder)).map((f) => {
+    var _a2, _b2;
+    return { f, ts: fileTimestamp(f, ctx), ctime: (_b2 = (_a2 = f == null ? void 0 : f.stat) == null ? void 0 : _a2.ctime) != null ? _b2 : 0 };
+  });
+  if (earliest != null && entries.some((e) => e.ts < earliest)) {
+    return { error: `ERROR: \u5FEB\u7167\u66F4\u65E9\u4E8E\u6700\u65E9\u65F6\u95F4 ${settings.earliestTime}` };
+  }
+  const cutoff = Math.max(now - Math.max(1, Math.floor(days)) * DAY_MS2, earliest != null ? earliest : -Infinity);
+  const recent = entries.filter((e) => e.ts >= cutoff);
+  recent.sort((a, b) => b.ts - a.ts || a.ctime - b.ctime);
+  return {
+    result: recent.map((e) => {
+      var _a2, _b2;
+      return { title: stripExt((_b2 = (_a2 = e.f.basename) != null ? _a2 : e.f.name) != null ? _b2 : e.f.path), timestamp: e.ts };
+    })
+  };
+}
+async function readNoteTool(ctx, args) {
+  var _a, _b, _c, _d, _e, _f, _g, _h;
+  const settings = ctx.settings;
+  const zeit = (_a = ctx.moment) != null ? _a : typeof window !== "undefined" ? window.moment : null;
+  const folder = (settings.sourceFolder || "/").trim();
+  const target = stripExt(((args == null ? void 0 : args.name) || "").trim());
+  if (!target) return { error: "ERROR: \u672A\u63D0\u4F9B\u6587\u4EF6\u540D" };
+  const files = (_d = (_c = (_b = ctx.app.vault).getMarkdownFiles) == null ? void 0 : _c.call(_b)) != null ? _d : [];
+  const match = files.find(
+    (f) => {
+      var _a2, _b2;
+      return inFolder(f.path, folder) && stripExt((_b2 = (_a2 = f.basename) != null ? _a2 : f.name) != null ? _b2 : f.path) === target;
+    }
+  );
+  if (!match) return { error: "ERROR: \u672A\u627E\u5230\u7B14\u8BB0" };
+  const ts = fileTimestamp(match, ctx);
+  const earliest = parseEarliest((_e = settings.earliestTime) != null ? _e : "", (_f = settings.timeFormat) != null ? _f : "", zeit);
+  if (earliest != null && ts < earliest) return { error: `ERROR: \u7B14\u8BB0\u65E9\u4E8E\u6700\u65E9\u65F6\u95F4 ${settings.earliestTime}` };
+  const raw = await ctx.app.vault.read(match);
+  return { result: { title: stripExt((_h = (_g = match.basename) != null ? _g : match.name) != null ? _h : match.path), content: stripFrontmatter(raw) } };
+}
+async function createNoteTool(ctx, args) {
+  var _a;
+  const settings = ctx.settings;
+  const title = ((args == null ? void 0 : args.title) || "").trim();
+  if (!isValidFilename(title)) return { error: "ERROR: \u975E\u6CD5\u6587\u4EF6\u540D" };
+  const folder = (settings.outputFolder || "/").trim();
+  const name = title.toLowerCase().endsWith(".md") ? title : title + ".md";
+  const path = joinVaultPath(folder, name);
+  const yamlStr = serializeYaml(args == null ? void 0 : args.yaml);
+  const body = `${(_a = args == null ? void 0 : args.content) != null ? _a : ""}`;
+  const full = yamlStr ? `---
+${yamlStr}
+---
+${body}` : `---
+---
+${body}`;
+  await ctx.app.vault.create(path, full);
+  return { result: { path } };
+}
+
+// src/chatView.ts
+var VIEW_TYPE_CHAT = "knowledge-system-chat-view";
+var TEST_PROMPT = "\u8BF7\u6309\u987A\u5E8F\u5B8C\u6210\u4EE5\u4E0B\u4EFB\u52A1\uFF0C\u5E76\u5728\u6BCF\u4E00\u6B65\u7B80\u8981\u8BF4\u660E\u4F60\u7684\u601D\u8003\u4E0E\u4F9D\u636E\uFF1A\n\u7B2C\u4E00\u6B65\uFF1A\u8C03\u7528 list_recent_notes \u67E5\u770B\u6E90\u6587\u4EF6\u5939\u6700\u8FD1\u51E0\u5929\u7684\u7B14\u8BB0\uFF1B\n\u7B2C\u4E8C\u6B65\uFF1A\u4ECE\u4E2D\u9009\u62E9\u4E00\u7BC7\u7B14\u8BB0\u5E76\u8C03\u7528 read_note \u9605\u8BFB\u5B83\u7684\u6B63\u6587\uFF1B\n\u7B2C\u4E09\u6B65\uFF1A\u8C03\u7528 create_note \u5728\u8F93\u51FA\u6587\u4EF6\u5939\u521B\u5EFA\u4E00\u7BC7\u603B\u7ED3\u7B14\u8BB0\uFF08frontmatter \u5305\u542B \u6765\u6E90 source\u3001\u5206\u7C7B category\u3001\u5BA1\u6838\u72B6\u6001 approved\uFF09\u3002";
+function emptyBlock(type) {
+  return { type, text: "", thinking: "", signature: "", id: "", name: "", input: {}, partialJson: "" };
+}
+function blocksToApi(blocks) {
+  return blocks.map(
+    (b) => b.type === "tool_use" ? { type: "tool_use", id: b.id, name: b.name, input: b.input } : b.type === "thinking" ? { type: "thinking", thinking: b.thinking, signature: b.signature } : { type: "text", text: b.text }
+  );
+}
+function truncate(s, n) {
+  const cps = [...s != null ? s : ""];
+  return cps.length > n ? cps.slice(0, n).join("") + "\u2026\u622A\u65AD" : s;
+}
+function summarizeInput(input) {
+  try {
+    return JSON.stringify(input != null ? input : {});
+  } catch (e) {
+    return String(input);
+  }
+}
+var KnowledgeChatView = class extends import_obsidian5.ItemView {
+  constructor(plugin, leaf) {
+    super(leaf);
+    this.apiHistory = [];
+    this.busy = false;
+    this.plugin = plugin;
+  }
+  getViewType() {
+    return VIEW_TYPE_CHAT;
+  }
+  getIcon() {
+    return "message-square";
+  }
+  getDisplayText() {
+    return "Knowledge System Chat";
+  }
+  async onOpen() {
+    const container = this.contentEl;
+    container.empty();
+    container.addClass("ks-chat");
+    this.scrollEl = container.createDiv({ cls: "ks-chat-scroll" });
+    const bar = container.createDiv({ cls: "ks-chat-inputbar" });
+    this.inputEl = bar.createEl("textarea", { cls: "ks-chat-textarea" });
+    this.inputEl.placeholder = "\u8F93\u5165\u6D88\u606F\u2026\uFF08Enter \u53D1\u9001 / Shift+Enter \u6362\u884C\uFF09";
+    this.inputEl.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        void this.send();
+      }
+    });
+    const sendBtn = bar.createEl("button", { cls: "mod-cta ks-chat-send" });
+    (0, import_obsidian5.setIcon)(sendBtn, "send");
+    sendBtn.addEventListener("click", () => void this.send());
+    const testBtn = bar.createEl("button", { cls: "ks-chat-test" });
+    (0, import_obsidian5.setIcon)(testBtn, "play");
+    testBtn.setAttribute("title", "\u6D4B\u8BD5\u4EFB\u52A1");
+    testBtn.addEventListener("click", () => void this.send(TEST_PROMPT));
+  }
+  async onClose() {
+    this.contentEl.empty();
+  }
+  // -------------------------------------------------------------------------
+  // send / render helpers
+  // -------------------------------------------------------------------------
+  userBubble(text) {
+    const el = this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-user" }).createDiv({ cls: "ks-chat-content" });
+    el.style.whiteSpace = "pre-wrap";
+    el.setText(text);
+    return el;
+  }
+  assistantBubble() {
+    const root = this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-ai" });
+    const body = root.createDiv({ cls: "ks-chat-content markdown-rendered" });
+    return { root, body };
+  }
+  errorBubble(text) {
+    this.scrollEl.createDiv({ cls: "ks-chat-msg ks-chat-error" }).setText(text);
+  }
+  async send(text) {
+    var _a;
+    if (this.busy) return;
+    const userText = (text != null ? text : this.inputEl.value).trim();
+    if (!userText) return;
+    this.inputEl.value = "";
+    this.busy = true;
+    try {
+      this.apiHistory.push({ role: "user", content: userText });
+      this.userBubble(userText);
+      await this.runTurn();
+    } catch (e) {
+      this.errorBubble("\u8BF7\u6C42\u5F02\u5E38\uFF1A" + ((_a = e == null ? void 0 : e.message) != null ? _a : "\u672A\u77E5\u9519\u8BEF"));
+    } finally {
+      this.busy = false;
+      this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+    }
+  }
+  async runTurn() {
+    var _a;
+    const { body } = this.assistantBubble();
+    let res;
+    try {
+      res = await fetchAnthropicMessages(this.plugin.settings, this.apiHistory, { tools: ANTHROPIC_TOOLS });
+    } catch (e) {
+      this.errorBubble("\u7F51\u7EDC\u9519\u8BEF\uFF1A" + ((_a = e == null ? void 0 : e.message) != null ? _a : "\u672A\u77E5\u9519\u8BEF"));
+      return;
+    }
+    if (res.status < 200 || res.status >= 300) {
+      this.errorBubble(`\u8BF7\u6C42\u5931\u8D25\uFF1AHTTP ${res.status}`);
+      return;
+    }
+    const events = parseAnthropicSSE(res.text.split("\n"));
+    const { blocks, stopReason, error } = this.processEvents(events);
+    if (error) {
+      this.errorBubble(error);
+      return;
+    }
+    this.renderBlocks(body, blocks, {});
+    if (stopReason === "tool_use") {
+      const ctx = { app: this.plugin.app, settings: this.plugin.settings, moment: window.moment };
+      const toolResults = {};
+      for (const b of blocks.filter((x) => x.type === "tool_use")) {
+        toolResults[b.id] = await this.executeTool(ctx, b.name, b.input);
+      }
+      this.renderBlocks(body, blocks, toolResults);
+      this.apiHistory.push({ role: "assistant", content: blocksToApi(blocks) });
+      this.apiHistory.push({
+        role: "user",
+        content: Object.keys(toolResults).map((id) => ({ type: "tool_result", tool_use_id: id, content: toolResults[id] }))
+      });
+      await this.runTurn();
+    } else {
+      this.apiHistory.push({ role: "assistant", content: blocksToApi(blocks) });
+    }
+  }
+  processEvents(events) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    const blocks = [];
+    let stopReason = null;
+    let error;
+    for (const ev of events) {
+      const d = ev.data;
+      if (!d || typeof d !== "object") continue;
+      if (d.type === "error") {
+        error = `\u9519\u8BEF\uFF1A${(_c = (_b = (_a = d.error) == null ? void 0 : _a.message) != null ? _b : d.message) != null ? _c : "\u672A\u77E5"}`;
+        continue;
+      }
+      if (d.type === "content_block_start") {
+        const cb = (_d = d.content_block) != null ? _d : {};
+        const idx = (_e = d.index) != null ? _e : 0;
+        blocks[idx] = emptyBlock((_f = cb.type) != null ? _f : "text");
+        blocks[idx].id = (_g = cb.id) != null ? _g : "";
+        blocks[idx].name = (_h = cb.name) != null ? _h : "";
+        if (cb.type === "thinking") blocks[idx].signature = (_i = cb.signature) != null ? _i : "";
+        continue;
+      }
+      if (d.type === "content_block_delta") {
+        const blk = blocks[d.index];
+        const delta = (_j = d.delta) != null ? _j : {};
+        if (!blk) continue;
+        if (delta.type === "text_delta") blk.text += (_k = delta.text) != null ? _k : "";
+        else if (delta.type === "thinking_delta") blk.thinking += (_l = delta.thinking) != null ? _l : "";
+        else if (delta.type === "signature_delta") blk.signature += (_m = delta.signature) != null ? _m : "";
+        else if (delta.type === "input_json_delta") blk.partialJson += (_n = delta.partial_json) != null ? _n : "";
+        continue;
+      }
+      if (d.type === "content_block_stop") {
+        const blk = blocks[d.index];
+        if (blk && blk.partialJson) {
+          try {
+            blk.input = JSON.parse(blk.partialJson);
+          } catch (e) {
+            blk.input = blk.partialJson;
+          }
+        }
+        continue;
+      }
+      if (d.type === "message_delta") stopReason = (_p = (_o = d.delta) == null ? void 0 : _o.stop_reason) != null ? _p : null;
+    }
+    return { blocks: blocks.filter(Boolean), stopReason, error };
+  }
+  renderBlocks(body, blocks, toolResults) {
+    body.empty();
+    for (const block of blocks) {
+      if (block.type === "thinking") {
+        this.renderThinking(body, block.thinking);
+      } else if (block.type === "text") {
+        const el = body.createDiv({ cls: "ks-chat-markdown markdown-rendered" });
+        void import_obsidian5.MarkdownRenderer.render(this.app, block.text, el, "", this);
+      } else if (block.type === "tool_use") {
+        this.renderToolCard(body, block, toolResults[block.id]);
+      }
+    }
+  }
+  renderThinking(body, thinking) {
+    const wrap = body.createDiv({ cls: "ks-think is-collapsed" });
+    const head = wrap.createDiv({ cls: "ks-think-head" });
+    const chev = head.createSpan({ cls: "ks-think-icon" });
+    (0, import_obsidian5.setIcon)(chev, "chevron-right");
+    head.createSpan({ cls: "ks-think-label", text: "\u601D\u8003\u4E2D" });
+    const contentEl = wrap.createDiv({ cls: "ks-think-body" });
+    contentEl.setText(thinking);
+    head.addEventListener("click", () => {
+      const collapsed = wrap.hasClass("is-collapsed");
+      wrap.toggleClass("is-collapsed", !collapsed);
+      (0, import_obsidian5.setIcon)(chev, collapsed ? "chevron-down" : "chevron-right");
+    });
+  }
+  renderToolCard(body, block, result) {
+    const card = body.createDiv({ cls: "ks-tool-card" });
+    const title = card.createDiv({ cls: "ks-tool-name" });
+    (0, import_obsidian5.setIcon)(title.createSpan({ cls: "ks-tool-icon" }), "wrench");
+    title.createSpan({ text: block.name || "tool" });
+    card.createDiv({ cls: "ks-tool-input", text: summarizeInput(block.input) });
+    const resultEl = card.createDiv({ cls: "ks-tool-result" });
+    resultEl.setText(result == null ? "\u6267\u884C\u4E2D\u2026" : truncate(result, 300));
+  }
+  async executeTool(ctx, name, input) {
+    var _a;
+    const a = input != null ? input : {};
+    try {
+      if (name === "list_recent_notes") {
+        const r = await listRecentNotesTool(ctx, { days: a.days });
+        return "error" in r ? `ERROR: ${r.error}` : JSON.stringify(r.result);
+      }
+      if (name === "read_note") {
+        const r = await readNoteTool(ctx, { name: a.name });
+        return "error" in r ? `ERROR: ${r.error}` : r.result.content;
+      }
+      if (name === "create_note") {
+        const r = await createNoteTool(ctx, { title: a.title, yaml: a.yaml, content: a.content });
+        return "error" in r ? `ERROR: ${r.error}` : `\u5DF2\u521B\u5EFA\uFF1A${r.result.path}`;
+      }
+      return `ERROR: \u672A\u77E5\u5DE5\u5177 ${name}`;
+    } catch (e) {
+      return `ERROR: ${(_a = e == null ? void 0 : e.message) != null ? _a : "\u5DE5\u5177\u6267\u884C\u5931\u8D25"}`;
+    }
+  }
+};
+
 // src/main.ts
-var KnowledgeSystemPlugin = class extends import_obsidian5.Plugin {
+var KnowledgeSystemPlugin = class extends import_obsidian6.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -687,6 +1169,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian5.Plugin {
     await this.loadSettings();
     this.addSettingTab(new KnowledgeSystemSettingTab(this.app, this));
     this.registerView(VIEW_TYPE_KS, (leaf) => new KnowledgeSettingsView(this, leaf));
+    this.registerView(VIEW_TYPE_CHAT, (leaf) => new KnowledgeChatView(this, leaf));
     this.addCommand({
       id: "show-knowledge-system-settings-view",
       name: "Show Knowledge System settings view",
@@ -694,9 +1177,17 @@ var KnowledgeSystemPlugin = class extends import_obsidian5.Plugin {
         void this.activateView();
       }
     });
+    this.addCommand({
+      id: "open-knowledge-chat-view",
+      name: "Open Knowledge System chat",
+      callback: () => {
+        void this.activateChatView();
+      }
+    });
   }
   onunload() {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
   }
   /** Open the standalone settings view in a new tab leaf. */
   async activateView() {
@@ -706,6 +1197,23 @@ var KnowledgeSystemPlugin = class extends import_obsidian5.Plugin {
     const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
     this.app.workspace.revealLeaf(leaf);
+  }
+  /** Open the chat view in a new tab leaf. */
+  async activateChatView() {
+    if (typeof this.app.workspace.detachLeavesOfType === "function") {
+      this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
+    }
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: VIEW_TYPE_CHAT, active: true });
+    this.app.workspace.revealLeaf(leaf);
+  }
+  /**
+   * Issue one Anthropic-compatible chat request (POST {baseUrl}/v1/messages,
+   * stream). Exposed so the acceptance harness can assert the protocol headers /
+   * endpoint without using the chat UI. Returns the response status + body text.
+   */
+  async streamChat(messages) {
+    return fetchAnthropicMessages(this.settings, messages, { tools: ANTHROPIC_TOOLS });
   }
   async loadSettings() {
     this.settings = Object.assign(

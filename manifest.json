@@ -1,9 +1,9 @@
 {
 	"id": "obsidian-knowledge-system",
 	"name": "Knowledge System",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"minAppVersion": "1.5.0",
-	"description": "配置驱动的 AI 知识系统框架。第一阶段 MVP：DeepSeek 一键配置 + 自动拉取模型；源/输出文件夹；自定义时间属性 + moment 时间格式；测试命令（统计最近 N 天文件数、输出最新内容的最后 100 字）。",
+	"description": "配置驱动的 AI 知识系统框架。v0.3.0：Anthropic 兼容协议（x-api-key / v1/messages）、内置工具集（list_recent_notes / read_note / create_note）、AI 流式聊天视图、测试按钮；v0.2.0 起含独立设置视图、动态输出属性、测试工具 tab。",
 	"author": "night-system",
 	"authorUrl": "https://github.com/night-system",
 	"isDesktopOnly": false

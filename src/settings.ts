@@ -38,6 +38,8 @@ export interface KnowledgeSystemSettings {
   timestampProperty: string;
   /** Frontmatter attribute holding the source file path. */
   sourceAttr: string;
+  /** Earliest time (parsed with timeFormat) the chat/tools may see; empty = any. */
+  earliestTime: string;
   /** Custom-provider API key (stored for future phases; UI only). */
   customApiKey: string;
   /** Custom-provider model id (stored for future phases; UI only). */
@@ -50,7 +52,7 @@ export interface KnowledgeSystemSettings {
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   apiKey: '',
-  baseUrl: 'https://api.deepseek.com',
+  baseUrl: 'https://api.deepseek.com/anthropic',
   model: '',
   models: [],
   sourceFolder: '/',
@@ -64,6 +66,7 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   categoryDefault: '未分类',
   timestampProperty: 'created',
   sourceAttr: 'source',
+  earliestTime: '',
   customApiKey: '',
   customModel: '',
   extraProperties: [],

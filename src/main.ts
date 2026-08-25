@@ -2,15 +2,17 @@ import { Plugin } from 'obsidian';
 import { DEFAULT_SETTINGS, KnowledgeSystemSettings } from './settings';
 import { KnowledgeSystemSettingTab } from './settingsTab';
 import { KnowledgeSettingsView, VIEW_TYPE_KS } from './settingsView';
-import { fetchModelList } from './core';
+import { KnowledgeChatView, VIEW_TYPE_CHAT } from './chatView';
+import { fetchModelList, fetchAnthropicMessages, AnthropicChatMessage } from './core';
+import { ANTHROPIC_TOOLS } from './utils/tools';
 import { migrateExtraProperties } from './utils/index';
 
 /**
  * obsidian-knowledge-system — 配置驱动的 AI 知识系统框架。
  *
  * Lifecycle only: load settings (with legacy output-property migration),
- * register the settings tab, register the standalone settings view and the
- * "Show Knowledge System settings view" command, and clean up leaves on unload.
+ * register the settings tab, the standalone settings view + chat view and their
+ * commands, and clean up leaves on unload.
  */
 export default class KnowledgeSystemPlugin extends Plugin {
   settings: KnowledgeSystemSettings = DEFAULT_SETTINGS;
@@ -21,6 +23,7 @@ export default class KnowledgeSystemPlugin extends Plugin {
     this.addSettingTab(new KnowledgeSystemSettingTab(this.app, this));
 
     this.registerView(VIEW_TYPE_KS, (leaf) => new KnowledgeSettingsView(this, leaf));
+    this.registerView(VIEW_TYPE_CHAT, (leaf) => new KnowledgeChatView(this, leaf));
 
     this.addCommand({
       id: 'show-knowledge-system-settings-view',
@@ -29,10 +32,18 @@ export default class KnowledgeSystemPlugin extends Plugin {
         void this.activateView();
       },
     });
+    this.addCommand({
+      id: 'open-knowledge-chat-view',
+      name: 'Open Knowledge System chat',
+      callback: () => {
+        void this.activateChatView();
+      },
+    });
   }
 
   onunload(): void {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
   }
 
   /** Open the standalone settings view in a new tab leaf. */
@@ -45,6 +56,25 @@ export default class KnowledgeSystemPlugin extends Plugin {
     const leaf = this.app.workspace.getLeaf('tab');
     await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
     this.app.workspace.revealLeaf(leaf);
+  }
+
+  /** Open the chat view in a new tab leaf. */
+  async activateChatView(): Promise<void> {
+    if (typeof this.app.workspace.detachLeavesOfType === 'function') {
+      this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
+    }
+    const leaf = this.app.workspace.getLeaf('tab');
+    await leaf.setViewState({ type: VIEW_TYPE_CHAT, active: true });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  /**
+   * Issue one Anthropic-compatible chat request (POST {baseUrl}/v1/messages,
+   * stream). Exposed so the acceptance harness can assert the protocol headers /
+   * endpoint without using the chat UI. Returns the response status + body text.
+   */
+  async streamChat(messages: AnthropicChatMessage[]): Promise<{ status: number; text: string }> {
+    return fetchAnthropicMessages(this.settings, messages, { tools: ANTHROPIC_TOOLS });
   }
 
   async loadSettings(): Promise<void> {

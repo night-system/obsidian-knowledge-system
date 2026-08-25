@@ -179,7 +179,7 @@ class SettingsRenderer {
 
     const apiKey = new Setting(bodyEl)
       .setName('API Key')
-      .setDesc('DeepSeek 或自定义服务商的 API Key，用于获取模型列表。')
+      .setDesc('Anthropic 兼容服务的 API Key（x-api-key），用于聊天与获取模型列表。')
       .addText((text) => {
         text.inputEl.type = 'password';
         text
@@ -187,11 +187,11 @@ class SettingsRenderer {
           .setValue(this.plugin.settings.apiKey)
           .onChange((value) => this.updateSetting('apiKey', value));
       });
-    this.markSearchable(apiKey, '连接 api key API Key 密钥');
+    this.markSearchable(apiKey, '连接 anthropic API Key 密钥');
 
     const test = new Setting(bodyEl)
       .setName('测试并获取模型')
-      .setDesc('调用服务商 GET /models 接口，并填充下方模型下拉框。')
+      .setDesc('调用服务商模型列表接口（先试 /models，回退 /v1/models），填充下方模型下拉框。')
       .addButton((btn) =>
         btn.setButtonText('测试并获取模型').setCta().onClick(async () => {
           await this.refreshModels();
@@ -201,7 +201,7 @@ class SettingsRenderer {
 
     const model = new Setting(bodyEl)
       .setName('默认模型')
-      .setDesc('可用的模型列表（来自服务商 /models 接口）。')
+      .setDesc('可用的模型列表（来自服务商模型接口，不硬编码）。')
       .addDropdown((drop) => {
         this.modelDropdown = drop;
         this.populateModelDropdown(drop);
@@ -215,14 +215,14 @@ class SettingsRenderer {
 
     const baseUrl = new Setting(bodyEl)
       .setName('Base URL')
-      .setDesc('OpenAI 兼容服务的基础地址，默认 DeepSeek。')
+      .setDesc('Anthropic 兼容服务的基础地址，默认 DeepSeek Anthropic 端点。')
       .addText((text) =>
         text
-          .setPlaceholder('https://api.deepseek.com')
+          .setPlaceholder('https://api.deepseek.com/anthropic')
           .setValue(this.plugin.settings.baseUrl)
           .onChange((value) => this.updateSetting('baseUrl', value))
       );
-    this.markSearchable(baseUrl, '自定义服务商 base_url 地址 base url');
+    this.markSearchable(baseUrl, '自定义服务商 base_url 地址 base url anthropic');
 
     const customApiKey = new Setting(bodyEl)
       .setName('API Key')
@@ -323,6 +323,17 @@ class SettingsRenderer {
           });
       });
     this.markSearchable(recentDays, '时间 最近N天 天数 最近');
+
+    const earliestTime = new Setting(bodyEl)
+      .setName('最早时间')
+      .setDesc('AI 工具只能查看不早于该时间的笔记（格式同时间戳格式）；留空则不限制。')
+      .addText((text) =>
+        text
+          .setPlaceholder('如：2026-01-01')
+          .setValue(this.plugin.settings.earliestTime)
+          .onChange((value) => this.updateSetting('earliestTime', value))
+      );
+    this.markSearchable(earliestTime, '时间 最早时间 最早 时间限制');
   }
 
   // -------------------------------------------------------------------------

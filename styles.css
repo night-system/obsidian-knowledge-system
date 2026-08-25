@@ -125,3 +125,150 @@
   padding: var(--size-4-2) var(--size-4-3);
 }
 
+/* ------------------------------------------------------------------ */
+/* Chat view                                                          */
+/* ------------------------------------------------------------------ */
+
+.ks-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--size-4-2);
+}
+
+.ks-chat-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  padding-bottom: var(--size-4-2);
+}
+
+.ks-chat-msg {
+  max-width: 100%;
+  border-radius: var(--radius-m);
+  padding: var(--size-2-2) var(--size-4-2);
+}
+
+.ks-chat-user {
+  align-self: flex-end;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+
+.ks-chat-user .ks-chat-content {
+  white-space: pre-wrap;
+  color: var(--text-normal);
+}
+
+.ks-chat-ai {
+  align-self: stretch;
+}
+
+.ks-chat-ai .ks-chat-content.markdown-rendered {
+  color: var(--text-normal);
+}
+
+.ks-chat-error {
+  color: var(--text-error);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.ks-chat-inputbar {
+  display: flex;
+  gap: var(--size-2-2);
+  margin-top: var(--size-4-2);
+}
+
+.ks-chat-textarea {
+  flex: 1 1 auto;
+  min-height: 2.6em;
+  max-height: 12em;
+  resize: vertical;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-2-2);
+  color: var(--text-normal);
+  font-family: var(--font-interface);
+}
+
+.ks-chat-send {
+  flex: 0 0 auto;
+}
+
+.ks-chat-test {
+  flex: 0 0 auto;
+}
+
+/* Collapsible thinking block. */
+.ks-think {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  margin-bottom: var(--size-2-2);
+  background: var(--background-secondary);
+}
+
+.ks-think-head {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-2-1) var(--size-2-2);
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.ks-think-icon {
+  display: inline-flex;
+}
+
+.ks-think-body {
+  padding: var(--size-2-1) var(--size-2-2);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
+.ks-think.is-collapsed .ks-think-body {
+  display: none;
+}
+
+/* Tool-use card. */
+.ks-tool-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  margin-bottom: var(--size-2-2);
+  padding: var(--size-2-2);
+  background: var(--background-primary);
+}
+
+.ks-tool-name {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.ks-tool-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.ks-tool-input {
+  margin-top: var(--size-2-1);
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ks-tool-result {
+  margin-top: var(--size-2-1);
+  color: var(--text-normal);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+

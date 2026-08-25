@@ -1,6 +1,43 @@
 /* obsidian-knowledge-system — settings tab styles.
    Uses Obsidian CSS variables so user themes control the look. */
 
+.ks-tabs {
+  display: flex;
+  overflow-x: auto;
+  gap: var(--size-2-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: var(--size-4-2);
+  scrollbar-width: none;
+}
+
+.ks-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ks-tab {
+  padding: var(--size-2-2) var(--size-4-2);
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s ease;
+  font-weight: 500;
+  user-select: none;
+}
+
+.ks-tab:hover {
+  color: var(--text-normal);
+}
+
+.ks-tab.is-active {
+  color: var(--interactive-accent);
+  border-bottom-color: var(--interactive-accent);
+}
+
+.ks-tab-content {
+  padding-top: var(--size-2-1);
+}
+
 .ks-search {
   display: flex;
   align-items: center;

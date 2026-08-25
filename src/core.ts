@@ -1,5 +1,5 @@
-import { Notice, TFile, TFolder } from 'obsidian';
-import type { App, Command, RequestUrlParam, RequestUrlResponse } from 'obsidian';
+import { Notice, requestUrl, TFile, TFolder } from 'obsidian';
+import type { App, Command } from 'obsidian';
 import { KnowledgeSystemSettings } from './settings';
 import {
   buildFrontmatter,
@@ -36,13 +36,11 @@ function frontmatterOf(app: App, file: TFile): Record<string, unknown> {
   return (cache?.frontmatter ?? {}) as Record<string, unknown>;
 }
 
-/**
- * Obsidian exposes `requestUrl` on the `App` instance at runtime (the official
- * type definitions lag behind). We route through it — the acceptance harness
- * provides it only on `app` — so nudge the type with a narrow cast.
- */
-function appRequestUrl(app: App, params: RequestUrlParam): Promise<RequestUrlResponse> {
-  return (app as unknown as { requestUrl: (p: RequestUrlParam) => Promise<RequestUrlResponse> }).requestUrl(params);
+/** Render a short (≤100 char) diagnostic snippet of an HTTP response body. */
+function bodySnippet(body: unknown): string {
+  if (body == null) return '';
+  const text = typeof body === 'string' ? body : JSON.stringify(body);
+  return text.slice(0, 100);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,22 +192,25 @@ export async function outputLatestContent(plugin: KnowledgeSystemPlugin): Promis
 // Settings tab: "test and fetch models"
 // ---------------------------------------------------------------------------
 
-/** Map an OpenAI-compatible HTTP status to a readable message. */
+/**
+ * Map an OpenAI-compatible HTTP status to a readable category. The caller
+ * appends `（HTTP <status>）` plus a body snippet, so this returns only the
+ * category label (the generic branch is bare to avoid a duplicated status code).
+ */
 export function mapHttpError(status: number): string {
   if (status === 401 || status === 403) return 'API Key 无效';
   if (status === 402) return '余额不足';
   if (status === 429) return '限流';
-  return `请求失败（HTTP ${status}）`;
+  return '请求失败';
 }
 
 /**
  * Call GET /models on the base URL and return the model ids. Uses Obsidian's
- * `app.requestUrl` (no fetch / Node http) and reads the response json whether
- * it is already parsed (Obsidian) or a resolver function (test harness). The
- * id list comes exclusively from the API — nothing is hardcoded.
+ * module-level `requestUrl` (no fetch / Node http) and reads the response json
+ * whether it is already parsed (Obsidian) or a resolver function (test
+ * harness). The id list comes exclusively from the API — nothing is hardcoded.
  */
 export async function fetchModelList(
-  app: App,
   apiKey: string,
   baseUrl: string
 ): Promise<{ ok: boolean; modelIds: string[]; message: string }> {
@@ -222,7 +223,7 @@ export async function fetchModelList(
   const base = (baseUrl || 'https://api.deepseek.com').trim().replace(/\/+$/, '');
 
   try {
-    const res = await appRequestUrl(app, {
+    const res = await requestUrl({
       url: `${base}/models`,
       method: 'GET',
       headers: { Authorization: `Bearer ${key}` },
@@ -241,12 +242,15 @@ export async function fetchModelList(
             .map((m) => (m && typeof (m as { id?: unknown }).id === 'string' ? (m as { id: string }).id : ''))
             .filter((x) => x.length > 0)
         : [];
-      const message = modelIds.length > 0 ? `成功获取 ${modelIds.length} 个模型` : '未返回任何模型';
+      const message = modelIds.length > 0 ? `成功获取 ${modelIds.length} 个模型：${modelIds[0]}` : '未返回任何模型';
       new Notice(message);
       return { ok: true, modelIds, message };
     }
 
-    const message = mapHttpError(res.status);
+    const detail = bodySnippet(body);
+    const message = detail
+      ? `${mapHttpError(res.status)}（HTTP ${res.status}）：${detail}`
+      : `${mapHttpError(res.status)}（HTTP ${res.status}）`;
     new Notice(message);
     return { ok: false, modelIds: [], message };
   } catch (e) {

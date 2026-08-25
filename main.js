@@ -127,8 +127,10 @@ function frontmatterOf(app, file) {
   const cache = app.metadataCache.getFileCache(file);
   return (_a = cache == null ? void 0 : cache.frontmatter) != null ? _a : {};
 }
-function appRequestUrl(app, params) {
-  return app.requestUrl(params);
+function bodySnippet(body) {
+  if (body == null) return "";
+  const text = typeof body === "string" ? body : JSON.stringify(body);
+  return text.slice(0, 100);
 }
 function resolveSourceFolder(plugin) {
   const raw = (plugin.settings.sourceFolder || "/").trim();
@@ -244,9 +246,9 @@ function mapHttpError(status) {
   if (status === 401 || status === 403) return "API Key \u65E0\u6548";
   if (status === 402) return "\u4F59\u989D\u4E0D\u8DB3";
   if (status === 429) return "\u9650\u6D41";
-  return `\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${status}\uFF09`;
+  return "\u8BF7\u6C42\u5931\u8D25";
 }
-async function fetchModelList(app, apiKey, baseUrl) {
+async function fetchModelList(apiKey, baseUrl) {
   var _a;
   const key = (apiKey || "").trim();
   if (!key) {
@@ -256,7 +258,7 @@ async function fetchModelList(app, apiKey, baseUrl) {
   }
   const base = (baseUrl || "https://api.deepseek.com").trim().replace(/\/+$/, "");
   try {
-    const res = await appRequestUrl(app, {
+    const res = await (0, import_obsidian.requestUrl)({
       url: `${base}/models`,
       method: "GET",
       headers: { Authorization: `Bearer ${key}` },
@@ -266,11 +268,12 @@ async function fetchModelList(app, apiKey, baseUrl) {
     if (res.status >= 200 && res.status < 300) {
       const data = body == null ? void 0 : body.data;
       const modelIds = Array.isArray(data) ? data.map((m) => m && typeof m.id === "string" ? m.id : "").filter((x) => x.length > 0) : [];
-      const message2 = modelIds.length > 0 ? `\u6210\u529F\u83B7\u53D6 ${modelIds.length} \u4E2A\u6A21\u578B` : "\u672A\u8FD4\u56DE\u4EFB\u4F55\u6A21\u578B";
+      const message2 = modelIds.length > 0 ? `\u6210\u529F\u83B7\u53D6 ${modelIds.length} \u4E2A\u6A21\u578B\uFF1A${modelIds[0]}` : "\u672A\u8FD4\u56DE\u4EFB\u4F55\u6A21\u578B";
       new import_obsidian.Notice(message2);
       return { ok: true, modelIds, message: message2 };
     }
-    const message = mapHttpError(res.status);
+    const detail = bodySnippet(body);
+    const message = detail ? `${mapHttpError(res.status)}\uFF08HTTP ${res.status}\uFF09\uFF1A${detail}` : `${mapHttpError(res.status)}\uFF08HTTP ${res.status}\uFF09`;
     new import_obsidian.Notice(message);
     return { ok: false, modelIds: [], message };
   } catch (e) {
@@ -337,11 +340,12 @@ var FolderSuggest = class extends import_obsidian3.AbstractInputSuggest {
 var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
+    this.activeTab = "connection";
     this.modelDropdown = null;
-    this.currentModels = [];
     this.groupEls = [];
     this.groupCollapsed = /* @__PURE__ */ new Map();
     this.plugin = plugin;
+    this.currentModels = Array.isArray(plugin.settings.models) ? plugin.settings.models.slice() : [];
   }
   // -------------------------------------------------------------------------
   // rendering
@@ -350,15 +354,49 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     const { containerEl } = this;
     containerEl.empty();
     this.modelDropdown = null;
-    this.currentModels = [];
     this.groupEls = [];
     this.groupCollapsed.clear();
+    this.renderTabs(containerEl);
     this.renderSearch(containerEl);
-    this.renderConnectionGroup(containerEl);
-    this.renderCustomProviderGroup(containerEl);
-    this.renderFolderGroup(containerEl);
-    this.renderTimeGroup(containerEl);
-    this.renderOutputGroup(containerEl);
+    this.renderActiveTab(containerEl.createDiv({ cls: "ks-tab-content" }));
+  }
+  /** Render the top tab bar: one button per tab, active state + click to switch. */
+  renderTabs(containerEl) {
+    const tabs = [
+      { id: "connection", label: "\u8FDE\u63A5" },
+      { id: "folder", label: "\u6587\u4EF6\u5939" },
+      { id: "time", label: "\u65F6\u95F4" },
+      { id: "output", label: "\u8F93\u51FA\u5C5E\u6027" }
+    ];
+    const tabsEl = containerEl.createDiv({ cls: "ks-tabs" });
+    for (const tab of tabs) {
+      const tabEl = tabsEl.createDiv({ cls: "ks-tab" });
+      tabEl.setText(tab.label);
+      tabEl.dataset.tabId = tab.id;
+      if (this.activeTab === tab.id) tabEl.addClass("is-active");
+      tabEl.addEventListener("click", () => {
+        this.activeTab = tab.id;
+        this.display();
+      });
+    }
+  }
+  /** Render the settings belonging to the active tab (all groups of that tab). */
+  renderActiveTab(containerEl) {
+    switch (this.activeTab) {
+      case "connection":
+        this.renderConnectionGroup(containerEl);
+        this.renderCustomProviderGroup(containerEl);
+        break;
+      case "folder":
+        this.renderFolderGroup(containerEl);
+        break;
+      case "time":
+        this.renderTimeGroup(containerEl);
+        break;
+      case "output":
+        this.renderOutputGroup(containerEl);
+        break;
+    }
   }
   renderSearch(containerEl) {
     const wrap = containerEl.createDiv({ cls: "ks-search" });
@@ -397,10 +435,12 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
   // -------------------------------------------------------------------------
   // filter / collapse
   // -------------------------------------------------------------------------
+  /** Filter the setting rows of the active tab; expand groups while searching. */
   filterSettings(query) {
     const q = (query || "").trim().toLowerCase();
-    const allItems = this.containerEl.querySelectorAll(".setting-item");
-    allItems.forEach((el) => {
+    const content = this.containerEl.querySelector(".ks-tab-content");
+    if (!content) return;
+    content.querySelectorAll(".setting-item").forEach((el) => {
       const elm = el;
       const hay = ((elm.getAttribute("data-search") || "") + " " + (elm.textContent || "")).toLowerCase();
       elm.style.display = q && hay.includes(q) ? "" : q ? "none" : "";
@@ -569,7 +609,6 @@ var KnowledgeSystemPlugin2 = class extends import_obsidian5.Plugin {
    */
   async fetchModels(apiKey, baseUrl) {
     const result = await fetchModelList(
-      this.app,
       apiKey || this.settings.apiKey,
       baseUrl || this.settings.baseUrl
     );

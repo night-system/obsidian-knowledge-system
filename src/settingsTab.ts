@@ -3,22 +3,30 @@ import { KnowledgeSystemSettings } from './settings';
 import { FolderSuggest } from './folderSuggest';
 import type KnowledgeSystemPlugin from './main';
 
+/** The settings tabs. Order matches fast-note-sync's tab header pattern. */
+type TabId = 'connection' | 'folder' | 'time' | 'output';
+
 /**
- * Settings tab. Renders a top search box plus grouped, collapsible sections
- * (style-settings-inspired but on Obsidian's native `Setting` controls). The
- * glyphs are Lucide icons — no emoji — so they follow the active theme.
+ * Settings tab. A top tab bar (连接 / 文件夹 / 时间 / 输出属性) is layered on top
+ * of the existing grouped, collapsible sections (style-settings-inspired but on
+ * Obsidian's native `Setting` controls). A search box filters the rows of the
+ * currently active tab. The glyphs are Lucide icons — no emoji — so they follow
+ * the active theme.
  */
 export class KnowledgeSystemSettingTab extends PluginSettingTab {
   plugin: KnowledgeSystemPlugin;
 
+  private activeTab: TabId = 'connection';
   private modelDropdown: DropdownComponent | null = null;
-  private currentModels: string[] = [];
+  private currentModels: string[];
   private groupEls: HTMLElement[] = [];
   private groupCollapsed = new Map<HTMLElement, boolean>();
 
   constructor(app: App, plugin: KnowledgeSystemPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+    // Persist the fetched model list so it survives tab switches / re-opens.
+    this.currentModels = Array.isArray(plugin.settings.models) ? plugin.settings.models.slice() : [];
   }
 
   // -------------------------------------------------------------------------
@@ -30,16 +38,53 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     this.modelDropdown = null;
-    this.currentModels = [];
     this.groupEls = [];
     this.groupCollapsed.clear();
 
+    this.renderTabs(containerEl);
     this.renderSearch(containerEl);
-    this.renderConnectionGroup(containerEl);
-    this.renderCustomProviderGroup(containerEl);
-    this.renderFolderGroup(containerEl);
-    this.renderTimeGroup(containerEl);
-    this.renderOutputGroup(containerEl);
+    this.renderActiveTab(containerEl.createDiv({ cls: 'ks-tab-content' }));
+  }
+
+  /** Render the top tab bar: one button per tab, active state + click to switch. */
+  private renderTabs(containerEl: HTMLElement): void {
+    const tabs: { id: TabId; label: string }[] = [
+      { id: 'connection', label: '连接' },
+      { id: 'folder', label: '文件夹' },
+      { id: 'time', label: '时间' },
+      { id: 'output', label: '输出属性' },
+    ];
+
+    const tabsEl = containerEl.createDiv({ cls: 'ks-tabs' });
+    for (const tab of tabs) {
+      const tabEl = tabsEl.createDiv({ cls: 'ks-tab' });
+      tabEl.setText(tab.label);
+      tabEl.dataset.tabId = tab.id;
+      if (this.activeTab === tab.id) tabEl.addClass('is-active');
+      tabEl.addEventListener('click', () => {
+        this.activeTab = tab.id;
+        this.display(); // re-render content for the new tab (fresh, empty search)
+      });
+    }
+  }
+
+  /** Render the settings belonging to the active tab (all groups of that tab). */
+  private renderActiveTab(containerEl: HTMLElement): void {
+    switch (this.activeTab) {
+      case 'connection':
+        this.renderConnectionGroup(containerEl);
+        this.renderCustomProviderGroup(containerEl);
+        break;
+      case 'folder':
+        this.renderFolderGroup(containerEl);
+        break;
+      case 'time':
+        this.renderTimeGroup(containerEl);
+        break;
+      case 'output':
+        this.renderOutputGroup(containerEl);
+        break;
+    }
   }
 
   private renderSearch(containerEl: HTMLElement): void {
@@ -94,15 +139,18 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
   // filter / collapse
   // -------------------------------------------------------------------------
 
+  /** Filter the setting rows of the active tab; expand groups while searching. */
   private filterSettings(query: string): void {
     const q = (query || '').trim().toLowerCase();
-    const allItems = this.containerEl.querySelectorAll('.setting-item');
-    allItems.forEach((el) => {
+    const content = this.containerEl.querySelector('.ks-tab-content');
+    if (!content) return;
+
+    content.querySelectorAll('.setting-item').forEach((el) => {
       const elm = el as HTMLElement;
       const hay = ((elm.getAttribute('data-search') || '') + ' ' + (elm.textContent || '')).toLowerCase();
       elm.style.display = q && hay.includes(q) ? '' : q ? 'none' : '';
     });
-    // While searching, expand every group so matched rows are visible.
+
     for (const groupEl of this.groupEls) {
       if (q) {
         groupEl.removeClass('ks-collapsed');

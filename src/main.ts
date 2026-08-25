@@ -39,7 +39,6 @@ export default class KnowledgeSystemPlugin extends Plugin {
     baseUrl: string
   ): Promise<{ ok: boolean; modelIds: string[]; message: string }> {
     const result = await fetchModelList(
-      this.app,
       apiKey || this.settings.apiKey,
       baseUrl || this.settings.baseUrl
     );

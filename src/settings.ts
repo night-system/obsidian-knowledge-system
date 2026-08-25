@@ -35,13 +35,17 @@ export interface KnowledgeSystemSettings {
   /** Default value written to the category attribute. */
   categoryDefault: string;
   /** Frontmatter attribute holding the output timestamp. */
-  timestampAttr: string;
+  timestampProperty: string;
   /** Frontmatter attribute holding the source file path. */
   sourceAttr: string;
   /** Custom-provider API key (stored for future phases; UI only). */
   customApiKey: string;
   /** Custom-provider model id (stored for future phases; UI only). */
   customModel: string;
+  /** Dynamic output properties: each {key,value} is a frontmatter attribute
+   * name plus its default value (written by the output command). Legacy
+   * review/category fields are migrated here on first load. */
+  extraProperties: { key: string; value: string }[];
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -58,8 +62,9 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   reviewDefault: '未审',
   categoryAttr: 'category',
   categoryDefault: '未分类',
-  timestampAttr: 'created',
+  timestampProperty: 'created',
   sourceAttr: 'source',
   customApiKey: '',
   customModel: '',
+  extraProperties: [],
 };

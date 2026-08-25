@@ -96,13 +96,15 @@ export function countRecentFiles(plugin: KnowledgeSystemPlugin): number {
     frontmatter: frontmatterOf(plugin.app, file),
     ctimeMs: file.stat.ctime,
   }));
-  return countRecent(items, {
+  const count = countRecent(items, {
     moment: window.moment,
     timeAttr: plugin.settings.timeAttr || '',
     formats: formatsFor(plugin),
     nowMs: Date.now(),
     days: plugin.settings.recentDays,
   });
+  new Notice(`源文件夹最近 ${plugin.settings.recentDays} 天共有 ${count} 个文件`);
+  return count;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,14 +168,15 @@ export async function outputLatestContent(plugin: KnowledgeSystemPlugin): Promis
   const frontmatter = buildFrontmatter(
     { source: latest.path, timestampMs: now.valueOf() },
     {
-      timestampAttr: plugin.settings.timestampAttr,
+      timestampProperty: plugin.settings.timestampProperty,
+      sourceAttr: plugin.settings.sourceAttr || 'source',
+      moment: window.moment,
+      timeFormat: plugin.settings.timeFormat,
+      extraProperties: plugin.settings.extraProperties,
       reviewAttr: plugin.settings.reviewAttr,
       reviewDefault: plugin.settings.reviewDefault,
       categoryAttr: plugin.settings.categoryAttr,
       categoryDefault: plugin.settings.categoryDefault,
-      sourceAttr: plugin.settings.sourceAttr,
-      moment: window.moment,
-      timeFormat: plugin.settings.timeFormat,
     }
   );
 

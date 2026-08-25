@@ -105,3 +105,23 @@
 .ks-collapsed .ks-group-body {
   display: none;
 }
+
+/* Dynamic output-property rows (key + default value + delete button). */
+.ks-extra-props {
+  margin-top: var(--size-2-1);
+}
+
+.ks-extra-props-row .setting-item-control {
+  flex-wrap: nowrap;
+  gap: var(--size-2-2);
+}
+
+.ks-extra-props-row .setting-item-control .text-input {
+  min-width: 10em;
+}
+
+/* Standalone settings view (workspace leaf). */
+.ks-view {
+  padding: var(--size-4-2) var(--size-4-3);
+}
+

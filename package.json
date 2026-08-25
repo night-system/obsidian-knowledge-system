@@ -1,6 +1,6 @@
 {
   "name": "obsidian-knowledge-system",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "配置驱动的 AI 知识系统框架（第一阶段 MVP）：DeepSeek 一键配置、自动拉取模型、源/输出文件夹、自定义时间属性 + moment 格式、测试命令（统计最近文件数 / 输出最新内容）。",
   "main": "main.js",
   "scripts": {

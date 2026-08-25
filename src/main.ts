@@ -1,15 +1,16 @@
 import { Plugin } from 'obsidian';
 import { DEFAULT_SETTINGS, KnowledgeSystemSettings } from './settings';
-import { registerCommands } from './commands';
 import { KnowledgeSystemSettingTab } from './settingsTab';
+import { KnowledgeSettingsView, VIEW_TYPE_KS } from './settingsView';
 import { fetchModelList } from './core';
+import { migrateExtraProperties } from './utils/index';
 
 /**
- * obsidian-knowledge-system — 配置驱动的 AI 知识系统框架（第一阶段 MVP）。
+ * obsidian-knowledge-system — 配置驱动的 AI 知识系统框架。
  *
- * This entry module only wires up the plugin lifecycle: load settings, register
- * the two commands and expose the settings tab. All feature logic lives in
- * `core.ts` (files + DeepSeek models), `commands.ts` and `settingsTab.ts`.
+ * Lifecycle only: load settings (with legacy output-property migration),
+ * register the settings tab, register the standalone settings view and the
+ * "Show Knowledge System settings view" command, and clean up leaves on unload.
  */
 export default class KnowledgeSystemPlugin extends Plugin {
   settings: KnowledgeSystemSettings = DEFAULT_SETTINGS;
@@ -17,12 +18,50 @@ export default class KnowledgeSystemPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    registerCommands(this);
     this.addSettingTab(new KnowledgeSystemSettingTab(this.app, this));
+
+    this.registerView(VIEW_TYPE_KS, (leaf) => new KnowledgeSettingsView(this, leaf));
+
+    this.addCommand({
+      id: 'show-knowledge-system-settings-view',
+      name: 'Show Knowledge System settings view',
+      callback: () => {
+        void this.activateView();
+      },
+    });
+  }
+
+  onunload(): void {
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
+  }
+
+  /** Open the standalone settings view in a new tab leaf. */
+  async activateView(): Promise<void> {
+    // Guarded so the acceptance harness (which stubs workspace without
+    // detachLeavesOfType) can still exercise the command path.
+    if (typeof this.app.workspace.detachLeavesOfType === 'function') {
+      this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
+    }
+    const leaf = this.app.workspace.getLeaf('tab');
+    await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, (await this.loadData()) as Partial<KnowledgeSystemSettings>);
+    this.settings = Object.assign(
+      {},
+      DEFAULT_SETTINGS,
+      (await this.loadData()) as Partial<KnowledgeSystemSettings>
+    );
+    this.migrateLegacyOutputProps();
+  }
+
+  /**
+   * Move the legacy `reviewAttr`/`categoryAttr` output attributes into the new
+   * `extraProperties` list the first time the plugin loads (only when the
+   * dynamic list is empty). The old fields are kept for read compat.
+   */
+  private migrateLegacyOutputProps(): void {
+    this.settings.extraProperties = migrateExtraProperties(this.settings);
   }
 
   async saveSettings(): Promise<void> {
@@ -30,9 +69,9 @@ export default class KnowledgeSystemPlugin extends Plugin {
   }
 
   /**
-   * Fetch the provider's model list (GET /models). Exposed as a public method
-   * so the settings tab button and the acceptance harness both call it. On
-   * success the returned ids are also persisted onto the settings.
+   * Fetch the provider's model list (GET /models). Exposed publicly so the
+   * settings tab button and the harness both call it. On success the returned
+   * ids are persisted onto the settings.
    */
   async fetchModels(
     apiKey: string,

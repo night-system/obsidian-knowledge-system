@@ -32,14 +32,37 @@ export interface FrontmatterVals {
 
 /** Config used to build the output frontmatter (attribute names + formatter). */
 export interface FrontmatterConfig {
-  timestampAttr: string;
-  reviewAttr: string;
-  reviewDefault: string;
-  categoryAttr: string;
-  categoryDefault: string;
+  /** Attribute name for the output timestamp (fixed row). */
+  timestampProperty: string;
+  /** Attribute name for the output source path (fixed row). */
   sourceAttr: string;
+  /** moment instance used to render the timestamp (passed in). */
   moment: any;
+  /** moment-compatible format used to render the timestamp. */
   timeFormat: string;
+  /** Dynamic output properties: each {key,value} is one frontmatter row. */
+  extraProperties?: { key: string; value: string }[];
+  /** Legacy review attribute (used as fallback when `extraProperties` is empty). */
+  reviewAttr?: string;
+  /** Legacy review default value. */
+  reviewDefault?: string;
+  /** Legacy category attribute (used as fallback when `extraProperties` is empty). */
+  categoryAttr?: string;
+  /** Legacy category default value. */
+  categoryDefault?: string;
+}
+
+/**
+ * A structural view of the object that may carry the dynamic `extraProperties`
+ * list and/or the legacy `reviewAttr`/`categoryAttr` output-attribute fields.
+ * Any object with these optional fields is accepted (e.g. the settings object).
+ */
+export interface MigrateInput {
+  extraProperties?: { key: string; value: string }[];
+  reviewAttr?: string;
+  reviewDefault?: string;
+  categoryAttr?: string;
+  categoryDefault?: string;
 }
 
 const DAY_MS = 86_400_000;
@@ -118,16 +141,51 @@ export function extractLastChars(text: string, n: number): string {
  * using the configured attribute names and the provided moment formatter.
  * Values are written unquoted so they read back as plain strings.
  */
+/**
+ * Render the output YAML frontmatter (without the surrounding `---` fences).
+ * Row order is stable and fixed: the timestamp row, then the source row, then
+ * every `extraProperties` entry in insertion order. When `extraProperties` is
+ * empty, the legacy review/category fields are used instead (back-compat).
+ */
 export function buildFrontmatter(vals: FrontmatterVals, cfg: FrontmatterConfig): string {
-  const timeStr = cfg.moment(vals.timestampMs).format(cfg.timeFormat);
-  return [
-    `${cfg.timestampAttr}: ${timeStr}`,
-    `${cfg.reviewAttr}: ${cfg.reviewDefault}`,
-    `${cfg.categoryAttr}: ${cfg.categoryDefault}`,
+  const lines: string[] = [
+    `${cfg.timestampProperty}: ${cfg.moment(vals.timestampMs).format(cfg.timeFormat)}`,
     `${cfg.sourceAttr}: ${vals.source}`,
-  ].join('\n');
+  ];
+  const extra = cfg.extraProperties && cfg.extraProperties.length > 0 ? cfg.extraProperties : null;
+  if (extra) {
+    for (const { key, value } of extra) lines.push(`${key}: ${value}`);
+  } else {
+    if (cfg.reviewAttr && cfg.reviewDefault != null) lines.push(`${cfg.reviewAttr}: ${cfg.reviewDefault}`);
+    if (cfg.categoryAttr && cfg.categoryDefault != null) lines.push(`${cfg.categoryAttr}: ${cfg.categoryDefault}`);
+  }
+  return lines.join('\n');
 }
 
+/**
+ * Migrate legacy output attributes into the dynamic `extraProperties` list:
+ * - if `extraProperties` is already non-empty, return it unchanged;
+ * - otherwise build `{key,value}` rows from the legacy `reviewAttr`/`categoryAttr`
+ *   fields when present;
+ * - otherwise return `[]`.
+ */
+export function migrateExtraProperties(input: MigrateInput): { key: string; value: string }[] {
+  const extra = input.extraProperties;
+  if (Array.isArray(extra) && extra.length > 0) {
+    return extra.map((e) => {
+      const item = e as { key?: unknown; value?: unknown };
+      return { key: String(item?.key ?? ''), value: String(item?.value ?? '') };
+    });
+  }
+  const out: { key: string; value: string }[] = [];
+  const reviewAttr = input.reviewAttr;
+  const reviewDefault = input.reviewDefault;
+  if (reviewAttr && reviewDefault != null) out.push({ key: String(reviewAttr), value: String(reviewDefault) });
+  const categoryAttr = input.categoryAttr;
+  const categoryDefault = input.categoryDefault;
+  if (categoryAttr && categoryDefault != null) out.push({ key: String(categoryAttr), value: String(categoryDefault) });
+  return out;
+}
 /**
  * Remove a leading YAML frontmatter block (delimited by `---`) from a markdown
  * file's raw content so the following extraction/analysis works on the body

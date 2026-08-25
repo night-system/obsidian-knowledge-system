@@ -24,7 +24,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
-  default: () => KnowledgeSystemPlugin2
+  default: () => KnowledgeSystemPlugin
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian5 = require("obsidian");
@@ -44,17 +44,49 @@ var DEFAULT_SETTINGS = {
   reviewDefault: "\u672A\u5BA1",
   categoryAttr: "category",
   categoryDefault: "\u672A\u5206\u7C7B",
-  timestampAttr: "created",
+  timestampProperty: "created",
   sourceAttr: "source",
   customApiKey: "",
-  customModel: ""
+  customModel: "",
+  extraProperties: []
 };
 
-// src/commands.ts
-var import_obsidian2 = require("obsidian");
+// src/settingsTab.ts
+var import_obsidian3 = require("obsidian");
+
+// src/folderSuggest.ts
+var import_obsidian = require("obsidian");
+var FolderSuggest = class extends import_obsidian.AbstractInputSuggest {
+  constructor(app, inputEl) {
+    super(app, inputEl);
+    this.inputEl = inputEl;
+  }
+  getSuggestions(query) {
+    const folders = [];
+    const lower = (query || "").toLowerCase();
+    const visit = (f) => {
+      folders.push(f);
+      f.children.forEach((c) => {
+        if (c instanceof import_obsidian.TFolder) visit(c);
+      });
+    };
+    this.app.vault.getAllLoadedFiles().forEach((f) => {
+      if (f instanceof import_obsidian.TFolder) visit(f);
+    });
+    return folders.filter((f) => f.path.toLowerCase().includes(lower)).slice(0, 50);
+  }
+  renderSuggestion(folder, el) {
+    el.setText(folder.path || "/");
+  }
+  selectSuggestion(folder) {
+    this.inputEl.value = folder.path || "/";
+    this.inputEl.trigger("input");
+    this.close();
+  }
+};
 
 // src/core.ts
-var import_obsidian = require("obsidian");
+var import_obsidian2 = require("obsidian");
 
 // src/utils/index.ts
 var DAY_MS = 864e5;
@@ -96,13 +128,36 @@ function extractLastChars(text, n) {
   return [...text].slice(-n).join("");
 }
 function buildFrontmatter(vals, cfg) {
-  const timeStr = cfg.moment(vals.timestampMs).format(cfg.timeFormat);
-  return [
-    `${cfg.timestampAttr}: ${timeStr}`,
-    `${cfg.reviewAttr}: ${cfg.reviewDefault}`,
-    `${cfg.categoryAttr}: ${cfg.categoryDefault}`,
+  const lines = [
+    `${cfg.timestampProperty}: ${cfg.moment(vals.timestampMs).format(cfg.timeFormat)}`,
     `${cfg.sourceAttr}: ${vals.source}`
-  ].join("\n");
+  ];
+  const extra = cfg.extraProperties && cfg.extraProperties.length > 0 ? cfg.extraProperties : null;
+  if (extra) {
+    for (const { key, value } of extra) lines.push(`${key}: ${value}`);
+  } else {
+    if (cfg.reviewAttr && cfg.reviewDefault != null) lines.push(`${cfg.reviewAttr}: ${cfg.reviewDefault}`);
+    if (cfg.categoryAttr && cfg.categoryDefault != null) lines.push(`${cfg.categoryAttr}: ${cfg.categoryDefault}`);
+  }
+  return lines.join("\n");
+}
+function migrateExtraProperties(input) {
+  const extra = input.extraProperties;
+  if (Array.isArray(extra) && extra.length > 0) {
+    return extra.map((e) => {
+      var _a, _b;
+      const item = e;
+      return { key: String((_a = item == null ? void 0 : item.key) != null ? _a : ""), value: String((_b = item == null ? void 0 : item.value) != null ? _b : "") };
+    });
+  }
+  const out = [];
+  const reviewAttr = input.reviewAttr;
+  const reviewDefault = input.reviewDefault;
+  if (reviewAttr && reviewDefault != null) out.push({ key: String(reviewAttr), value: String(reviewDefault) });
+  const categoryAttr = input.categoryAttr;
+  const categoryDefault = input.categoryDefault;
+  if (categoryAttr && categoryDefault != null) out.push({ key: String(categoryAttr), value: String(categoryDefault) });
+  return out;
 }
 function stripFrontmatter(content) {
   if (content.startsWith("---")) {
@@ -137,25 +192,25 @@ function resolveSourceFolder(plugin) {
   if (raw === "/" || raw === "") return vaultRoot(plugin.app);
   const p = raw.replace(/^\/+|\/+$/g, "");
   const found = plugin.app.vault.getAbstractFileByPath(p);
-  return found instanceof import_obsidian.TFolder ? found : vaultRoot(plugin.app);
+  return found instanceof import_obsidian2.TFolder ? found : vaultRoot(plugin.app);
 }
 function vaultRoot(app) {
   var _a;
   const vault = app.vault;
   if (typeof vault.getRoot === "function") {
     const r = vault.getRoot();
-    if (r instanceof import_obsidian.TFolder) return r;
+    if (r instanceof import_obsidian2.TFolder) return r;
   }
   const byEmpty = app.vault.getAbstractFileByPath("");
-  return byEmpty instanceof import_obsidian.TFolder ? byEmpty : (_a = vault.getRoot) == null ? void 0 : _a.call(vault);
+  return byEmpty instanceof import_obsidian2.TFolder ? byEmpty : (_a = vault.getRoot) == null ? void 0 : _a.call(vault);
 }
 function getMarkdownFilesInFolder(folder) {
   const result = [];
   const visit = (f) => {
     for (const child of f.children) {
-      if (child instanceof import_obsidian.TFile && child.extension === "md") {
+      if (child instanceof import_obsidian2.TFile && child.extension === "md") {
         result.push(child);
-      } else if (child instanceof import_obsidian.TFolder) {
+      } else if (child instanceof import_obsidian2.TFolder) {
         visit(child);
       }
     }
@@ -171,13 +226,15 @@ function countRecentFiles(plugin) {
     frontmatter: frontmatterOf(plugin.app, file),
     ctimeMs: file.stat.ctime
   }));
-  return countRecent(items, {
+  const count = countRecent(items, {
     moment: window.moment,
     timeAttr: plugin.settings.timeAttr || "",
     formats: formatsFor(plugin),
     nowMs: Date.now(),
     days: plugin.settings.recentDays
   });
+  new import_obsidian2.Notice(`\u6E90\u6587\u4EF6\u5939\u6700\u8FD1 ${plugin.settings.recentDays} \u5929\u5171\u6709 ${count} \u4E2A\u6587\u4EF6`);
+  return count;
 }
 function joinOutputPath(folder, name) {
   const raw = (folder || "/").trim();
@@ -200,7 +257,7 @@ async function outputLatestContent(plugin) {
   const folder = resolveSourceFolder(plugin);
   const files = getMarkdownFilesInFolder(folder);
   if (files.length === 0) {
-    new import_obsidian.Notice("\u6E90\u6587\u4EF6\u5939\u4E2D\u6CA1\u6709\u53EF\u7528\u7684 Markdown \u6587\u4EF6");
+    new import_obsidian2.Notice("\u6E90\u6587\u4EF6\u5939\u4E2D\u6CA1\u6709\u53EF\u7528\u7684 Markdown \u6587\u4EF6");
     return "";
   }
   const formats = formatsFor(plugin);
@@ -222,14 +279,15 @@ async function outputLatestContent(plugin) {
   const frontmatter = buildFrontmatter(
     { source: latest.path, timestampMs: now.valueOf() },
     {
-      timestampAttr: plugin.settings.timestampAttr,
+      timestampProperty: plugin.settings.timestampProperty,
+      sourceAttr: plugin.settings.sourceAttr || "source",
+      moment: window.moment,
+      timeFormat: plugin.settings.timeFormat,
+      extraProperties: plugin.settings.extraProperties,
       reviewAttr: plugin.settings.reviewAttr,
       reviewDefault: plugin.settings.reviewDefault,
       categoryAttr: plugin.settings.categoryAttr,
-      categoryDefault: plugin.settings.categoryDefault,
-      sourceAttr: plugin.settings.sourceAttr,
-      moment: window.moment,
-      timeFormat: plugin.settings.timeFormat
+      categoryDefault: plugin.settings.categoryDefault
     }
   );
   const fileName = `${latest.basename}-\u6700\u65B0\u5185\u5BB9-${now.valueOf()}.md`;
@@ -239,7 +297,7 @@ async function outputLatestContent(plugin) {
 ${frontmatter}
 ---
 ${last100}`);
-  new import_obsidian.Notice(`\u5DF2\u8F93\u51FA\uFF1A${outPath}`);
+  new import_obsidian2.Notice(`\u5DF2\u8F93\u51FA\uFF1A${outPath}`);
   return outPath;
 }
 function mapHttpError(status) {
@@ -253,12 +311,12 @@ async function fetchModelList(apiKey, baseUrl) {
   const key = (apiKey || "").trim();
   if (!key) {
     const message = "\u8BF7\u5148\u586B\u5199 API Key";
-    new import_obsidian.Notice(message);
+    new import_obsidian2.Notice(message);
     return { ok: false, modelIds: [], message };
   }
   const base = (baseUrl || "https://api.deepseek.com").trim().replace(/\/+$/, "");
   try {
-    const res = await (0, import_obsidian.requestUrl)({
+    const res = await (0, import_obsidian2.requestUrl)({
       url: `${base}/models`,
       method: "GET",
       headers: { Authorization: `Bearer ${key}` },
@@ -269,89 +327,36 @@ async function fetchModelList(apiKey, baseUrl) {
       const data = body == null ? void 0 : body.data;
       const modelIds = Array.isArray(data) ? data.map((m) => m && typeof m.id === "string" ? m.id : "").filter((x) => x.length > 0) : [];
       const message2 = modelIds.length > 0 ? `\u6210\u529F\u83B7\u53D6 ${modelIds.length} \u4E2A\u6A21\u578B\uFF1A${modelIds[0]}` : "\u672A\u8FD4\u56DE\u4EFB\u4F55\u6A21\u578B";
-      new import_obsidian.Notice(message2);
+      new import_obsidian2.Notice(message2);
       return { ok: true, modelIds, message: message2 };
     }
     const detail = bodySnippet(body);
     const message = detail ? `${mapHttpError(res.status)}\uFF08HTTP ${res.status}\uFF09\uFF1A${detail}` : `${mapHttpError(res.status)}\uFF08HTTP ${res.status}\uFF09`;
-    new import_obsidian.Notice(message);
+    new import_obsidian2.Notice(message);
     return { ok: false, modelIds: [], message };
   } catch (e) {
     const message = "\u7F51\u7EDC\u9519\u8BEF\uFF1A" + ((_a = e == null ? void 0 : e.message) != null ? _a : "\u672A\u77E5\u9519\u8BEF");
-    new import_obsidian.Notice(message);
+    new import_obsidian2.Notice(message);
     return { ok: false, modelIds: [], message };
   }
 }
 
-// src/commands.ts
-function registerCommands(plugin) {
-  plugin.addCommand({
-    id: "count-recent-files",
-    name: "\u7EDF\u8BA1\u6700\u8FD1\u6587\u4EF6\u6570",
-    callback: () => {
-      const count = countRecentFiles(plugin);
-      new import_obsidian2.Notice(`\u6E90\u6587\u4EF6\u5939\u6700\u8FD1 ${plugin.settings.recentDays} \u5929\u5171\u6709 ${count} \u4E2A\u6587\u4EF6`);
-    }
-  });
-  plugin.addCommand({
-    id: "output-latest-content",
-    name: "\u8F93\u51FA\u6700\u65B0\u5185\u5BB9\u6D4B\u8BD5",
-    callback: async () => {
-      await outputLatestContent(plugin);
-    }
-  });
+// src/settingsTab.ts
+function renderSettings(app, plugin, containerEl) {
+  new SettingsRenderer(app, plugin).render(containerEl);
 }
-
-// src/settingsTab.ts
-var import_obsidian4 = require("obsidian");
-
-// src/folderSuggest.ts
-var import_obsidian3 = require("obsidian");
-var FolderSuggest = class extends import_obsidian3.AbstractInputSuggest {
-  constructor(app, inputEl) {
-    super(app, inputEl);
-    this.inputEl = inputEl;
-  }
-  getSuggestions(query) {
-    const folders = [];
-    const lower = (query || "").toLowerCase();
-    const visit = (f) => {
-      folders.push(f);
-      f.children.forEach((c) => {
-        if (c instanceof import_obsidian3.TFolder) visit(c);
-      });
-    };
-    this.app.vault.getAllLoadedFiles().forEach((f) => {
-      if (f instanceof import_obsidian3.TFolder) visit(f);
-    });
-    return folders.filter((f) => f.path.toLowerCase().includes(lower)).slice(0, 50);
-  }
-  renderSuggestion(folder, el) {
-    el.setText(folder.path || "/");
-  }
-  selectSuggestion(folder) {
-    this.inputEl.value = folder.path || "/";
-    this.inputEl.trigger("input");
-    this.close();
-  }
-};
-
-// src/settingsTab.ts
-var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab {
+var SettingsRenderer = class {
   constructor(app, plugin) {
-    super(app, plugin);
     this.activeTab = "connection";
     this.modelDropdown = null;
     this.groupEls = [];
     this.groupCollapsed = /* @__PURE__ */ new Map();
+    this.app = app;
     this.plugin = plugin;
     this.currentModels = Array.isArray(plugin.settings.models) ? plugin.settings.models.slice() : [];
   }
-  // -------------------------------------------------------------------------
-  // rendering
-  // -------------------------------------------------------------------------
-  display() {
-    const { containerEl } = this;
+  render(containerEl) {
+    this.containerEl = containerEl;
     containerEl.empty();
     this.modelDropdown = null;
     this.groupEls = [];
@@ -360,13 +365,16 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     this.renderSearch(containerEl);
     this.renderActiveTab(containerEl.createDiv({ cls: "ks-tab-content" }));
   }
-  /** Render the top tab bar: one button per tab, active state + click to switch. */
+  // -------------------------------------------------------------------------
+  // tab bar / search / active tab
+  // -------------------------------------------------------------------------
   renderTabs(containerEl) {
     const tabs = [
       { id: "connection", label: "\u8FDE\u63A5" },
       { id: "folder", label: "\u6587\u4EF6\u5939" },
       { id: "time", label: "\u65F6\u95F4" },
-      { id: "output", label: "\u8F93\u51FA\u5C5E\u6027" }
+      { id: "output", label: "\u8F93\u51FA\u5C5E\u6027" },
+      { id: "test", label: "\u6D4B\u8BD5\u5DE5\u5177" }
     ];
     const tabsEl = containerEl.createDiv({ cls: "ks-tabs" });
     for (const tab of tabs) {
@@ -376,11 +384,10 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
       if (this.activeTab === tab.id) tabEl.addClass("is-active");
       tabEl.addEventListener("click", () => {
         this.activeTab = tab.id;
-        this.display();
+        this.render(this.containerEl);
       });
     }
   }
-  /** Render the settings belonging to the active tab (all groups of that tab). */
   renderActiveTab(containerEl) {
     switch (this.activeTab) {
       case "connection":
@@ -396,12 +403,15 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
       case "output":
         this.renderOutputGroup(containerEl);
         break;
+      case "test":
+        this.renderTestGroup(containerEl);
+        break;
     }
   }
   renderSearch(containerEl) {
     const wrap = containerEl.createDiv({ cls: "ks-search" });
     const iconEl = wrap.createSpan({ cls: "ks-search-icon" });
-    (0, import_obsidian4.setIcon)(iconEl, "search");
+    (0, import_obsidian3.setIcon)(iconEl, "search");
     const input = wrap.createEl("input", { cls: "ks-search-input" });
     input.type = "text";
     input.placeholder = "\u641C\u7D22\u8BBE\u7F6E...";
@@ -411,7 +421,7 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     const groupEl = containerEl.createDiv({ cls: "ks-group" });
     const headingEl = groupEl.createDiv({ cls: "ks-group-heading" });
     const iconEl = headingEl.createSpan({ cls: "ks-group-icon" });
-    (0, import_obsidian4.setIcon)(iconEl, collapsed ? "chevron-right" : "chevron-down");
+    (0, import_obsidian3.setIcon)(iconEl, collapsed ? "chevron-right" : "chevron-down");
     headingEl.createSpan({ cls: "ks-group-title", text: title });
     const bodyEl = groupEl.createDiv({ cls: "ks-group-body" });
     if (collapsed) groupEl.addClass("ks-collapsed");
@@ -421,7 +431,7 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
       const isCollapsed = groupEl.hasClass("ks-collapsed");
       groupEl.toggleClass("ks-collapsed", !isCollapsed);
       this.groupCollapsed.set(groupEl, !isCollapsed);
-      (0, import_obsidian4.setIcon)(iconEl, isCollapsed ? "chevron-down" : "chevron-right");
+      (0, import_obsidian3.setIcon)(iconEl, isCollapsed ? "chevron-down" : "chevron-right");
     });
     return bodyEl;
   }
@@ -432,10 +442,6 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     this.plugin.settings[key] = value;
     void this.plugin.saveSettings();
   }
-  // -------------------------------------------------------------------------
-  // filter / collapse
-  // -------------------------------------------------------------------------
-  /** Filter the setting rows of the active tab; expand groups while searching. */
   filterSettings(query) {
     const q = (query || "").trim().toLowerCase();
     const content = this.containerEl.querySelector(".ks-tab-content");
@@ -456,22 +462,22 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     }
   }
   // -------------------------------------------------------------------------
-  // groups
+  // connection
   // -------------------------------------------------------------------------
   renderConnectionGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u8FDE\u63A5", false);
-    const apiKey = new import_obsidian4.Setting(bodyEl).setName("API Key").setDesc("DeepSeek \u6216\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684 API Key\uFF0C\u7528\u4E8E\u83B7\u53D6\u6A21\u578B\u5217\u8868\u3002").addText((text) => {
+    const apiKey = new import_obsidian3.Setting(bodyEl).setName("API Key").setDesc("DeepSeek \u6216\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684 API Key\uFF0C\u7528\u4E8E\u83B7\u53D6\u6A21\u578B\u5217\u8868\u3002").addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("\u7C98\u8D34\u4F60\u7684 API Key").setValue(this.plugin.settings.apiKey).onChange((value) => this.updateSetting("apiKey", value));
     });
     this.markSearchable(apiKey, "\u8FDE\u63A5 api key API Key \u5BC6\u94A5");
-    const test = new import_obsidian4.Setting(bodyEl).setName("\u6D4B\u8BD5\u5E76\u83B7\u53D6\u6A21\u578B").setDesc("\u8C03\u7528\u670D\u52A1\u5546 GET /models \u63A5\u53E3\uFF0C\u5E76\u586B\u5145\u4E0B\u65B9\u6A21\u578B\u4E0B\u62C9\u6846\u3002").addButton(
+    const test = new import_obsidian3.Setting(bodyEl).setName("\u6D4B\u8BD5\u5E76\u83B7\u53D6\u6A21\u578B").setDesc("\u8C03\u7528\u670D\u52A1\u5546 GET /models \u63A5\u53E3\uFF0C\u5E76\u586B\u5145\u4E0B\u65B9\u6A21\u578B\u4E0B\u62C9\u6846\u3002").addButton(
       (btn) => btn.setButtonText("\u6D4B\u8BD5\u5E76\u83B7\u53D6\u6A21\u578B").setCta().onClick(async () => {
         await this.refreshModels();
       })
     );
     this.markSearchable(test, "\u8FDE\u63A5 \u6D4B\u8BD5 \u83B7\u53D6 \u6A21\u578B \u5237\u65B0");
-    const model = new import_obsidian4.Setting(bodyEl).setName("\u9ED8\u8BA4\u6A21\u578B").setDesc("\u53EF\u7528\u7684\u6A21\u578B\u5217\u8868\uFF08\u6765\u81EA\u670D\u52A1\u5546 /models \u63A5\u53E3\uFF09\u3002").addDropdown((drop) => {
+    const model = new import_obsidian3.Setting(bodyEl).setName("\u9ED8\u8BA4\u6A21\u578B").setDesc("\u53EF\u7528\u7684\u6A21\u578B\u5217\u8868\uFF08\u6765\u81EA\u670D\u52A1\u5546 /models \u63A5\u53E3\uFF09\u3002").addDropdown((drop) => {
       this.modelDropdown = drop;
       this.populateModelDropdown(drop);
       drop.onChange((value) => this.updateSetting("model", value));
@@ -480,44 +486,50 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
   }
   renderCustomProviderGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546", true);
-    const baseUrl = new import_obsidian4.Setting(bodyEl).setName("Base URL").setDesc("OpenAI \u517C\u5BB9\u670D\u52A1\u7684\u57FA\u7840\u5730\u5740\uFF0C\u9ED8\u8BA4 DeepSeek\u3002").addText(
+    const baseUrl = new import_obsidian3.Setting(bodyEl).setName("Base URL").setDesc("OpenAI \u517C\u5BB9\u670D\u52A1\u7684\u57FA\u7840\u5730\u5740\uFF0C\u9ED8\u8BA4 DeepSeek\u3002").addText(
       (text) => text.setPlaceholder("https://api.deepseek.com").setValue(this.plugin.settings.baseUrl).onChange((value) => this.updateSetting("baseUrl", value))
     );
     this.markSearchable(baseUrl, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546 base_url \u5730\u5740 base url");
-    const customApiKey = new import_obsidian4.Setting(bodyEl).setName("API Key").setDesc("\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684 API Key\uFF08\u9884\u7559\uFF09\u3002").addText((text) => {
+    const customApiKey = new import_obsidian3.Setting(bodyEl).setName("API Key").setDesc("\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684 API Key\uFF08\u9884\u7559\uFF09\u3002").addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("\u7C98\u8D34\u4F60\u7684 API Key").setValue(this.plugin.settings.customApiKey).onChange((value) => this.updateSetting("customApiKey", value));
     });
     this.markSearchable(customApiKey, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546 api_key \u5BC6\u94A5");
-    const customModel = new import_obsidian4.Setting(bodyEl).setName("\u6A21\u578B").setDesc("\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684\u6A21\u578B ID\uFF08\u9884\u7559\uFF09\u3002").addText(
+    const customModel = new import_obsidian3.Setting(bodyEl).setName("\u6A21\u578B").setDesc("\u81EA\u5B9A\u4E49\u670D\u52A1\u5546\u7684\u6A21\u578B ID\uFF08\u9884\u7559\uFF09\u3002").addText(
       (text) => text.setPlaceholder("model-id").setValue(this.plugin.settings.customModel).onChange((value) => this.updateSetting("customModel", value))
     );
     this.markSearchable(customModel, "\u81EA\u5B9A\u4E49\u670D\u52A1\u5546 model \u6A21\u578B");
   }
+  // -------------------------------------------------------------------------
+  // folder
+  // -------------------------------------------------------------------------
   renderFolderGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u6587\u4EF6\u5939", false);
-    const source = new import_obsidian4.Setting(bodyEl).setName("\u6E90\u6587\u4EF6\u5939").setDesc("\u7EDF\u8BA1\u6700\u8FD1\u6587\u4EF6\u6570\u65F6\u626B\u63CF\u7684\u6587\u4EF6\u5939\u3002").addText((text) => {
+    const source = new import_obsidian3.Setting(bodyEl).setName("\u6E90\u6587\u4EF6\u5939").setDesc("\u7EDF\u8BA1\u6700\u8FD1\u6587\u4EF6\u6570\u65F6\u626B\u63CF\u7684\u6587\u4EF6\u5939\u3002").addText((text) => {
       text.setPlaceholder("/").setValue(this.plugin.settings.sourceFolder).onChange((value) => this.updateSetting("sourceFolder", value));
       new FolderSuggest(this.app, text.inputEl);
     });
     this.markSearchable(source, "\u6587\u4EF6\u5939 \u6E90\u6587\u4EF6\u5939 \u8F93\u5165 \u76EE\u5F55");
-    const output = new import_obsidian4.Setting(bodyEl).setName("\u8F93\u51FA\u6587\u4EF6\u5939").setDesc("\u8F93\u51FA\u6700\u65B0\u5185\u5BB9\u6D4B\u8BD5\u751F\u6210\u6587\u4EF6\u7684\u6587\u4EF6\u5939\u3002").addText((text) => {
+    const output = new import_obsidian3.Setting(bodyEl).setName("\u8F93\u51FA\u6587\u4EF6\u5939").setDesc("\u8F93\u51FA\u6700\u65B0\u5185\u5BB9\u6D4B\u8BD5\u751F\u6210\u6587\u4EF6\u7684\u6587\u4EF6\u5939\u3002").addText((text) => {
       text.setPlaceholder("/").setValue(this.plugin.settings.outputFolder).onChange((value) => this.updateSetting("outputFolder", value));
       new FolderSuggest(this.app, text.inputEl);
     });
     this.markSearchable(output, "\u6587\u4EF6\u5939 \u8F93\u51FA\u6587\u4EF6\u5939 \u8F93\u5165 \u76EE\u5F55");
   }
+  // -------------------------------------------------------------------------
+  // time
+  // -------------------------------------------------------------------------
   renderTimeGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u65F6\u95F4", false);
-    const timeProp = new import_obsidian4.Setting(bodyEl).setName("\u65F6\u95F4\u5C5E\u6027\u540D").setDesc("\u8BFB\u53D6\u6587\u4EF6\u65F6\u95F4\u4F7F\u7528\u7684 frontmatter \u5C5E\u6027\u540D\uFF1B\u7559\u7A7A\u5219\u4F7F\u7528\u6587\u4EF6\u521B\u5EFA\u65F6\u95F4\u3002").addText(
+    const timeProp = new import_obsidian3.Setting(bodyEl).setName("\u65F6\u95F4\u5C5E\u6027\u540D").setDesc("\u8BFB\u53D6\u6587\u4EF6\u65F6\u95F4\u4F7F\u7528\u7684 frontmatter \u5C5E\u6027\u540D\uFF1B\u7559\u7A7A\u5219\u4F7F\u7528\u6587\u4EF6\u521B\u5EFA\u65F6\u95F4\u3002").addText(
       (text) => text.setPlaceholder("\u5982\uFF1Adate").setValue(this.plugin.settings.timeAttr).onChange((value) => this.updateSetting("timeAttr", value))
     );
     this.markSearchable(timeProp, "\u65F6\u95F4 \u65F6\u95F4\u5C5E\u6027\u540D \u5C5E\u6027 \u5B57\u6BB5");
-    const timeFormat = new import_obsidian4.Setting(bodyEl).setName("\u65F6\u95F4\u6233\u683C\u5F0F").setDesc("moment \u517C\u5BB9\u7684\u65F6\u95F4\u683C\u5F0F\uFF0C\u4F8B\u5982 YYYY-MM-DD\u3002").addText(
+    const timeFormat = new import_obsidian3.Setting(bodyEl).setName("\u65F6\u95F4\u6233\u683C\u5F0F").setDesc("moment \u517C\u5BB9\u7684\u65F6\u95F4\u683C\u5F0F\uFF0C\u4F8B\u5982 YYYY-MM-DD\u3002").addText(
       (text) => text.setPlaceholder("YYYY-MM-DD").setValue(this.plugin.settings.timeFormat).onChange((value) => this.updateSetting("timeFormat", value))
     );
     this.markSearchable(timeFormat, "\u65F6\u95F4 \u65F6\u95F4\u6233\u683C\u5F0F \u65F6\u95F4\u683C\u5F0F");
-    const recentDays = new import_obsidian4.Setting(bodyEl).setName("\u6700\u8FD1 N \u5929").setDesc("\u7EDF\u8BA1\u6700\u8FD1\u6587\u4EF6\u6570\u65F6\u56DE\u770B\u7684\u5929\u6570\u3002").addText((text) => {
+    const recentDays = new import_obsidian3.Setting(bodyEl).setName("\u6700\u8FD1 N \u5929").setDesc("\u7EDF\u8BA1\u6700\u8FD1\u6587\u4EF6\u6570\u65F6\u56DE\u770B\u7684\u5929\u6570\u3002").addText((text) => {
       text.inputEl.type = "number";
       text.setPlaceholder("7").setValue(String(this.plugin.settings.recentDays)).onChange((value) => {
         const n = parseInt(value, 10);
@@ -526,32 +538,75 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     });
     this.markSearchable(recentDays, "\u65F6\u95F4 \u6700\u8FD1N\u5929 \u5929\u6570 \u6700\u8FD1");
   }
+  // -------------------------------------------------------------------------
+  // output (fixed timestamp/source rows + dynamic key→default-value rows)
+  // -------------------------------------------------------------------------
   renderOutputGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u8F93\u51FA\u5C5E\u6027", false);
-    const reviewProp = new import_obsidian4.Setting(bodyEl).setName("\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u540D\u3002").addText(
-      (text) => text.setPlaceholder("approved").setValue(this.plugin.settings.reviewAttr).onChange((value) => this.updateSetting("reviewAttr", value))
+    const timestampProp = new import_obsidian3.Setting(bodyEl).setName("\u65F6\u95F4\u6233\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u5F53\u524D\u65F6\u95F4\u6233\u5C5E\u6027\u540D\uFF1B\u503C\u6309\u300C\u65F6\u95F4\u300D\u9875\u7684\u65F6\u95F4\u6233\u683C\u5F0F\u751F\u6210\u3002").addText(
+      (text) => text.setPlaceholder("created").setValue(this.plugin.settings.timestampProperty).onChange((value) => this.updateSetting("timestampProperty", value))
     );
-    this.markSearchable(reviewProp, "\u8F93\u51FA\u5C5E\u6027 \u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u540D \u72B6\u6001");
-    const reviewVal = new import_obsidian4.Setting(bodyEl).setName("\u5BA1\u6838\u72B6\u6001\u9ED8\u8BA4\u503C").setDesc("\u5199\u5165\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u7684\u9ED8\u8BA4\u503C\u3002").addText(
-      (text) => text.setValue(this.plugin.settings.reviewDefault).onChange((value) => this.updateSetting("reviewDefault", value))
-    );
-    this.markSearchable(reviewVal, "\u8F93\u51FA\u5C5E\u6027 \u5BA1\u6838\u72B6\u6001\u9ED8\u8BA4\u503C");
-    const categoryProp = new import_obsidian4.Setting(bodyEl).setName("\u5206\u7C7B\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u5206\u7C7B\u5C5E\u6027\u540D\u3002").addText(
-      (text) => text.setPlaceholder("category").setValue(this.plugin.settings.categoryAttr).onChange((value) => this.updateSetting("categoryAttr", value))
-    );
-    this.markSearchable(categoryProp, "\u8F93\u51FA\u5C5E\u6027 \u5206\u7C7B\u5C5E\u6027\u540D \u5206\u7C7B");
-    const categoryVal = new import_obsidian4.Setting(bodyEl).setName("\u5206\u7C7B\u9ED8\u8BA4\u503C").setDesc("\u5199\u5165\u5206\u7C7B\u5C5E\u6027\u7684\u9ED8\u8BA4\u503C\u3002").addText(
-      (text) => text.setValue(this.plugin.settings.categoryDefault).onChange((value) => this.updateSetting("categoryDefault", value))
-    );
-    this.markSearchable(categoryVal, "\u8F93\u51FA\u5C5E\u6027 \u5206\u7C7B\u9ED8\u8BA4\u503C");
-    const timestampProp = new import_obsidian4.Setting(bodyEl).setName("\u65F6\u95F4\u6233\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u5F53\u524D\u65F6\u95F4\u6233\u5C5E\u6027\u540D\u3002").addText(
-      (text) => text.setPlaceholder("created").setValue(this.plugin.settings.timestampAttr).onChange((value) => this.updateSetting("timestampAttr", value))
-    );
-    this.markSearchable(timestampProp, "\u8F93\u51FA\u5C5E\u6027 \u65F6\u95F4\u6233\u5C5E\u6027\u540D created");
-    const sourceAttr = new import_obsidian4.Setting(bodyEl).setName("\u6765\u6E90\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u6765\u6E90\u8DEF\u5F84\u5C5E\u6027\u540D\u3002").addText(
+    this.markSearchable(timestampProp, "\u8F93\u51FA\u5C5E\u6027 \u65F6\u95F4\u6233\u5C5E\u6027\u540D created \u65F6\u95F4\u6233");
+    const sourceAttr = new import_obsidian3.Setting(bodyEl).setName("\u6765\u6E90\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u6765\u6E90\u8DEF\u5F84\u5C5E\u6027\u540D\u3002").addText(
       (text) => text.setPlaceholder("source").setValue(this.plugin.settings.sourceAttr).onChange((value) => this.updateSetting("sourceAttr", value))
     );
-    this.markSearchable(sourceAttr, "\u8F93\u51FA\u5C5E\u6027 \u6765\u6E90\u5C5E\u6027\u540D source");
+    this.markSearchable(sourceAttr, "\u8F93\u51FA\u5C5E\u6027 \u6765\u6E90\u5C5E\u6027\u540D source \u6765\u6E90");
+    const extraEl = bodyEl.createDiv({ cls: "ks-extra-props" });
+    this.renderExtraProperties(extraEl);
+    const addBtn = new import_obsidian3.Setting(bodyEl).setName("").setDesc("").addButton(
+      (btn) => btn.setButtonText("+ \u6DFB\u52A0\u5C5E\u6027").onClick(() => {
+        this.plugin.settings.extraProperties.push({ key: "", value: "" });
+        void this.plugin.saveSettings();
+        this.renderExtraProperties(extraEl);
+      })
+    );
+    this.markSearchable(addBtn, "\u8F93\u51FA\u5C5E\u6027 \u6DFB\u52A0\u5C5E\u6027 \u589E\u52A0 \u6DFB\u52A0");
+  }
+  /** Render each extra property as a row: key input, value input, delete button. */
+  renderExtraProperties(containerEl) {
+    containerEl.empty();
+    const list = this.plugin.settings.extraProperties || [];
+    list.forEach((entry, index) => {
+      const row = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addText(
+        (text) => text.setPlaceholder("\u5C5E\u6027\u540D").setValue(entry.key).onChange((value) => {
+          entry.key = value;
+          void this.plugin.saveSettings();
+        })
+      ).addText(
+        (text) => text.setPlaceholder("\u9ED8\u8BA4\u503C").setValue(entry.value).onChange((value) => {
+          entry.value = value;
+          void this.plugin.saveSettings();
+        })
+      ).addButton(
+        (btn) => btn.setIcon("trash-2").setTooltip("\u5220\u9664").onClick(() => {
+          const a = this.plugin.settings.extraProperties;
+          a.splice(index, 1);
+          void this.plugin.saveSettings();
+          this.renderExtraProperties(containerEl);
+        })
+      );
+      row.settingEl.addClass("ks-extra-props-row");
+      this.markSearchable(row, `\u8F93\u51FA\u5C5E\u6027 ${entry.key} ${entry.value}`);
+    });
+  }
+  // -------------------------------------------------------------------------
+  // test tools (execute the two commands without the command palette)
+  // -------------------------------------------------------------------------
+  renderTestGroup(containerEl) {
+    const bodyEl = this.createGroup(containerEl, "\u6D4B\u8BD5\u5DE5\u5177", false);
+    const count = new import_obsidian3.Setting(bodyEl).setName("\u7EDF\u8BA1\u6700\u8FD1\u6587\u4EF6\u6570").setDesc("\u626B\u63CF\u6E90\u6587\u4EF6\u5939\uFF0C\u7EDF\u8BA1\u6700\u8FD1 N \u5929\u5185\u7684 Markdown \u6587\u4EF6\u6570\u3002").addButton(
+      (btn) => btn.setButtonText("\u7EDF\u8BA1\u6700\u8FD1\u6587\u4EF6\u6570").setCta().onClick(() => {
+        const n = countRecentFiles(this.plugin);
+        new import_obsidian3.Notice(`\u6E90\u6587\u4EF6\u5939\u6700\u8FD1 ${this.plugin.settings.recentDays} \u5929\u5171\u6709 ${n} \u4E2A\u6587\u4EF6`);
+      })
+    );
+    this.markSearchable(count, "\u6D4B\u8BD5 \u7EDF\u8BA1 \u6700\u8FD1\u6587\u4EF6\u6570 \u7EDF\u8BA1\u6700\u8FD1 \u7EDF\u8BA1");
+    const output = new import_obsidian3.Setting(bodyEl).setName("\u8F93\u51FA\u6700\u65B0\u5185\u5BB9\u6D4B\u8BD5").setDesc("\u53D6\u6E90\u6587\u4EF6\u5939\u65F6\u95F4\u6700\u65B0\u7684\u6587\u4EF6\uFF0C\u5C06\u5176\u6B63\u6587\u6700\u540E 100 \u5B57\u7B26\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u5939\u3002").addButton(
+      (btn) => btn.setButtonText("\u8F93\u51FA\u6700\u65B0\u5185\u5BB9\u6D4B\u8BD5").setCta().onClick(async () => {
+        await outputLatestContent(this.plugin);
+      })
+    );
+    this.markSearchable(output, "\u6D4B\u8BD5 \u8F93\u51FA \u6700\u65B0\u5185\u5BB9 \u8F93\u51FA\u6700\u65B0\u5185\u5BB9 \u8F93\u51FA");
   }
   // -------------------------------------------------------------------------
   // model fetching
@@ -584,28 +639,96 @@ var KnowledgeSystemSettingTab = class extends import_obsidian4.PluginSettingTab 
     }
   }
 };
+var KnowledgeSystemSettingTab = class extends import_obsidian3.PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+  display() {
+    renderSettings(this.app, this.plugin, this.containerEl);
+  }
+};
+
+// src/settingsView.ts
+var import_obsidian4 = require("obsidian");
+var VIEW_TYPE_KS = "knowledge-system-settings-view";
+var KnowledgeSettingsView = class extends import_obsidian4.ItemView {
+  constructor(plugin, leaf) {
+    super(leaf);
+    this.plugin = plugin;
+  }
+  getViewType() {
+    return VIEW_TYPE_KS;
+  }
+  getIcon() {
+    return "gear";
+  }
+  getDisplayText() {
+    return "Knowledge System";
+  }
+  async onOpen() {
+    const container = this.contentEl;
+    container.empty();
+    container.addClass("ks-view");
+    renderSettings(this.app, this.plugin, container);
+  }
+  async onClose() {
+    this.contentEl.empty();
+  }
+};
 
 // src/main.ts
-var KnowledgeSystemPlugin2 = class extends import_obsidian5.Plugin {
+var KnowledgeSystemPlugin = class extends import_obsidian5.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
   }
   async onload() {
     await this.loadSettings();
-    registerCommands(this);
     this.addSettingTab(new KnowledgeSystemSettingTab(this.app, this));
+    this.registerView(VIEW_TYPE_KS, (leaf) => new KnowledgeSettingsView(this, leaf));
+    this.addCommand({
+      id: "show-knowledge-system-settings-view",
+      name: "Show Knowledge System settings view",
+      callback: () => {
+        void this.activateView();
+      }
+    });
+  }
+  onunload() {
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
+  }
+  /** Open the standalone settings view in a new tab leaf. */
+  async activateView() {
+    if (typeof this.app.workspace.detachLeavesOfType === "function") {
+      this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
+    }
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
   }
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign(
+      {},
+      DEFAULT_SETTINGS,
+      await this.loadData()
+    );
+    this.migrateLegacyOutputProps();
+  }
+  /**
+   * Move the legacy `reviewAttr`/`categoryAttr` output attributes into the new
+   * `extraProperties` list the first time the plugin loads (only when the
+   * dynamic list is empty). The old fields are kept for read compat.
+   */
+  migrateLegacyOutputProps() {
+    this.settings.extraProperties = migrateExtraProperties(this.settings);
   }
   async saveSettings() {
     await this.saveData(this.settings);
   }
   /**
-   * Fetch the provider's model list (GET /models). Exposed as a public method
-   * so the settings tab button and the acceptance harness both call it. On
-   * success the returned ids are also persisted onto the settings.
+   * Fetch the provider's model list (GET /models). Exposed publicly so the
+   * settings tab button and the harness both call it. On success the returned
+   * ids are persisted onto the settings.
    */
   async fetchModels(apiKey, baseUrl) {
     const result = await fetchModelList(

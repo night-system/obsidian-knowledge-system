@@ -1,21 +1,37 @@
-import { App, DropdownComponent, PluginSettingTab, Setting, setIcon } from 'obsidian';
+import { App, DropdownComponent, Notice, PluginSettingTab, Setting, setIcon } from 'obsidian';
 import { KnowledgeSystemSettings } from './settings';
 import { FolderSuggest } from './folderSuggest';
+import { countRecentFiles, outputLatestContent } from './core';
 import type KnowledgeSystemPlugin from './main';
 
-/** The settings tabs. Order matches fast-note-sync's tab header pattern. */
-type TabId = 'connection' | 'folder' | 'time' | 'output';
+/** The settings tabs; `test` is the 5th (test tools). */
+export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'test';
 
 /**
- * Settings tab. A top tab bar (连接 / 文件夹 / 时间 / 输出属性) is layered on top
- * of the existing grouped, collapsible sections (style-settings-inspired but on
- * Obsidian's native `Setting` controls). A search box filters the rows of the
- * currently active tab. The glyphs are Lucide icons — no emoji — so they follow
- * the active theme.
+ * Render the full settings UI (tab bar + search + active tab) into
+ * `containerEl`. Shared by the plugin settings tab (Obsidian settings) and the
+ * standalone settings view (workspace leaf). Creates a fresh renderer so the
+ * tab and view can each be opened independently.
  */
-export class KnowledgeSystemSettingTab extends PluginSettingTab {
-  plugin: KnowledgeSystemPlugin;
+export function renderSettings(
+  app: App,
+  plugin: KnowledgeSystemPlugin,
+  containerEl: HTMLElement
+): void {
+  new SettingsRenderer(app, plugin).render(containerEl);
+}
 
+/**
+ * Encapsulates the settings UI: a top tab bar (连接 / 文件夹 / 时间 / 输出属性 /
+ * 测试工具) over grouped, collapsible sections (style-settings-inspired but on
+ * Obsidian's native `Setting` controls), with a search box filtering the active
+ * tab's rows. All glyphs are Lucide icons — no emoji.
+ */
+class SettingsRenderer {
+  private app: App;
+  private plugin: KnowledgeSystemPlugin;
+
+  private containerEl: HTMLElement;
   private activeTab: TabId = 'connection';
   private modelDropdown: DropdownComponent | null = null;
   private currentModels: string[];
@@ -23,18 +39,13 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
   private groupCollapsed = new Map<HTMLElement, boolean>();
 
   constructor(app: App, plugin: KnowledgeSystemPlugin) {
-    super(app, plugin);
+    this.app = app;
     this.plugin = plugin;
-    // Persist the fetched model list so it survives tab switches / re-opens.
     this.currentModels = Array.isArray(plugin.settings.models) ? plugin.settings.models.slice() : [];
   }
 
-  // -------------------------------------------------------------------------
-  // rendering
-  // -------------------------------------------------------------------------
-
-  display(): void {
-    const { containerEl } = this;
+  render(containerEl: HTMLElement): void {
+    this.containerEl = containerEl;
     containerEl.empty();
 
     this.modelDropdown = null;
@@ -46,13 +57,17 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
     this.renderActiveTab(containerEl.createDiv({ cls: 'ks-tab-content' }));
   }
 
-  /** Render the top tab bar: one button per tab, active state + click to switch. */
+  // -------------------------------------------------------------------------
+  // tab bar / search / active tab
+  // -------------------------------------------------------------------------
+
   private renderTabs(containerEl: HTMLElement): void {
     const tabs: { id: TabId; label: string }[] = [
       { id: 'connection', label: '连接' },
       { id: 'folder', label: '文件夹' },
       { id: 'time', label: '时间' },
       { id: 'output', label: '输出属性' },
+      { id: 'test', label: '测试工具' },
     ];
 
     const tabsEl = containerEl.createDiv({ cls: 'ks-tabs' });
@@ -63,12 +78,11 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       if (this.activeTab === tab.id) tabEl.addClass('is-active');
       tabEl.addEventListener('click', () => {
         this.activeTab = tab.id;
-        this.display(); // re-render content for the new tab (fresh, empty search)
+        this.render(this.containerEl);
       });
     }
   }
 
-  /** Render the settings belonging to the active tab (all groups of that tab). */
   private renderActiveTab(containerEl: HTMLElement): void {
     switch (this.activeTab) {
       case 'connection':
@@ -84,6 +98,9 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       case 'output':
         this.renderOutputGroup(containerEl);
         break;
+      case 'test':
+        this.renderTestGroup(containerEl);
+        break;
     }
   }
 
@@ -97,11 +114,7 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
     input.addEventListener('input', () => this.filterSettings(input.value));
   }
 
-  private createGroup(
-    containerEl: HTMLElement,
-    title: string,
-    collapsed: boolean
-  ): HTMLElement {
+  private createGroup(containerEl: HTMLElement, title: string, collapsed: boolean): HTMLElement {
     const groupEl = containerEl.createDiv({ cls: 'ks-group' });
     const headingEl = groupEl.createDiv({ cls: 'ks-group-heading' });
     const iconEl = headingEl.createSpan({ cls: 'ks-group-icon' });
@@ -135,11 +148,6 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
     void this.plugin.saveSettings();
   }
 
-  // -------------------------------------------------------------------------
-  // filter / collapse
-  // -------------------------------------------------------------------------
-
-  /** Filter the setting rows of the active tab; expand groups while searching. */
   private filterSettings(query: string): void {
     const q = (query || '').trim().toLowerCase();
     const content = this.containerEl.querySelector('.ks-tab-content');
@@ -163,7 +171,7 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
   }
 
   // -------------------------------------------------------------------------
-  // groups
+  // connection
   // -------------------------------------------------------------------------
 
   private renderConnectionGroup(containerEl: HTMLElement): void {
@@ -240,6 +248,10 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
     this.markSearchable(customModel, '自定义服务商 model 模型');
   }
 
+  // -------------------------------------------------------------------------
+  // folder
+  // -------------------------------------------------------------------------
+
   private renderFolderGroup(containerEl: HTMLElement): void {
     const bodyEl = this.createGroup(containerEl, '文件夹', false);
 
@@ -267,6 +279,10 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       });
     this.markSearchable(output, '文件夹 输出文件夹 输入 目录');
   }
+
+  // -------------------------------------------------------------------------
+  // time
+  // -------------------------------------------------------------------------
 
   private renderTimeGroup(containerEl: HTMLElement): void {
     const bodyEl = this.createGroup(containerEl, '时间', false);
@@ -309,61 +325,23 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
     this.markSearchable(recentDays, '时间 最近N天 天数 最近');
   }
 
+  // -------------------------------------------------------------------------
+  // output (fixed timestamp/source rows + dynamic key→default-value rows)
+  // -------------------------------------------------------------------------
+
   private renderOutputGroup(containerEl: HTMLElement): void {
     const bodyEl = this.createGroup(containerEl, '输出属性', false);
 
-    const reviewProp = new Setting(bodyEl)
-      .setName('审核状态属性名')
-      .setDesc('写入输出文件的审核状态属性名。')
-      .addText((text) =>
-        text
-          .setPlaceholder('approved')
-          .setValue(this.plugin.settings.reviewAttr)
-          .onChange((value) => this.updateSetting('reviewAttr', value))
-      );
-    this.markSearchable(reviewProp, '输出属性 审核状态属性名 状态');
-
-    const reviewVal = new Setting(bodyEl)
-      .setName('审核状态默认值')
-      .setDesc('写入审核状态属性的默认值。')
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.reviewDefault)
-          .onChange((value) => this.updateSetting('reviewDefault', value))
-      );
-    this.markSearchable(reviewVal, '输出属性 审核状态默认值');
-
-    const categoryProp = new Setting(bodyEl)
-      .setName('分类属性名')
-      .setDesc('写入输出文件的分类属性名。')
-      .addText((text) =>
-        text
-          .setPlaceholder('category')
-          .setValue(this.plugin.settings.categoryAttr)
-          .onChange((value) => this.updateSetting('categoryAttr', value))
-      );
-    this.markSearchable(categoryProp, '输出属性 分类属性名 分类');
-
-    const categoryVal = new Setting(bodyEl)
-      .setName('分类默认值')
-      .setDesc('写入分类属性的默认值。')
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.categoryDefault)
-          .onChange((value) => this.updateSetting('categoryDefault', value))
-      );
-    this.markSearchable(categoryVal, '输出属性 分类默认值');
-
     const timestampProp = new Setting(bodyEl)
       .setName('时间戳属性名')
-      .setDesc('写入输出文件的当前时间戳属性名。')
+      .setDesc('写入输出文件的当前时间戳属性名；值按「时间」页的时间戳格式生成。')
       .addText((text) =>
         text
           .setPlaceholder('created')
-          .setValue(this.plugin.settings.timestampAttr)
-          .onChange((value) => this.updateSetting('timestampAttr', value))
+          .setValue(this.plugin.settings.timestampProperty)
+          .onChange((value) => this.updateSetting('timestampProperty', value))
       );
-    this.markSearchable(timestampProp, '输出属性 时间戳属性名 created');
+    this.markSearchable(timestampProp, '输出属性 时间戳属性名 created 时间戳');
 
     const sourceAttr = new Setting(bodyEl)
       .setName('来源属性名')
@@ -374,7 +352,93 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.sourceAttr)
           .onChange((value) => this.updateSetting('sourceAttr', value))
       );
-    this.markSearchable(sourceAttr, '输出属性 来源属性名 source');
+    this.markSearchable(sourceAttr, '输出属性 来源属性名 source 来源');
+
+    const extraEl = bodyEl.createDiv({ cls: 'ks-extra-props' });
+    this.renderExtraProperties(extraEl);
+
+    const addBtn = new Setting(bodyEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setButtonText('+ 添加属性').onClick(() => {
+          this.plugin.settings.extraProperties.push({ key: '', value: '' });
+          void this.plugin.saveSettings();
+          this.renderExtraProperties(extraEl);
+        })
+      );
+    this.markSearchable(addBtn, '输出属性 添加属性 增加 添加');
+  }
+
+  /** Render each extra property as a row: key input, value input, delete button. */
+  private renderExtraProperties(containerEl: HTMLElement): void {
+    containerEl.empty();
+    const list = this.plugin.settings.extraProperties || [];
+    list.forEach((entry, index) => {
+      const row = new Setting(containerEl)
+        .setName('')
+        .setDesc('')
+        .addText((text) =>
+          text
+            .setPlaceholder('属性名')
+            .setValue(entry.key)
+            .onChange((value) => {
+              entry.key = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addText((text) =>
+          text
+            .setPlaceholder('默认值')
+            .setValue(entry.value)
+            .onChange((value) => {
+              entry.value = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addButton((btn) =>
+          btn
+            .setIcon('trash-2')
+            .setTooltip('删除')
+            .onClick(() => {
+              const a = this.plugin.settings.extraProperties;
+              a.splice(index, 1);
+              void this.plugin.saveSettings();
+              this.renderExtraProperties(containerEl);
+            })
+        );
+      row.settingEl.addClass('ks-extra-props-row');
+      this.markSearchable(row, `输出属性 ${entry.key} ${entry.value}`);
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // test tools (execute the two commands without the command palette)
+  // -------------------------------------------------------------------------
+
+  private renderTestGroup(containerEl: HTMLElement): void {
+    const bodyEl = this.createGroup(containerEl, '测试工具', false);
+
+    const count = new Setting(bodyEl)
+      .setName('统计最近文件数')
+      .setDesc('扫描源文件夹，统计最近 N 天内的 Markdown 文件数。')
+      .addButton((btn) =>
+        btn.setButtonText('统计最近文件数').setCta().onClick(() => {
+          const n = countRecentFiles(this.plugin);
+          new Notice(`源文件夹最近 ${this.plugin.settings.recentDays} 天共有 ${n} 个文件`);
+        })
+      );
+    this.markSearchable(count, '测试 统计 最近文件数 统计最近 统计');
+
+    const output = new Setting(bodyEl)
+      .setName('输出最新内容测试')
+      .setDesc('取源文件夹时间最新的文件，将其正文最后 100 字符写入输出文件夹。')
+      .addButton((btn) =>
+        btn.setButtonText('输出最新内容测试').setCta().onClick(async () => {
+          await outputLatestContent(this.plugin);
+        })
+      );
+    this.markSearchable(output, '测试 输出 最新内容 输出最新内容 输出');
   }
 
   // -------------------------------------------------------------------------
@@ -408,5 +472,19 @@ export class KnowledgeSystemSettingTab extends PluginSettingTab {
       this.currentModels = result.modelIds;
       if (this.modelDropdown) this.populateModelDropdown(this.modelDropdown);
     }
+  }
+}
+
+/** The plugin settings tab (kept so the plugin still exposes a settings tab). */
+export class KnowledgeSystemSettingTab extends PluginSettingTab {
+  plugin: KnowledgeSystemPlugin;
+
+  constructor(app: App, plugin: KnowledgeSystemPlugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display(): void {
+    renderSettings(this.app, this.plugin, this.containerEl);
   }
 }

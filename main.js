@@ -27,9 +27,10 @@ __export(main_exports, {
   default: () => KnowledgeSystemPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/settings.ts
+var TOOL_NAMES = ["list_recent_notes", "read_note", "create_note", "update_note_yaml", "search_output_notes", "modify_output_note", "modify_output_note_versioned", "read_output_note", "list_recent_output_notes"];
 var DEFAULT_SETTINGS = {
   apiKey: "",
   baseUrl: "https://api.deepseek.com/anthropic",
@@ -60,7 +61,12 @@ var DEFAULT_SETTINGS = {
   modifyVersionSuffix: "",
   modifyVersionProperty: "",
   modifyArchiveProperty: "",
-  modifyYamlRules: []
+  modifyYamlRules: [],
+  reviewExcludes: [],
+  reviewBasePath: "\u5BA1\u6838.base",
+  reviewDoneValue: "\u5DF2\u5BA1",
+  reviewChatPrompt: "\u8BF7\u8BFB\u53D6\u8F93\u51FA\u6587\u4EF6\u5939\u4E2D\u7684\u7B14\u8BB0\u300C{{filename}}\u300D\uFF0C\u4E0E\u6211\u6C9F\u901A\u5982\u4F55\u4FEE\u6539\uFF0C\u7136\u540E\u6309\u6211\u7684\u8981\u6C42\u4FEE\u6539\u5B83\u3002",
+  sidebarRules: []
 };
 
 // src/settingsTab.ts
@@ -603,8 +609,118 @@ async function extractResponseText(res) {
   return String(j != null ? j : "");
 }
 
+// src/utils/review.ts
+function isUnreviewed(fm, reviewAttr, reviewDefault) {
+  if (!fm) return true;
+  const v = fm[reviewAttr];
+  if (v === void 0 || v === null || v === "") return true;
+  return String(v) === reviewDefault;
+}
+function isExcluded(fm, excludes) {
+  if (!fm || !Array.isArray(excludes)) return false;
+  for (const ex of excludes) {
+    if (!ex || !ex.key) continue;
+    const v = fm[ex.key];
+    if (v !== void 0 && v !== null && String(v) === String(ex.value).trim()) return true;
+  }
+  return false;
+}
+function renderPromptTemplate(template, filename) {
+  const s = String(template != null ? template : "");
+  if (!s.includes("{{filename}}")) return s;
+  return s.replace(/\{\{filename\}\}/g, filename);
+}
+
+// src/utils/sidebarRules.ts
+function isFolderLike(v) {
+  return typeof v === "object" && v !== null && Array.isArray(v.children);
+}
+function getMarkdownFilesInFolder2(root) {
+  const result = [];
+  const visit = (folder) => {
+    for (const child of folder.children) {
+      const ext = child.extension;
+      if (typeof ext === "string" && ext === "md") {
+        result.push(child);
+      } else if (isFolderLike(child)) {
+        visit(child);
+      }
+    }
+  };
+  if (isFolderLike(root)) visit(root);
+  return result;
+}
+function folderPathOf(settings, folder) {
+  if (folder === "source") return settings.sourceFolder;
+  if (folder === "output") return settings.outputFolder;
+  return folder;
+}
+function resolveFolder(app, raw) {
+  const s = (raw || "/").trim();
+  if (s === "/" || s === "") return app.vault.getRoot();
+  const p = s.replace(/^\/+|\/+$/g, "");
+  if (!p) return app.vault.getRoot();
+  const found = app.vault.getAbstractFileByPath(p);
+  return isFolderLike(found) ? found : app.vault.getRoot();
+}
+function frontmatterOf2(app, file) {
+  var _a, _b;
+  return (_b = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : {};
+}
+function parseAfterDate(text) {
+  const s = (text || "").trim();
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  const day = parseInt(m[3], 10);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const d = new Date(year, month - 1, day, 0, 0, 0, 0);
+  if (Number.isNaN(d.getTime())) return null;
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+  return d.getTime();
+}
+function evaluateCondition(app, settings, condition) {
+  if (!condition) return [];
+  switch (condition.type) {
+    case "unreviewed": {
+      const folder = resolveFolder(app, settings.outputFolder);
+      const reviewAttr = settings.reviewAttr;
+      const reviewDefault = settings.reviewDefault;
+      const excludes = settings.reviewExcludes || [];
+      const files = getMarkdownFilesInFolder2(folder).filter((file) => {
+        const fm = frontmatterOf2(app, file);
+        return isUnreviewed(fm, reviewAttr, reviewDefault) && !isExcluded(fm, excludes);
+      });
+      const minCount = condition.minCount !== void 0 && condition.minCount !== null ? condition.minCount : 1;
+      return files.length >= Math.max(0, minCount) ? files : [];
+    }
+    case "missing_property": {
+      const folder = resolveFolder(app, folderPathOf(settings, condition.folder));
+      const afterMs = parseAfterDate(condition.afterDate);
+      const files = getMarkdownFilesInFolder2(folder).filter((file) => {
+        if (afterMs !== null) {
+          const mtime = file.stat && file.stat.mtime || file.stat.ctime || 0;
+          if (mtime < afterMs) return false;
+        }
+        const fm = frontmatterOf2(app, file);
+        const prop = (condition.property || "").trim();
+        if (!prop) return false;
+        const raw = fm[prop];
+        if (raw === void 0 || raw === null || raw === "") return true;
+        const expected = condition.expectedValue;
+        if (expected === void 0 || expected === null || String(expected).trim() === "") return false;
+        return String(raw) !== String(expected);
+      });
+      return files;
+    }
+    default:
+      return [];
+  }
+}
+
 // src/settingsTab.ts
-var TOOL_NAMES = ["list_recent_notes", "read_note", "create_note", "update_note_yaml", "search_output_notes", "modify_output_note", "modify_output_note_versioned", "read_output_note"];
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -661,6 +777,36 @@ var listRecentIo = {
     if (typeof cfg.listRecentDays === "number") s.recentDays = cfg.listRecentDays;
   }
 };
+var listRecentOutputIo = {
+  label: "list_recent_output_notes",
+  exportFromPreset(p) {
+    const cfg = {};
+    if (p.toolOverrides.recentOutputAttr) cfg.recentOutputAttr = p.toolOverrides.recentOutputAttr;
+    if (p.toolOverrides.recentOutputFormat) cfg.recentOutputFormat = p.toolOverrides.recentOutputFormat;
+    return cfg;
+  },
+  exportFromGlobal() {
+    return {};
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: "\u5FC5\u987B\u662F JSON \u5BF9\u8C61" };
+    const bad = rejectUnknownFields(raw, ["recentOutputAttr", "recentOutputFormat"]);
+    if (bad) return { ok: false, error: bad };
+    if (raw.recentOutputAttr !== void 0 && typeof raw.recentOutputAttr !== "string") {
+      return { ok: false, error: "recentOutputAttr \u5FC5\u987B\u662F\u5B57\u7B26\u4E32" };
+    }
+    if (raw.recentOutputFormat !== void 0 && typeof raw.recentOutputFormat !== "string") {
+      return { ok: false, error: "recentOutputFormat \u5FC5\u987B\u662F\u5B57\u7B26\u4E32" };
+    }
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    p.toolOverrides.recentOutputAttr = cfg.recentOutputAttr || void 0;
+    p.toolOverrides.recentOutputFormat = cfg.recentOutputFormat || void 0;
+  },
+  applyToGlobal() {
+  }
+};
 var searchIo = {
   label: "search_output_notes",
   exportFromPreset(p) {
@@ -669,6 +815,7 @@ var searchIo = {
     if (p.toolOverrides.searchRestrictions !== void 0 && p.toolOverrides.searchRestrictions.length > 0) {
       cfg.searchRestrictions = p.toolOverrides.searchRestrictions;
     }
+    if (p.toolOverrides.searchQueryEnabled !== void 0) cfg.searchQueryEnabled = p.toolOverrides.searchQueryEnabled;
     return cfg;
   },
   exportFromGlobal() {
@@ -676,7 +823,7 @@ var searchIo = {
   },
   validate(raw) {
     if (!isPlainObject(raw)) return { ok: false, error: "\u5FC5\u987B\u662F JSON \u5BF9\u8C61" };
-    const bad = rejectUnknownFields(raw, ["searchMode", "searchRestrictions"]);
+    const bad = rejectUnknownFields(raw, ["searchMode", "searchRestrictions", "searchQueryEnabled"]);
     if (bad) return { ok: false, error: bad };
     if (raw.searchMode !== void 0 && raw.searchMode !== "full" && raw.searchMode !== "restricted") {
       return { ok: false, error: "searchMode \u53EA\u80FD\u662F full \u6216 restricted" };
@@ -687,11 +834,15 @@ var searchIo = {
     if (raw.searchRestrictions !== void 0 && !raw.searchRestrictions.every(isRestriction)) {
       return { ok: false, error: "searchRestrictions \u6BCF\u9879\u5FC5\u987B\u662F {key, values[]}" };
     }
+    if (raw.searchQueryEnabled !== void 0 && typeof raw.searchQueryEnabled !== "boolean") {
+      return { ok: false, error: "searchQueryEnabled \u5FC5\u987B\u662F\u5E03\u5C14\u503C" };
+    }
     return { ok: true, cfg: raw };
   },
   applyToPreset(p, cfg) {
     p.toolOverrides.searchMode = cfg.searchMode;
     p.toolOverrides.searchRestrictions = cfg.searchRestrictions;
+    p.toolOverrides.searchQueryEnabled = cfg.searchQueryEnabled;
   },
   applyToGlobal() {
   }
@@ -840,6 +991,8 @@ var SettingsRenderer = class {
     this.presetExpanded = /* @__PURE__ */ new Set();
     /** Expanded per-tool config group keys `${presetId}:${toolName}` (B.2). */
     this.toolExpanded = /* @__PURE__ */ new Set();
+    /** v0.9.0：侧边栏规则卡片折叠状态（collapsed 的 rule id；缺省展开）。 */
+    this.sidebarRuleCollapsed = /* @__PURE__ */ new Set();
     // -------------------------------------------------------------------------
     // UI 方案陈列（v0.8.1：移动端 UI 方案挑选——用户在安卓上对比可用性后决定聊天视图最终布局）
     // -------------------------------------------------------------------------
@@ -961,9 +1114,11 @@ var SettingsRenderer = class {
       { id: "folder", label: "\u6587\u4EF6\u5939" },
       { id: "time", label: "\u65F6\u95F4" },
       { id: "output", label: "\u8F93\u51FA\u5C5E\u6027" },
+      { id: "review", label: "\u5BA1\u6838" },
       { id: "test", label: "\u6D4B\u8BD5\u5DE5\u5177" },
       { id: "preset", label: "\u9884\u8BBE" },
-      { id: "uiPreview", label: "UI \u65B9\u6848" }
+      { id: "uiPreview", label: "UI \u65B9\u6848" },
+      { id: "sidebar", label: "\u4FA7\u8FB9\u680F" }
     ];
     const tabsEl = containerEl.createDiv({ cls: "ks-tabs" });
     for (const tab of tabs) {
@@ -992,6 +1147,9 @@ var SettingsRenderer = class {
       case "output":
         this.renderOutputGroup(containerEl);
         break;
+      case "review":
+        this.renderReviewGroup(containerEl);
+        break;
       case "test":
         this.renderTestGroup(containerEl);
         break;
@@ -1000,6 +1158,9 @@ var SettingsRenderer = class {
         break;
       case "uiPreview":
         this.renderUiPreviewGroup(containerEl);
+        break;
+      case "sidebar":
+        this.renderSidebarGroup(containerEl);
         break;
     }
   }
@@ -1183,6 +1344,281 @@ var SettingsRenderer = class {
       })
     );
     this.markSearchable(addBtn, "\u8F93\u51FA\u5C5E\u6027 \u6DFB\u52A0\u5C5E\u6027 \u589E\u52A0 \u6DFB\u52A0");
+  }
+  // -------------------------------------------------------------------------
+  // review（v0.8.7：审核页配置——审核属性 / 排除规则 / 面板位置 / 生成面板）
+  // -------------------------------------------------------------------------
+  renderReviewGroup(containerEl) {
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u300C\u5BA1\u6838\u300D\u9875\uFF08Bases \u6838\u5FC3\u63D2\u4EF6\u81EA\u5B9A\u4E49\u89C6\u56FE\uFF0C\u53C2\u8003 TaskNotes \u96C6\u6210\uFF09\uFF1A\u5217\u51FA\u8F93\u51FA\u6587\u4EF6\u5939\u91CC\u672A\u5BA1\u6838\u7684\u6587\u4EF6\u3002\u5224\u5B9A\uFF1Afrontmatter \u7684\u300C\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u300D\u7F3A\u5931\u3001\u4E3A\u7A7A\u3001\u6216\u7B49\u4E8E\u300C\u672A\u5BA1\u6807\u8BB0\u503C\u300D\u2192 \u672A\u5BA1\u6838\uFF1B\u547D\u4E2D\u300C\u6392\u9664\u89C4\u5219\u300D\u7684\u6587\u4EF6\u4E0D\u663E\u793A\u3002\u6539\u5B8C\u8BBE\u7F6E\u540E\u70B9\u300C\u751F\u6210\u5BA1\u6838\u9762\u677F\u300D\u91CD\u5EFA\u9762\u677F\uFF08\u5DF2\u5B58\u5728\u5219\u6309\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210\u4E00\u6B21\uFF09\u3002\u9700\u8981 Obsidian 1.10.0+ \u5E76\u542F\u7528 Bases \u6838\u5FC3\u63D2\u4EF6\u3002");
+    this.markSearchable(info, "\u5BA1\u6838 \u8BF4\u660E Bases \u9762\u677F \u672A\u5BA1\u6838 \u672A\u5BA1");
+    const attr = new import_obsidian3.Setting(containerEl).setName("\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u540D").setDesc("frontmatter \u4E2D\u6807\u8BB0\u5BA1\u6838\u72B6\u6001\u7684\u5C5E\u6027\u540D\uFF08\u8F93\u51FA\u6587\u4EF6\u521B\u5EFA\u65F6\u5199\u5165\uFF1B\u5982 approved\uFF09\u3002").addText(
+      (text) => text.setPlaceholder("approved").setValue(this.plugin.settings.reviewAttr).onChange((value) => this.updateSetting("reviewAttr", value))
+    );
+    this.markSearchable(attr, "\u5BA1\u6838 \u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u540D reviewAttr approved");
+    const def = new import_obsidian3.Setting(containerEl).setName("\u672A\u5BA1\u6807\u8BB0\u503C").setDesc("frontmatter \u7684\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u7B49\u4E8E\u8BE5\u503C = \u672A\u5BA1\u6838\uFF08\u8F93\u51FA\u6587\u4EF6\u521B\u5EFA\u65F6\u5199\u5165\u7684\u9ED8\u8BA4\u503C\uFF1B\u5982 \u672A\u5BA1\uFF09\u3002").addText(
+      (text) => text.setPlaceholder("\u672A\u5BA1").setValue(this.plugin.settings.reviewDefault).onChange((value) => this.updateSetting("reviewDefault", value))
+    );
+    this.markSearchable(def, "\u5BA1\u6838 \u672A\u5BA1\u6807\u8BB0\u503C reviewDefault");
+    const done = new import_obsidian3.Setting(containerEl).setName("\u5DF2\u5BA1\u6807\u8BB0\u503C").setDesc("\u5BA1\u6838\u9875\u6BCF\u884C\u5F00\u5173\u6253\u5F00\u65F6\uFF0C\u5199\u5165 frontmatter \u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u7684\u503C\uFF08\u5982 \u5DF2\u5BA1\uFF09\u3002\u5F00\u5173\u6253\u5F00\u540E\u8BE5\u6587\u4EF6\u79FB\u51FA\u5BA1\u6838\u5217\u8868\u3002").addText(
+      (text) => text.setPlaceholder("\u5DF2\u5BA1").setValue(this.plugin.settings.reviewDoneValue).onChange((value) => this.updateSetting("reviewDoneValue", value))
+    );
+    this.markSearchable(done, "\u5BA1\u6838 \u5DF2\u5BA1\u6807\u8BB0\u503C reviewDoneValue \u5BA1\u6838\u5B8C\u6210 \u5F00\u5173");
+    const exHead = new import_obsidian3.Setting(containerEl).setName("\u6392\u9664\u89C4\u5219").setDesc("frontmatter \u5C5E\u6027\u7B49\u4E8E\u8BE5\u503C\u7684\u6587\u4EF6\u4E0D\u8FDB\u5165\u5BA1\u6838\u5217\u8868\uFF08\u5982 archived = true \u6392\u9664\u5F52\u6863\u6587\u4EF6\uFF09\u3002");
+    this.markSearchable(exHead, "\u5BA1\u6838 \u6392\u9664\u89C4\u5219 \u6392\u9664 \u5F52\u6863 archived");
+    const exListEl = containerEl.createDiv();
+    const renderExcludes = () => {
+      exListEl.empty();
+      const list = this.plugin.settings.reviewExcludes || [];
+      list.forEach((entry, index) => {
+        const row = new import_obsidian3.Setting(exListEl).setName("").setDesc("").addText(
+          (text) => text.setPlaceholder("\u5C5E\u6027\u540D\uFF0C\u5982 archived").setValue(entry.key).onChange((value) => {
+            entry.key = value;
+            void this.plugin.saveSettings();
+          })
+        ).addText(
+          (text) => text.setPlaceholder("\u6392\u9664\u7684\u503C\uFF0C\u5982 true").setValue(entry.value).onChange((value) => {
+            entry.value = value;
+            void this.plugin.saveSettings();
+          })
+        ).addButton(
+          (btn) => btn.setIcon("trash-2").setTooltip("\u5220\u9664").onClick(() => {
+            const a = this.plugin.settings.reviewExcludes || [];
+            a.splice(index, 1);
+            void this.plugin.saveSettings();
+            renderExcludes();
+          })
+        );
+        row.settingEl.addClass("ks-extra-props-row");
+        this.markSearchable(row, `\u5BA1\u6838 \u6392\u9664\u89C4\u5219 ${entry.key} ${entry.value}`);
+      });
+    };
+    renderExcludes();
+    const addEx = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u6392\u9664\u89C4\u5219").onClick(() => {
+        if (!Array.isArray(this.plugin.settings.reviewExcludes)) this.plugin.settings.reviewExcludes = [];
+        this.plugin.settings.reviewExcludes.push({ key: "", value: "" });
+        void this.plugin.saveSettings();
+        renderExcludes();
+      })
+    );
+    this.markSearchable(addEx, "\u5BA1\u6838 \u6392\u9664\u89C4\u5219 \u6DFB\u52A0 \u589E\u52A0");
+    const path = new import_obsidian3.Setting(containerEl).setName("\u5BA1\u6838\u9762\u677F\u4F4D\u7F6E").setDesc("\u5BA1\u6838\u9762\u677F\uFF08.base \u6587\u4EF6\uFF09\u5728\u5E93\u4E2D\u7684\u8DEF\u5F84\uFF1B\u751F\u6210\u540E\u7531 Bases \u6838\u5FC3\u63D2\u4EF6\u6E32\u67D3\u3002").addText(
+      (text) => text.setPlaceholder("\u5BA1\u6838.base").setValue(this.plugin.settings.reviewBasePath).onChange((value) => this.updateSetting("reviewBasePath", value))
+    );
+    this.markSearchable(path, "\u5BA1\u6838 \u5BA1\u6838\u9762\u677F\u4F4D\u7F6E \u9762\u677F \u8DEF\u5F84 base");
+    const prompt = new import_obsidian3.Setting(containerEl).setName("AI \u4FEE\u6539\u63D0\u793A\u8BCD").setDesc("\u70B9\u51FB\u5BA1\u6838\u5217\u8868\u7684\u804A\u5929\u56FE\u6807\u65F6\uFF0C\u9884\u586B\u5230\u804A\u5929\u8F93\u5165\u6846\u7684\u63D0\u793A\u8BCD\u3002`{{filename}}` \u4F1A\u88AB\u66FF\u6362\u4E3A\u88AB\u4FEE\u6539\u7B14\u8BB0\u7684\u6587\u4EF6\u540D\uFF08\u4E0D\u542B\u8DEF\u5F84\uFF0C\u5DE5\u5177\u4EE5\u6587\u4EF6\u540D\u4F5C\u53C2\u6570\u5B9A\u4F4D\u6587\u4EF6\uFF09\u3002\u7559\u7A7A = \u4F7F\u7528\u9ED8\u8BA4\u63D0\u793A\u8BCD\uFF1B\u4E0D\u542B `{{filename}}` \u65F6\u539F\u6837\u4F7F\u7528\u3002").addTextArea(
+      (text) => text.setPlaceholder("\u8BF7\u8BFB\u53D6\u8F93\u51FA\u6587\u4EF6\u5939\u4E2D\u7684\u7B14\u8BB0\u300C{{filename}}\u300D\uFF0C\u4E0E\u6211\u6C9F\u901A\u5982\u4F55\u4FEE\u6539\uFF0C\u7136\u540E\u6309\u6211\u7684\u8981\u6C42\u4FEE\u6539\u5B83\u3002").setValue(this.plugin.settings.reviewChatPrompt || "").onChange((value) => this.updateSetting("reviewChatPrompt", value))
+    );
+    prompt.settingEl.addClass("ks-review-prompt-row");
+    this.markSearchable(prompt, "\u5BA1\u6838 AI \u4FEE\u6539\u63D0\u793A\u8BCD \u63D0\u793A\u8BCD \u6A21\u677F filename");
+    const ops = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setIcon("refresh-cw").setButtonText("\u751F\u6210\u5BA1\u6838\u9762\u677F").onClick(() => {
+        void this.plugin.regenerateReviewBase();
+      })
+    ).addButton(
+      (btn) => btn.setIcon("external-link").setButtonText("\u6253\u5F00\u5BA1\u6838\u9762\u677F").onClick(() => {
+        void this.plugin.openReviewView();
+      })
+    );
+    this.markSearchable(ops, "\u5BA1\u6838 \u751F\u6210\u5BA1\u6838\u9762\u677F \u6253\u5F00\u5BA1\u6838\u9762\u677F \u91CD\u65B0\u751F\u6210");
+  }
+  // -------------------------------------------------------------------------
+  // sidebar（v0.9.0：侧边栏「提醒面板」规则——条件 + 动作；仿预设折叠卡片模式）
+  // -------------------------------------------------------------------------
+  renderSidebarGroup(containerEl) {
+    containerEl.empty();
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u5DE6\u4FA7\u8FB9\u680F\u300C\u63D0\u9192\u9762\u677F\u300D\uFF08\u547D\u4EE4\u300COpen sidebar panel\u300D\u6216\u4E0B\u65B9\u6309\u94AE\u6253\u5F00\uFF09\u7684\u89C4\u5219\uFF1A\u6BCF\u6761\u89C4\u5219 = \u6761\u4EF6 + \u52A8\u4F5C\u3002\u6761\u4EF6\u5339\u914D 0 \u6761\u65F6\u8BE5\u89C4\u5219\u4E0D\u663E\u793A\u6761\u76EE\u3002\u6761\u4EF6\uFF1A\u672A\u5BA1\u6838\u6587\u4EF6\uFF08\u8F93\u51FA\u6587\u4EF6\u5939\uFF09\u6216\u7F3A\u5C11\u5C5E\u6027\uFF08\u6307\u5B9A\u6587\u4EF6\u5939 + \u53EF\u9009\u6700\u8FD1 N \u5929\uFF09\uFF1B\u52A8\u4F5C\uFF1A\u6253\u5F00\u5BA1\u6838\u9762\u677F\u6216\u6253\u5F00\u804A\u5929\uFF08\u5E94\u7528\u9884\u8BBE + \u9884\u586B prompt \u6A21\u677F\uFF0C{{filename}} \u4F1A\u88AB\u66FF\u6362\u4E3A\u5339\u914D\u6587\u4EF6\u7684\u6587\u4EF6\u540D\uFF0C\u4E0D\u542B\u8DEF\u5F84\u4E0E .md\uFF09\u3002");
+    this.markSearchable(info, "\u4FA7\u8FB9\u680F \u63D0\u9192\u9762\u677F \u89C4\u5219 \u6761\u4EF6 \u52A8\u4F5C \u672A\u5BA1\u6838 \u7F3A\u5C11\u5C5E\u6027 \u6253\u5F00\u5BA1\u6838 \u6253\u5F00\u804A\u5929 filename");
+    const openBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setIcon("panel-left").setButtonText("\u6253\u5F00\u5DE6\u4FA7\u8FB9\u680F\u9762\u677F").onClick(() => {
+        void this.plugin.openSidebarPanel();
+      })
+    );
+    this.markSearchable(openBtn, "\u4FA7\u8FB9\u680F \u6253\u5F00 \u9762\u677F \u5DE6\u4FA7\u8FB9\u680F");
+    const rules = this.plugin.settings.sidebarRules || (this.plugin.settings.sidebarRules = []);
+    rules.forEach((rule, index) => this.renderSidebarRuleCard(containerEl, rule, index));
+    const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u89C4\u5219").onClick(() => {
+        const nr = {
+          id: String(Date.now()),
+          name: "\u65B0\u89C4\u5219",
+          enabled: true,
+          condition: { type: "unreviewed" },
+          action: { type: "open_review" }
+        };
+        this.plugin.settings.sidebarRules.push(nr);
+        void this.plugin.saveSettings();
+        this.renderSidebarGroup(containerEl);
+      })
+    );
+    this.markSearchable(addBtn, "\u4FA7\u8FB9\u680F \u6DFB\u52A0\u89C4\u5219 \u589E\u52A0 \u65B0\u5EFA");
+  }
+  /**
+   * 渲染一条侧边栏规则卡片（可折叠）：头部 = chevron + 名称输入 + 启用开关 +
+   * 删除按钮；主体 = 条件编辑器 + 动作编辑器 + 「测试」按钮。折叠状态按 rule.id
+   * 记忆（缺省展开）；条件/动作类型下拉切换后整组重绘。
+   */
+  renderSidebarRuleCard(containerEl, rule, index) {
+    const rerenderAll = () => this.renderSidebarGroup(containerEl);
+    const collapsed = this.sidebarRuleCollapsed.has(rule.id);
+    const card = containerEl.createDiv({ cls: "ks-sidebar-rule-item" });
+    const head = card.createDiv({ cls: "ks-sidebar-rule-head" });
+    const chev = head.createSpan({ cls: "ks-preset-item-chev" });
+    this.setIconSafe(chev, collapsed ? "chevron-right" : "chevron-down", collapsed ? "\u203A" : "\u2304");
+    chev.addEventListener("click", () => {
+      const isCollapsed = card.hasClass("ks-sidebar-rule-collapsed");
+      if (isCollapsed) this.sidebarRuleCollapsed.delete(rule.id);
+      else this.sidebarRuleCollapsed.add(rule.id);
+      this.setIconSafe(chev, isCollapsed ? "chevron-down" : "chevron-right", isCollapsed ? "\u2304" : "\u203A");
+      card.toggleClass("ks-sidebar-rule-collapsed", !isCollapsed);
+    });
+    const nameInput = head.createEl("input", { cls: "ks-preset-item-name ks-sidebar-rule-name" });
+    nameInput.type = "text";
+    nameInput.value = rule.name || "";
+    nameInput.placeholder = "\u89C4\u5219\u540D\uFF0C\u5982\u300C\u6709\u672A\u5BA1\u6838\u6587\u4EF6\u300D";
+    nameInput.addEventListener("input", () => {
+      rule.name = nameInput.value;
+      void this.plugin.saveSettings();
+    });
+    const toggleWrap = head.createSpan({ cls: "ks-sidebar-rule-toggle" });
+    toggleWrap.addEventListener("click", (ev) => ev.stopPropagation());
+    new import_obsidian3.ToggleComponent(toggleWrap).setValue(rule.enabled !== false).setTooltip("\u542F\u7528\u6B64\u89C4\u5219").onChange((v) => {
+      rule.enabled = v;
+      void this.plugin.saveSettings();
+    });
+    const delBtn = head.createEl("button", { cls: "ks-preset-item-del" });
+    delBtn.setAttribute("aria-label", "\u5220\u9664\u6B64\u89C4\u5219");
+    delBtn.setAttribute("title", "\u5220\u9664\u6B64\u89C4\u5219");
+    this.setIconSafe(delBtn, "trash-2", "\xD7");
+    delBtn.addEventListener("click", () => {
+      this.plugin.settings.sidebarRules.splice(index, 1);
+      this.sidebarRuleCollapsed.delete(rule.id);
+      void this.plugin.saveSettings();
+      rerenderAll();
+    });
+    const body = card.createDiv({ cls: "ks-sidebar-rule-body" });
+    if (collapsed) card.addClass("ks-sidebar-rule-collapsed");
+    const condSel = new import_obsidian3.Setting(body).setName("\u6761\u4EF6\u7C7B\u578B").setDesc("\u300C\u672A\u5BA1\u6838\u6587\u4EF6\u300D= \u8F93\u51FA\u6587\u4EF6\u5939\u4E2D\u672A\u5BA1\u6838\u6587\u4EF6\u6570 \u2265 \u6700\u5C0F\u6570\u91CF\uFF1B\u300C\u7F3A\u5C11\u5C5E\u6027\u300D= \u6307\u5B9A\u6587\u4EF6\u5939\u91CC frontmatter \u7F3A\u5C11\u67D0\u5C5E\u6027\uFF08\u6216\u503C\u4E0D\u7B49\u4E8E\u671F\u671B\u503C\uFF09\u7684\u6587\u4EF6\u3002").addDropdown((drop) => {
+      drop.addOptions({ unreviewed: "\u672A\u5BA1\u6838\u6587\u4EF6", missing_property: "\u7F3A\u5C11\u5C5E\u6027" });
+      drop.setValue(rule.condition.type);
+      drop.onChange((v) => {
+        rule.condition = v === "unreviewed" ? { type: "unreviewed" } : { type: "missing_property", folder: "output", property: "" };
+        void this.plugin.saveSettings();
+        rerenderAll();
+      });
+    });
+    this.markSearchable(condSel, "\u4FA7\u8FB9\u680F \u6761\u4EF6\u7C7B\u578B \u672A\u5BA1\u6838\u6587\u4EF6 \u7F3A\u5C11\u5C5E\u6027 \u6761\u4EF6");
+    if (rule.condition.type === "unreviewed") {
+      const cond = rule.condition;
+      const minCount = new import_obsidian3.Setting(body).setName("\u6700\u5C0F\u6570\u91CF").setDesc("\u672A\u5BA1\u6838\u6587\u4EF6\u6570 \u2265 \u8BE5\u503C\u65F6\u89C4\u5219\u5339\u914D\uFF08\u7559\u7A7A = 1\uFF09\u3002").addText((text) => {
+        text.inputEl.type = "number";
+        text.setValue(cond.minCount === void 0 ? "" : String(cond.minCount));
+        text.onChange((value) => {
+          if (value.trim() === "") {
+            cond.minCount = void 0;
+          } else {
+            const n = parseInt(value, 10);
+            if (!Number.isNaN(n)) cond.minCount = n;
+          }
+          void this.plugin.saveSettings();
+        });
+      });
+      this.markSearchable(minCount, "\u4FA7\u8FB9\u680F \u672A\u5BA1\u6838 \u6700\u5C0F\u6570\u91CF minCount \u6570\u91CF");
+    } else {
+      const cond = rule.condition;
+      const isCustom = cond.folder !== "source" && cond.folder !== "output";
+      const folderSel = new import_obsidian3.Setting(body).setName("\u6587\u4EF6\u5939").setDesc("\u300C\u6E90\u6587\u4EF6\u5939\u300D/\u300C\u8F93\u51FA\u6587\u4EF6\u5939\u300D\u6620\u5C04\u8BBE\u7F6E\u91CC\u7684\u5BF9\u5E94\u6587\u4EF6\u5939\uFF1B\u300C\u81EA\u5B9A\u4E49\u300D= \u624B\u52A8\u586B\u8DEF\u5F84\u3002").addDropdown((drop) => {
+        drop.addOptions({ source: "\u6E90\u6587\u4EF6\u5939", output: "\u8F93\u51FA\u6587\u4EF6\u5939", custom: "\u81EA\u5B9A\u4E49" });
+        drop.setValue(isCustom ? "custom" : cond.folder);
+        drop.onChange((v) => {
+          if (v === "custom") cond.folder = "";
+          else cond.folder = v;
+          void this.plugin.saveSettings();
+          rerenderAll();
+        });
+      });
+      this.markSearchable(folderSel, "\u4FA7\u8FB9\u680F \u7F3A\u5C11\u5C5E\u6027 \u6587\u4EF6\u5939 \u6E90\u6587\u4EF6\u5939 \u8F93\u51FA\u6587\u4EF6\u5939 \u81EA\u5B9A\u4E49");
+      if (isCustom) {
+        const pathSel = new import_obsidian3.Setting(body).setName("\u81EA\u5B9A\u4E49\u6587\u4EF6\u5939\u8DEF\u5F84").setDesc("\u5E93\u5185\u6587\u4EF6\u5939\u8DEF\u5F84\uFF1B\u7559\u7A7A = \u5E93\u6839\u76EE\u5F55\u3002").addText(
+          (text) => text.setPlaceholder("\u5982\uFF1A\u5DE5\u4F5C/\u5F85\u529E").setValue(cond.folder).onChange((value) => {
+            cond.folder = value;
+            void this.plugin.saveSettings();
+          })
+        );
+        this.markSearchable(pathSel, "\u4FA7\u8FB9\u680F \u7F3A\u5C11\u5C5E\u6027 \u81EA\u5B9A\u4E49 \u6587\u4EF6\u5939 \u8DEF\u5F84");
+      }
+      const afterSel = new import_obsidian3.Setting(body).setName("\u6B64\u65E5\u671F\u4E4B\u540E").setDesc("\u53EA\u770B\u6B64\u65E5\u671F\u4E4B\u540E\uFF08\u542B\u5F53\u5929\uFF09\u4FEE\u6539\u7684\u6587\u4EF6\uFF0C\u4E4B\u524D\u7684\u4E0D\u7BA1\uFF1B\u683C\u5F0F YYYY-MM-DD\uFF08\u5982 2026-08-01\uFF09\uFF1B\u7559\u7A7A = \u4E0D\u9650\u3002").addText(
+        (text) => {
+          var _a;
+          return text.setPlaceholder("\u5982\uFF1A2026-08-01").setValue((_a = cond.afterDate) != null ? _a : "").onChange((value) => {
+            cond.afterDate = value.trim() === "" ? void 0 : value.trim();
+            void this.plugin.saveSettings();
+          });
+        }
+      );
+      this.markSearchable(afterSel, "\u4FA7\u8FB9\u680F \u7F3A\u5C11\u5C5E\u6027 \u6B64\u65E5\u671F\u4E4B\u540E afterDate \u65E5\u671F \u65F6\u95F4 \u4FEE\u6539");
+      const propSel = new import_obsidian3.Setting(body).setName("\u5C5E\u6027\u540D").setDesc("\u8981\u68C0\u67E5\u7684 frontmatter \u5C5E\u6027\u540D\uFF08\u5982 approved\uFF09\u3002").addText(
+        (text) => text.setPlaceholder("\u5982\uFF1Aapproved").setValue(cond.property).onChange((value) => {
+          cond.property = value;
+          void this.plugin.saveSettings();
+        })
+      );
+      this.markSearchable(propSel, "\u4FA7\u8FB9\u680F \u7F3A\u5C11\u5C5E\u6027 \u5C5E\u6027\u540D property frontmatter");
+      const expSel = new import_obsidian3.Setting(body).setName("\u671F\u671B\u503C").setDesc("\u7559\u7A7A = \u5C5E\u6027\u7F3A\u5931\u5373\u5339\u914D\uFF1B\u586B\u5199 = \u5C5E\u6027\u7F3A\u5931\u6216\u503C\u4E0D\u7B49\u4E8E\u671F\u671B\u503C\u90FD\u5339\u914D\u3002").addText(
+        (text) => {
+          var _a;
+          return text.setPlaceholder("\u7559\u7A7A = \u4EC5\u5C5E\u6027\u7F3A\u5931").setValue((_a = cond.expectedValue) != null ? _a : "").onChange((value) => {
+            cond.expectedValue = value.trim() === "" ? void 0 : value;
+            void this.plugin.saveSettings();
+          });
+        }
+      );
+      this.markSearchable(expSel, "\u4FA7\u8FB9\u680F \u7F3A\u5C11\u5C5E\u6027 \u671F\u671B\u503C expectedValue \u5339\u914D");
+    }
+    const actSel = new import_obsidian3.Setting(body).setName("\u52A8\u4F5C\u7C7B\u578B").setDesc("\u300C\u6253\u5F00\u5BA1\u6838\u9762\u677F\u300D= \u70B9\u51FB\u6761\u76EE\u53F3\u4FA7\u56FE\u6807\u6253\u5F00\u5BA1\u6838\u9875\uFF08\u5355\u6761\uFF0C\u663E\u793A\u5339\u914D\u6570\uFF09\uFF1B\u300C\u6253\u5F00\u804A\u5929\u300D= \u6BCF\u4E2A\u5339\u914D\u6587\u4EF6\u4E00\u6761\uFF0C\u70B9\u51FB\u56FE\u6807\u6253\u5F00\u804A\u5929\uFF08\u5E94\u7528\u9884\u8BBE + \u9884\u586B prompt \u6A21\u677F\uFF09\u3002").addDropdown((drop) => {
+      drop.addOptions({ open_review: "\u6253\u5F00\u5BA1\u6838\u9762\u677F", open_chat: "\u6253\u5F00\u804A\u5929" });
+      drop.setValue(rule.action.type);
+      drop.onChange((v) => {
+        rule.action = v === "open_review" ? { type: "open_review" } : { type: "open_chat" };
+        void this.plugin.saveSettings();
+        rerenderAll();
+      });
+    });
+    this.markSearchable(actSel, "\u4FA7\u8FB9\u680F \u52A8\u4F5C\u7C7B\u578B \u6253\u5F00\u5BA1\u6838\u9762\u677F \u6253\u5F00\u804A\u5929 \u52A8\u4F5C");
+    if (rule.action.type === "open_chat") {
+      const act = rule.action;
+      const presetSel = new import_obsidian3.Setting(body).setName("\u804A\u5929\u9884\u8BBE").setDesc("\u70B9\u51FB\u56FE\u6807\u6253\u5F00\u804A\u5929\u65F6\u5E94\u7528\u7684\u9884\u8BBE\uFF1B\u300C\u9ED8\u8BA4\uFF08\u5168\u90E8\u5DE5\u5177\uFF09\u300D= \u5F53\u524D\u804A\u5929\u9884\u8BBE\uFF08\u5168\u90E8\u5DE5\u5177\uFF09\u3002").addDropdown((drop) => {
+        var _a;
+        const presets = this.plugin.settings.toolPresets || [];
+        const opts = { "": "\u9ED8\u8BA4\uFF08\u5168\u90E8\u5DE5\u5177\uFF09" };
+        for (const p of presets) opts[p.id] = p.name;
+        drop.addOptions(opts);
+        drop.setValue(presets.some((p) => p.id === act.presetId) ? (_a = act.presetId) != null ? _a : "" : "");
+        drop.onChange((v) => {
+          act.presetId = v || void 0;
+          void this.plugin.saveSettings();
+        });
+      });
+      this.markSearchable(presetSel, "\u4FA7\u8FB9\u680F \u6253\u5F00\u804A\u5929 \u9884\u8BBE preset \u5168\u90E8\u5DE5\u5177");
+      const promptSel = new import_obsidian3.Setting(body).setName("Prompt \u6A21\u677F").setDesc("\u70B9\u51FB\u56FE\u6807\u65F6\u9884\u586B\u5230\u804A\u5929\u8F93\u5165\u6846\u7684\u63D0\u793A\u8BCD\uFF1B`{{filename}}` \u4F1A\u88AB\u66FF\u6362\u4E3A\u5339\u914D\u6587\u4EF6\u7684\u6587\u4EF6\u540D\uFF08\u4E0D\u542B\u8DEF\u5F84\u3001\u4E0D\u542B .md\uFF09\u3002\u7559\u7A7A = \u53EA\u6253\u5F00\u804A\u5929\u3001\u4E0D\u9884\u586B\u3002").addTextArea(
+        (text) => {
+          var _a;
+          return text.setPlaceholder("\u8BF7\u5E2E\u6211\u5904\u7406\u7B14\u8BB0\u300C{{filename}}\u300D\u2026").setValue((_a = act.promptTemplate) != null ? _a : "").onChange((value) => {
+            act.promptTemplate = value;
+            void this.plugin.saveSettings();
+          });
+        }
+      );
+      promptSel.settingEl.addClass("ks-review-prompt-row");
+      this.markSearchable(promptSel, "\u4FA7\u8FB9\u680F \u6253\u5F00\u804A\u5929 prompt \u6A21\u677F \u63D0\u793A\u8BCD filename");
+    }
+    const testBtn = new import_obsidian3.Setting(body).setName("").setDesc("\u7ACB\u5373\u6309\u5F53\u524D\u6761\u4EF6\u6C42\u503C\u4E00\u6B21\uFF0C\u663E\u793A\u5339\u914D\u6587\u4EF6\u6570\u91CF\u3002").addButton(
+      (btn) => btn.setIcon("play").setButtonText("\u6D4B\u8BD5").onClick(() => {
+        const matches = evaluateCondition(this.app, this.plugin.settings, rule.condition);
+        new import_obsidian3.Notice(`\u6761\u4EF6\u300C${rule.name || "\u672A\u547D\u540D\u89C4\u5219"}\u300D\u5339\u914D ${matches.length} \u4E2A\u6587\u4EF6`);
+      })
+    );
+    this.markSearchable(testBtn, "\u4FA7\u8FB9\u680F \u6D4B\u8BD5 \u5339\u914D \u6570\u91CF \u6C42\u503C");
   }
   /**
    * Render the "AI 修改输出工具" group (v0.8.0): 说明 + 归档三配置（版本后缀/版本号属性名/
@@ -1798,7 +2234,8 @@ var SettingsRenderer = class {
           id: String(Date.now()),
           name: "\u65B0\u9884\u8BBE",
           systemPrompt: "",
-          enabledTools: [],
+          // v0.8.8：显式全开（而不是 []）——空数组现在是「全部关闭」。
+          enabledTools: TOOL_NAMES.slice(),
           toolOverrides: {}
         };
         this.plugin.settings.toolPresets.push(np);
@@ -1872,8 +2309,69 @@ var SettingsRenderer = class {
           });
         });
         this.markSearchable(daysSetting, "\u9884\u8BBE listRecentDays \u5929\u6570 \u8986\u5199 \u56DE\u770B\u5929\u6570");
+        const attrSetting = new import_obsidian3.Setting(body).setName("\u65E5\u671F\u5C5E\u6027\u540D\uFF08\u53EF\u9009\uFF09").setDesc("\u6BCF\u4E2A\u6587\u4EF6 frontmatter \u91CC\u8BB0\u5F55\u65E5\u671F\u7684\u5C5E\u6027\u540D\uFF08\u5982 created\uFF09\uFF1B\u7559\u7A7A = \u7528\u8BBE\u7F6E\u91CC\u300C\u65F6\u95F4\u5C5E\u6027\u300D\u3002").addText(
+          (text) => {
+            var _a;
+            return text.setPlaceholder("created").setValue((_a = preset.toolOverrides.recentOutputAttr) != null ? _a : "").onChange((value) => {
+              preset.toolOverrides.recentOutputAttr = value.trim() || void 0;
+              void this.plugin.saveSettings();
+            });
+          }
+        );
+        this.markSearchable(attrSetting, "\u9884\u8BBE list_recent_notes \u65E5\u671F\u5C5E\u6027 \u65F6\u95F4\u5C5E\u6027 recentOutputAttr");
+        const fmtSetting = new import_obsidian3.Setting(body).setName("\u65E5\u671F\u683C\u5F0F\uFF08\u53EF\u9009\uFF0Cmoment \u53CC\u5927\u62EC\u53F7\uFF09").setDesc("\u89E3\u6790\u8BE5\u5C5E\u6027\u7528\u7684 moment \u683C\u5F0F\uFF0C\u53CC\u5927\u62EC\u53F7\u5199\u6CD5\u5982 {{YYYY.MM.DD}}T{{HH:mm:ss}}\uFF1B\u7559\u7A7A = \u7528\u8BBE\u7F6E\u91CC\u300C\u65F6\u95F4\u683C\u5F0F\u300D\u3002").addText(
+          (text) => {
+            var _a;
+            return text.setPlaceholder("{{YYYY.MM.DD}}T{{HH:mm:ss}}").setValue((_a = preset.toolOverrides.recentOutputFormat) != null ? _a : "").onChange((value) => {
+              preset.toolOverrides.recentOutputFormat = value.trim() || void 0;
+              void this.plugin.saveSettings();
+            });
+          }
+        );
+        this.markSearchable(fmtSetting, "\u9884\u8BBE list_recent_notes \u65E5\u671F\u683C\u5F0F \u65F6\u95F4\u683C\u5F0F moment recentOutputFormat \u53CC\u5927\u62EC\u53F7");
       },
       listRecentIo,
+      rerenderAll
+    );
+    this.renderToolConfigGroup(
+      toolArea,
+      preset,
+      "list_recent_output_notes",
+      "\u5217\u51FA\u8F93\u51FA\u6587\u4EF6\u5939\u6700\u8FD1 N \u5929\u7B14\u8BB0\uFF08\u53C2\u6570\uFF1Adays \u56DE\u770B\u5929\u6570\uFF09",
+      (body) => {
+        const daysSetting = new import_obsidian3.Setting(body).setName("\u56DE\u770B\u5929\u6570").setDesc("\u8986\u5199 list_recent_output_notes \u7684 days\uFF1B\u7559\u7A7A = \u7528\u8BBE\u7F6E\u91CC\u300C\u6700\u8FD1 N \u5929\u300D\u3002").addText((text) => {
+          var _a;
+          text.inputEl.type = "number";
+          text.setValue(String((_a = preset.toolOverrides.listRecentDays) != null ? _a : ""));
+          text.onChange((value) => {
+            const n = parseInt(value, 10);
+            preset.toolOverrides.listRecentDays = value.trim() === "" || Number.isNaN(n) ? void 0 : n;
+            void this.plugin.saveSettings();
+          });
+        });
+        this.markSearchable(daysSetting, "\u9884\u8BBE list_recent_output_notes \u5929\u6570 \u56DE\u770B\u5929\u6570");
+        const attrSetting = new import_obsidian3.Setting(body).setName("\u65E5\u671F\u5C5E\u6027\u540D\uFF08\u5FC5\u586B\u5EFA\u8BAE\uFF09").setDesc("\u6BCF\u4E2A\u6587\u4EF6 frontmatter \u91CC\u8BB0\u5F55\u65E5\u671F\u7684\u5C5E\u6027\u540D\uFF08\u5982 created\uFF09\uFF1B\u7559\u7A7A = \u56DE\u9000\u7528\u8BBE\u7F6E\u91CC\u300C\u65F6\u95F4\u5C5E\u6027\u300D\uFF0C\u518D\u56DE\u9000\u6587\u4EF6\u521B\u5EFA\u65F6\u95F4\u3002").addText(
+          (text) => {
+            var _a;
+            return text.setPlaceholder("created").setValue((_a = preset.toolOverrides.recentOutputAttr) != null ? _a : "").onChange((value) => {
+              preset.toolOverrides.recentOutputAttr = value.trim() || void 0;
+              void this.plugin.saveSettings();
+            });
+          }
+        );
+        this.markSearchable(attrSetting, "\u9884\u8BBE list_recent_output_notes \u65E5\u671F\u5C5E\u6027 \u65F6\u95F4\u5C5E\u6027 recentOutputAttr");
+        const fmtSetting = new import_obsidian3.Setting(body).setName("\u65E5\u671F\u683C\u5F0F\uFF08\u5FC5\u586B\u5EFA\u8BAE\uFF0Cmoment \u53CC\u5927\u62EC\u53F7\uFF09").setDesc("\u89E3\u6790\u8BE5\u5C5E\u6027\u7528\u7684 moment \u683C\u5F0F\uFF0C\u53CC\u5927\u62EC\u53F7\u5199\u6CD5\u5982 {{YYYY.MM.DD}}T{{HH:mm:ss}}\uFF1B\u7559\u7A7A = \u56DE\u9000\u7528\u8BBE\u7F6E\u91CC\u300C\u65F6\u95F4\u683C\u5F0F\u300D\u3002").addText(
+          (text) => {
+            var _a;
+            return text.setPlaceholder("{{YYYY.MM.DD}}T{{HH:mm:ss}}").setValue((_a = preset.toolOverrides.recentOutputFormat) != null ? _a : "").onChange((value) => {
+              preset.toolOverrides.recentOutputFormat = value.trim() || void 0;
+              void this.plugin.saveSettings();
+            });
+          }
+        );
+        this.markSearchable(fmtSetting, "\u9884\u8BBE list_recent_output_notes \u65E5\u671F\u683C\u5F0F \u65F6\u95F4\u683C\u5F0F moment recentOutputFormat \u53CC\u5927\u62EC\u53F7");
+      },
+      listRecentOutputIo,
       rerenderAll
     );
     this.renderToolConfigGroup(
@@ -1974,6 +2472,13 @@ var SettingsRenderer = class {
           });
         });
         this.markSearchable(searchSetting, "\u9884\u8BBE searchMode search_output_notes \u6A21\u5F0F \u5B8C\u6574 \u9609\u5272");
+        const querySetting = new import_obsidian3.Setting(body).setName("\u5141\u8BB8\u4F7F\u7528 query\uFF08\u6B63\u6587/\u6587\u4EF6\u540D\u641C\u7D22\uFF09").setDesc("\u5F00 = AI \u53EF\u7528 query \u6309\u6B63\u6587/\u6587\u4EF6\u540D\u5B50\u4E32\u641C\u7D22\uFF1B\u5173 = \u53EA\u80FD\u6309 filters \u5C5E\u6027\u8FC7\u6EE4\uFF08schema \u79FB\u9664 query\uFF0CAI \u65E0\u6CD5\u4F7F\u7528\uFF09\u3002").addToggle(
+          (t) => t.setValue(preset.toolOverrides.searchQueryEnabled !== false).onChange((v) => {
+            preset.toolOverrides.searchQueryEnabled = v;
+            void this.plugin.saveSettings();
+          })
+        );
+        this.markSearchable(querySetting, "\u9884\u8BBE searchQueryEnabled query \u6B63\u6587\u641C\u7D22 \u6587\u4EF6\u540D\u641C\u7D22");
         const restrEl = body.createDiv({ cls: "ks-preset-restrictions" });
         this.renderSearchRestrictions(restrEl, preset);
       },
@@ -2276,7 +2781,7 @@ var SettingsRenderer = class {
     });
   }
   /** 折叠头部右侧的「启用该工具」开关（v0.8.0，折叠区外）。映射到 preset
-   *  `enabledTools` 白名单；语义与 v0.5.0 完全一致（空 = 全部启用）。 */
+   *  `enabledTools` 白名单；v0.8.8 语义：显式集合（缺省 = 全开，空数组 = 全关）。 */
   renderToolHeaderToggle(headEl, preset, name) {
     const toggleWrap = headEl.createSpan({ cls: "ks-tool-config-toggle" });
     toggleWrap.addEventListener("click", (ev) => ev.stopPropagation());
@@ -2289,25 +2794,21 @@ var SettingsRenderer = class {
     if (collapsed) this.presetExpanded.add(id);
     else this.presetExpanded.delete(id);
   }
-  /** Whether tool `name` is enabled in the preset (empty enabledTools = all on). */
+  /** v0.8.8：`enabledTools` = 显式启用集合。是数组时返回 includes(name)
+   *  （空数组 = 全部关闭）；不是数组（undefined/缺失）时返回 true（缺省 = 全开）。 */
   isToolEnabled(preset, name) {
-    const list = preset.enabledTools || [];
-    if (list.length === 0) return true;
-    return list.includes(name);
+    if (!Array.isArray(preset.enabledTools)) return true;
+    return preset.enabledTools.includes(name);
   }
-  /** Toggle tool `name` in the preset, writing back `enabledTools`. Empty list
-   *  means all-enabled; turning one off materialises the whitelist explicitly. */
+  /** v0.8.8：开关工具，写回 `enabledTools` 显式集合。关到空 = 保持空数组
+   *  （= 全部关闭），不再回退为全开（v0.8.8 修复反向语义陷阱）。 */
   setToolEnabled(preset, name, on) {
-    const list = preset.enabledTools || [];
-    if (list.length === 0) {
-      preset.enabledTools = on ? [] : TOOL_NAMES.filter((x) => x !== name);
+    if (!Array.isArray(preset.enabledTools)) preset.enabledTools = TOOL_NAMES.slice();
+    const list = preset.enabledTools;
+    if (on) {
+      if (!list.includes(name)) preset.enabledTools = list.concat(name);
     } else {
-      if (on) {
-        if (!list.includes(name)) preset.enabledTools = list.concat(name);
-      } else {
-        const next = list.filter((x) => x !== name);
-        preset.enabledTools = next.length === 0 ? [] : next;
-      }
+      preset.enabledTools = list.filter((x) => x !== name);
     }
     void this.plugin.saveSettings();
   }
@@ -2618,6 +3119,17 @@ ${body}`;
 }
 
 // src/utils/tools.ts
+function buildListRecentOutputNotesTool() {
+  return {
+    name: "list_recent_output_notes",
+    description: "\u5217\u51FA\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u6700\u8FD1 N \u5929\u7684 Markdown \u7B14\u8BB0\uFF08\u6807\u9898 + \u65F6\u95F4\u6233\uFF09\u3002",
+    input_schema: {
+      type: "object",
+      properties: { days: { type: "integer", description: "\u56DE\u770B\u5929\u6570\uFF1B\u7F3A\u7701\u7528\u8BBE\u7F6E\u7684\u6700\u8FD1 N \u5929" } },
+      required: []
+    }
+  };
+}
 var DAY_MS2 = 864e5;
 var FALLBACK_FORMATS2 = ["YYYY-MM-DD", "YYYY.MM.DD", "YYYY/MM/DD"];
 function buildAnthropicTools(yamlRules, noteTemplate, options) {
@@ -2728,14 +3240,30 @@ function parseEarliest(value, format, zeit) {
   if (m && typeof m.isValid === "function" && m.isValid()) return m.valueOf();
   return null;
 }
-function fileTimestamp(file, ctx) {
-  var _a, _b, _c, _d, _e, _f;
+function momentTemplateToFormat(tpl) {
+  const s = String(tpl != null ? tpl : "").trim();
+  if (!s.includes("{{")) return s;
+  let out = "";
+  let last = 0;
+  const re = /\{\{(.*?)\}\}/g;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > last) out += "[" + s.slice(last, m.index) + "]";
+    out += String(m[1]).trim();
+    last = m.index + m[0].length;
+  }
+  if (last < s.length) out += "[" + s.slice(last) + "]";
+  return out;
+}
+function fileTimestamp(file, ctx, overrides) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
   const settings = ctx.settings;
   const zeit = (_a = ctx.moment) != null ? _a : typeof window !== "undefined" ? window.moment : null;
-  const prop = (settings.timeAttr || "").trim();
-  const fm = (_d = (_c = (_b = ctx.app.metadataCache.getFileCache(file)) == null ? void 0 : _b.frontmatter) != null ? _c : file == null ? void 0 : file.frontmatter) != null ? _d : {};
+  const prop = ((_c = (_b = overrides == null ? void 0 : overrides.attr) != null ? _b : settings.timeAttr) != null ? _c : "").trim();
+  const formatTpl = ((_e = (_d = overrides == null ? void 0 : overrides.format) != null ? _d : settings.timeFormat) != null ? _e : "").trim();
+  const fm = (_h = (_g = (_f = ctx.app.metadataCache.getFileCache(file)) == null ? void 0 : _f.frontmatter) != null ? _g : file == null ? void 0 : file.frontmatter) != null ? _h : {};
   if (prop && fm && fm[prop] != null) {
-    const formats = [settings.timeFormat, ...FALLBACK_FORMATS2].filter(
+    const formats = [momentTemplateToFormat(formatTpl), ...FALLBACK_FORMATS2].filter(
       (f, i, arr) => !!f && arr.indexOf(f) === i
     );
     for (const format of formats) {
@@ -2743,7 +3271,7 @@ function fileTimestamp(file, ctx) {
       if (m && typeof m.isValid === "function" && m.isValid()) return m.valueOf();
     }
   }
-  return (_f = (_e = file == null ? void 0 : file.stat) == null ? void 0 : _e.ctime) != null ? _f : 0;
+  return (_j = (_i = file == null ? void 0 : file.stat) == null ? void 0 : _i.ctime) != null ? _j : 0;
 }
 function isValidFilename(title) {
   const t = (title || "").trim();
@@ -2764,13 +3292,42 @@ async function listRecentNotesTool(ctx, args) {
   const settings = ctx.settings;
   const now = (_a = ctx.now) != null ? _a : Date.now();
   const zeit = (_b = ctx.moment) != null ? _b : typeof window !== "undefined" ? window.moment : null;
-  const days = typeof (args == null ? void 0 : args.days) === "number" ? args.days : (_c = settings.recentDays) != null ? _c : 7;
+  const cap = Math.max(1, Math.floor((_c = settings.recentDays) != null ? _c : 7));
+  const days = typeof (args == null ? void 0 : args.days) === "number" ? Math.min(Math.max(1, Math.floor(args.days)), cap) : cap;
   const folder = (settings.sourceFolder || "/").trim();
   const earliest = parseEarliest((_d = settings.earliestTime) != null ? _d : "", (_e = settings.timeFormat) != null ? _e : "", zeit);
+  const overrides = ctx.recentOutputAttr || ctx.recentOutputFormat ? { attr: ctx.recentOutputAttr, format: ctx.recentOutputFormat } : void 0;
   const files = (_h = (_g = (_f = ctx.app.vault).getMarkdownFiles) == null ? void 0 : _g.call(_f)) != null ? _h : [];
   const entries = files.filter((f) => inFolder(f.path, folder)).map((f) => {
     var _a2, _b2;
-    return { f, ts: fileTimestamp(f, ctx), ctime: (_b2 = (_a2 = f == null ? void 0 : f.stat) == null ? void 0 : _a2.ctime) != null ? _b2 : 0 };
+    return { f, ts: fileTimestamp(f, ctx, overrides), ctime: (_b2 = (_a2 = f == null ? void 0 : f.stat) == null ? void 0 : _a2.ctime) != null ? _b2 : 0 };
+  });
+  if (earliest != null && entries.some((e) => e.ts < earliest)) {
+    return { error: `ERROR: \u5FEB\u7167\u66F4\u65E9\u4E8E\u6700\u65E9\u65F6\u95F4 ${settings.earliestTime}` };
+  }
+  const cutoff = Math.max(now - Math.max(1, Math.floor(days)) * DAY_MS2, earliest != null ? earliest : -Infinity);
+  const recent = entries.filter((e) => e.ts >= cutoff);
+  recent.sort((a, b) => b.ts - a.ts || a.ctime - b.ctime);
+  return {
+    result: recent.map((e) => {
+      var _a2, _b2;
+      return { title: stripExt((_b2 = (_a2 = e.f.basename) != null ? _a2 : e.f.name) != null ? _b2 : e.f.path), timestamp: e.ts };
+    })
+  };
+}
+async function listRecentOutputNotesTool(ctx, args) {
+  var _a, _b, _c, _d, _e, _f, _g, _h;
+  const settings = ctx.settings;
+  const now = (_a = ctx.now) != null ? _a : Date.now();
+  const zeit = (_b = ctx.moment) != null ? _b : typeof window !== "undefined" ? window.moment : null;
+  const days = typeof (args == null ? void 0 : args.days) === "number" ? args.days : (_c = settings.recentDays) != null ? _c : 7;
+  const folder = (settings.outputFolder || "/").trim();
+  const earliest = parseEarliest((_d = settings.earliestTime) != null ? _d : "", (_e = settings.timeFormat) != null ? _e : "", zeit);
+  const overrides = ctx.recentOutputAttr || ctx.recentOutputFormat ? { attr: ctx.recentOutputAttr, format: ctx.recentOutputFormat } : void 0;
+  const files = (_h = (_g = (_f = ctx.app.vault).getMarkdownFiles) == null ? void 0 : _g.call(_f)) != null ? _h : [];
+  const entries = files.filter((f) => inFolder(f.path, folder)).map((f) => {
+    var _a2, _b2;
+    return { f, ts: fileTimestamp(f, ctx, overrides), ctime: (_b2 = (_a2 = f == null ? void 0 : f.stat) == null ? void 0 : _a2.ctime) != null ? _b2 : 0 };
   });
   if (earliest != null && entries.some((e) => e.ts < earliest)) {
     return { error: `ERROR: \u5FEB\u7167\u66F4\u65E9\u4E8E\u6700\u65E9\u65F6\u95F4 ${settings.earliestTime}` };
@@ -2990,8 +3547,9 @@ function buildUpdateNoteYamlTool(updateRules) {
     }
   };
 }
-function buildSearchOutputNotesTool(searchMode, restrictions) {
+function buildSearchOutputNotesTool(searchMode, restrictions, queryEnabled) {
   const restricted = searchMode === "restricted";
+  const allowQuery = queryEnabled !== false;
   let filtersSchema;
   if (restricted) {
     const allowed = Array.isArray(restrictions) ? restrictions : [];
@@ -3018,13 +3576,13 @@ function buildSearchOutputNotesTool(searchMode, restrictions) {
     };
   }
   const properties = { filters: filtersSchema };
-  if (!restricted) {
+  if (allowQuery && !restricted) {
     properties.query = { type: "string", description: "\u6587\u4EF6\u540D\u6216\u6B63\u6587\u5305\u542B\u7684\u5B50\u4E32\uFF08\u5927\u5C0F\u5199\u4E0D\u654F\u611F\uFF09\u3002" };
   }
   properties.limit = { type: "integer", description: "\u8FD4\u56DE\u6761\u6570\u4E0A\u9650\uFF0C\u9ED8\u8BA4 20\uFF0C\u6700\u5927 100\u3002" };
   return {
     name: "search_output_notes",
-    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u641C\u7D22\u7B14\u8BB0\uFF0C\u53EA\u8FD4\u56DE\u5339\u914D\u7684\u6807\u9898\uFF08path + title\uFF09\uFF1B\u9700\u8981\u6B63\u6587\u5168\u6587\u8BF7\u7528 read_output_note\u3002filters \u7684\u503C\u4E3A\u5305\u542B\u5339\u914D\uFF08\u5B50\u4E32\u3001\u5927\u5C0F\u5199\u4E0D\u654F\u611F\uFF09\uFF1Bquery \u4E3A\u6B63\u6587/\u6587\u4EF6\u540D\u5B50\u4E32\uFF1Blimit \u9ED8\u8BA4 20 \u6700\u5927 100\u3002",
+    description: '\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u641C\u7D22\u7B14\u8BB0\uFF0C\u53EA\u8FD4\u56DE\u5339\u914D\u7684\u6807\u9898\uFF08path + title\uFF09\uFF1B\u9700\u8981\u6B63\u6587\u5168\u6587\u8BF7\u7528 read_output_note\u3002filters \u6309 frontmatter \u952E\u503C\u5BF9\u8FC7\u6EE4\uFF0C\u503C\u4E3A\u5305\u542B\u5339\u914D\uFF08\u5B50\u4E32\u3001\u5927\u5C0F\u5199\u4E0D\u654F\u611F\uFF09\uFF1B\u53EF\u4F20\u6570\u7EC4 [{"key":"\u5C5E\u6027\u540D","value":"\u503C"}] \u6216\u5BF9\u8C61 {"\u5C5E\u6027\u540D":"\u503C"}\uFF0C\u4E24\u79CD\u5199\u6CD5\u90FD\u652F\u6301\u3002\u6CE8\u610F\uFF1A\u5C5E\u6027\u7F3A\u5931\u6216\u4E0D\u5305\u542B\u8BE5\u503C\u7684\u6587\u4EF6**\u4E0D\u4F1A**\u51FA\u73B0\u5728\u7ED3\u679C\u91CC\uFF08\u9664\u975E filters \u4E3A\u7A7A = \u4E0D\u6309\u5C5E\u6027\u8FC7\u6EE4\uFF09\u3002' + (allowQuery ? "query \u4E3A\u6B63\u6587/\u6587\u4EF6\u540D\u5B50\u4E32\uFF1B" : "\u6B64\u5DE5\u5177**\u4E0D\u5141\u8BB8\u4F7F\u7528 query**\uFF08\u9884\u8BBE\u5DF2\u7981\u7528\u6B63\u6587/\u6587\u4EF6\u540D\u5B50\u4E32\u641C\u7D22\uFF09\uFF0C\u53EA\u80FD\u6309 filters \u5C5E\u6027\u8FC7\u6EE4\uFF1B") + "limit \u9ED8\u8BA4 20 \u6700\u5927 100\u3002",
     input_schema: { type: "object", properties, required: [] }
   };
 }
@@ -3073,8 +3631,21 @@ async function searchOutputNotesTool(ctx, args) {
   var _a, _b, _c, _d, _e, _f, _g, _h;
   const settings = ctx.settings;
   const folder = (settings.outputFolder || "/").trim();
-  const filters = Array.isArray(args == null ? void 0 : args.filters) ? args.filters : [];
-  const query = typeof (args == null ? void 0 : args.query) === "string" ? args.query : "";
+  const rawFilters = args == null ? void 0 : args.filters;
+  let filters = [];
+  if (Array.isArray(rawFilters)) {
+    filters = rawFilters;
+  } else if (rawFilters && typeof rawFilters === "object") {
+    filters = Object.entries(rawFilters).map(([key, value]) => ({
+      key,
+      value: value == null ? "" : String(value)
+    }));
+  }
+  const queryRaw = typeof (args == null ? void 0 : args.query) === "string" ? args.query : "";
+  if (ctx.searchQueryEnabled === false && queryRaw) {
+    return { error: "ERROR: \u6B64\u641C\u7D22\u5DE5\u5177\u4E0D\u5141\u8BB8\u4F7F\u7528 query\uFF08\u9884\u8BBE\u5DF2\u7981\u7528\u6B63\u6587/\u6587\u4EF6\u540D\u5B50\u4E32\u641C\u7D22\uFF09\uFF0C\u8BF7\u53EA\u6309 filters \u5C5E\u6027\u8FC7\u6EE4" };
+  }
+  const query = queryRaw;
   let limit = typeof (args == null ? void 0 : args.limit) === "number" ? Math.floor(args.limit) : 20;
   if (!Number.isFinite(limit) || limit <= 0) limit = 20;
   if (limit > 100) limit = 100;
@@ -3124,7 +3695,7 @@ function buildModifyOutputNoteTool(yamlRules, options) {
   const { yamlSchema } = buildYamlSchema(rules, restrictYaml, "\u4FEE\u6539");
   return {
     name: "modify_output_note",
-    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u8986\u76D6\u4FEE\u6539\u4E00\u7BC7\u5DF2\u6709\u7B14\u8BB0\u7684\u6B63\u6587\u4E0E frontmatter\u3002sections \u7684\u952E\u5FC5\u987B\u662F\u539F\u6587\u4E2D\u5DF2\u5B58\u5728\u7684\u6807\u9898\u6587\u672C\uFF08\u503C=\u8BE5\u6807\u9898\u4E0B\u8981\u5199\u5165\u7684\u65B0\u5185\u5BB9\uFF09\uFF1A\u53EA\u80FD\u4FEE\u6539\u6807\u9898\u4E0B\u7684\u6587\u5B57\uFF0C\u4E0D\u80FD\u4FEE\u6539\u6807\u9898\u6587\u5B57\u6216\u65B0\u589E\u6807\u9898\uFF0C\u7981\u6B62\u4EE5 # \u7B26\u53F7\u521B\u5EFA\u4EFB\u4F55\u6807\u9898\u3002frontmatter \u53EA\u80FD\u4F7F\u7528\u5DF2\u914D\u7F6E\u7684\u5C5E\u6027\uFF08\u82E5\u5F00\u542F\u9650\u5236\uFF09\u3002",
+    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u8986\u76D6\u4FEE\u6539\u4E00\u7BC7\u5DF2\u6709\u7B14\u8BB0\u7684\u6B63\u6587\u4E0E frontmatter\u3002\u6B64\u5DE5\u5177**\u4E0D\u505A\u4EFB\u4F55\u5F52\u6863\u3001\u4E0D\u5199\u7248\u672C\u53F7\u3001\u4E0D\u521B\u5EFA\u4EFB\u4F55\u9644\u52A0\u6587\u4EF6**\u2014\u2014\u76F4\u63A5\u539F\u5730\u8986\u76D6\u539F\u6587\u4EF6\u3002sections \u7684\u952E\u5FC5\u987B\u662F\u539F\u6587\u4E2D\u5DF2\u5B58\u5728\u7684\u6807\u9898\u6587\u672C\uFF08\u503C=\u8BE5\u6807\u9898\u4E0B\u8981\u5199\u5165\u7684\u65B0\u5185\u5BB9\uFF09\uFF1A\u53EA\u80FD\u4FEE\u6539\u6807\u9898\u4E0B\u7684\u6587\u5B57\uFF0C\u4E0D\u80FD\u4FEE\u6539\u6807\u9898\u6587\u5B57\u6216\u65B0\u589E\u6807\u9898\uFF0C\u7981\u6B62\u4EE5 # \u7B26\u53F7\u521B\u5EFA\u4EFB\u4F55\u6807\u9898\u3002frontmatter \u53EA\u80FD\u4F7F\u7528\u5DF2\u914D\u7F6E\u7684\u5C5E\u6027\uFF08\u82E5\u5F00\u542F\u9650\u5236\uFF09\u3002\u9ED8\u8BA4\u4FEE\u6539\u7B14\u8BB0\u8BF7\u7528\u672C\u5DE5\u5177\uFF1B\u53EA\u6709\u7528\u6237\u660E\u786E\u8981\u6C42\u300C\u4FDD\u7559\u4FEE\u6539\u524D\u7684\u7248\u672C/\u5F52\u6863\u300D\u65F6\u624D\u7528 modify_output_note_versioned\u3002",
     input_schema: {
       type: "object",
       properties: {
@@ -3147,7 +3718,7 @@ function buildModifyOutputNoteVersionedTool(yamlRules, options) {
   const { yamlSchema } = buildYamlSchema(rules, restrictYaml, "\u4FEE\u6539");
   return {
     name: "modify_output_note_versioned",
-    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u8986\u76D6\u4FEE\u6539\u4E00\u7BC7\u5DF2\u6709\u7B14\u8BB0\u5E76\u81EA\u52A8\u5F52\u6863\uFF08\u4E0E modify_output_note \u76F8\u540C\u7684\u53C2\u6570\uFF0C\u7248\u672C/\u5F52\u6863\u81EA\u52A8\u5904\u7406\uFF09\u3002sections \u7684\u952E\u5FC5\u987B\u662F\u539F\u6587\u4E2D\u5DF2\u5B58\u5728\u7684\u6807\u9898\u6587\u672C\uFF08\u503C=\u8BE5\u6807\u9898\u4E0B\u8981\u5199\u5165\u7684\u65B0\u5185\u5BB9\uFF09\uFF1A\u53EA\u80FD\u4FEE\u6539\u6807\u9898\u4E0B\u7684\u6587\u5B57\uFF0C\u4E0D\u80FD\u4FEE\u6539\u6807\u9898\u6587\u5B57\u6216\u65B0\u589E\u6807\u9898\uFF0C\u7981\u6B62\u4EE5 # \u7B26\u53F7\u521B\u5EFA\u4EFB\u4F55\u6807\u9898\u3002\u6BCF\u6B21\u4FEE\u6539\u524D\u628A\u5F53\u524D\u6587\u4EF6\u7248\u672C\u81EA\u52A8\u8FFD\u52A0\u5230\u8BE5\u6587\u4EF6\u7684\u5F52\u6863\u6587\u4EF6\uFF08\u539F\u6587\u540D+\u5F52\u6863\u540E\u7F00.md\uFF09\uFF0C\u5E76\u5199\u5165\u65B0\u7248\u672C\u53F7\u4E0E\u5F52\u6863\u6807\u8BB0\u3002",
+    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u8986\u76D6\u4FEE\u6539\u4E00\u7BC7\u5DF2\u6709\u7B14\u8BB0\u5E76\u81EA\u52A8\u5F52\u6863\uFF08\u4E0E modify_output_note \u76F8\u540C\u7684\u53C2\u6570\uFF0C\u7248\u672C/\u5F52\u6863\u81EA\u52A8\u5904\u7406\uFF09\u3002**\u4EC5\u5F53\u7528\u6237\u660E\u786E\u8981\u6C42\u300C\u4FDD\u7559\u4FEE\u6539\u524D\u7684\u7248\u672C\u300D\u300C\u5F52\u6863\u300D\u300C\u5386\u53F2\u7248\u672C\u300D\u65F6\u624D\u4F7F\u7528\u672C\u5DE5\u5177**\uFF1B\u666E\u901A\u4FEE\u6539\u8BF7\u7528 modify_output_note\uFF08\u4E0D\u505A\u5F52\u6863\uFF09\u3002sections \u7684\u952E\u5FC5\u987B\u662F\u539F\u6587\u4E2D\u5DF2\u5B58\u5728\u7684\u6807\u9898\u6587\u672C\uFF08\u503C=\u8BE5\u6807\u9898\u4E0B\u8981\u5199\u5165\u7684\u65B0\u5185\u5BB9\uFF09\uFF1A\u53EA\u80FD\u4FEE\u6539\u6807\u9898\u4E0B\u7684\u6587\u5B57\uFF0C\u4E0D\u80FD\u4FEE\u6539\u6807\u9898\u6587\u5B57\u6216\u65B0\u589E\u6807\u9898\uFF0C\u7981\u6B62\u4EE5 # \u7B26\u53F7\u521B\u5EFA\u4EFB\u4F55\u6807\u9898\u3002\u6BCF\u6B21\u4FEE\u6539\u524D\u628A\u5F53\u524D\u6587\u4EF6\u7248\u672C\u81EA\u52A8\u8FFD\u52A0\u5230\u8BE5\u6587\u4EF6\u7684\u5F52\u6863\u6587\u4EF6\uFF08\u539F\u6587\u540D+\u5F52\u6863\u540E\u7F00.md\uFF09\uFF0C\u5E76\u5199\u5165\u65B0\u7248\u672C\u53F7\u4E0E\u5F52\u6863\u6807\u8BB0\u3002",
     input_schema: {
       type: "object",
       properties: {
@@ -3290,7 +3861,7 @@ function buildSystemPrompt(preset) {
   return (p || "").trim();
 }
 function resolveToolConfig(settings) {
-  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
   const preset = findActivePreset(settings);
   const oc = preset == null ? void 0 : preset.outputConfig;
   const yamlRules = (oc == null ? void 0 : oc.yamlRulesEnabled) === true && Array.isArray(oc.yamlRules) ? oc.yamlRules : Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
@@ -3306,8 +3877,9 @@ function resolveToolConfig(settings) {
   if (settings.updateYamlToolEnabled) names.push("update_note_yaml");
   names.push("search_output_notes");
   names.push("modify_output_note", "modify_output_note_versioned", "read_output_note");
+  names.push("list_recent_output_notes");
   const enabled = preset == null ? void 0 : preset.enabledTools;
-  if (Array.isArray(enabled) && enabled.length > 0) {
+  if (Array.isArray(enabled)) {
     names = names.filter((n) => enabled.includes(n));
   }
   if (((_a = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _a.createNoteEnabled) === false) names = names.filter((n) => n !== "create_note");
@@ -3324,7 +3896,8 @@ function resolveToolConfig(settings) {
       tools.push(
         buildSearchOutputNotesTool(
           (_d = (_c = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _c.searchMode) != null ? _d : "full",
-          (_e = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _e.searchRestrictions
+          (_e = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _e.searchRestrictions,
+          (_f = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _f.searchQueryEnabled
         )
       );
     } else if (n === "modify_output_note") {
@@ -3333,16 +3906,21 @@ function resolveToolConfig(settings) {
       tools.push(buildModifyOutputNoteVersionedTool(modifyYamlRules, { createRestrictYaml }));
     } else if (n === "read_output_note") {
       tools.push(buildReadOutputNoteTool());
+    } else if (n === "list_recent_output_notes") {
+      tools.push(buildListRecentOutputNotesTool());
     }
   }
-  const searchMode = (_g = (_f = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _f.searchMode) != null ? _g : "full";
+  const searchMode = (_h = (_g = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _g.searchMode) != null ? _h : "full";
   return {
     tools,
     systemPrompt: buildSystemPrompt(preset),
     yamlRules,
-    listRecentDays: (_i = (_h = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _h.listRecentDays) != null ? _i : settings.recentDays,
+    listRecentDays: (_j = (_i = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _i.listRecentDays) != null ? _j : settings.recentDays,
     searchMode,
-    searchRestrictions: (_j = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _j.searchRestrictions,
+    searchRestrictions: (_k = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _k.searchRestrictions,
+    searchQueryEnabled: ((_l = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _l.searchQueryEnabled) !== false,
+    recentOutputAttr: (_m = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _m.recentOutputAttr,
+    recentOutputFormat: (_n = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _n.recentOutputFormat,
     updateYamlRules,
     noteTemplate,
     modifyYamlRules,
@@ -3413,6 +3991,9 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     /** 与上面的 pending 配对的 timer id，用于在块结算时取消挂起的节流渲染。 */
     this.mdRenderTimers = {};
     this.streamState = "idle";
+    /** v0.8.6：审核页注入的上下文（openChatWith → setViewState state → setState）。
+     *  v0.8.9：携带**最终 prompt 文本**（审核页已用模板替换 {{filename}} → 文件名）。 */
+    this.pendingContext = null;
     this.streamCursorEl = null;
     /** 预设选择器条（v0.5.0 DOM，现移入输入卡左工具区）。 */
     this.presetBarEl = null;
@@ -3435,6 +4016,60 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
   }
   getDisplayText() {
     return "Knowledge System Chat";
+  }
+  // -------------------------------------------------------------------------
+  // v0.8.6：带上下文打开（审核页「AI 修改」）——setViewState 的 state 在这里接收，
+  // onOpen 完成后应用（预设切换 + 预填引用该文件的输入框）。
+  // v0.8.9：上下文携带**最终 prompt 文本**（审核页已用「AI 修改提示词」模板替换
+  // `{{filename}}` → 文件名）；聊天视图只负责预填，不再拼接文件路径。
+  // -------------------------------------------------------------------------
+  getState() {
+    return this.pendingContext ? { ...this.pendingContext } : {};
+  }
+  async setState(state, result) {
+    this.pendingContext = {
+      prompt: typeof (state == null ? void 0 : state.prompt) === "string" && state.prompt ? state.prompt : void 0,
+      presetId: typeof (state == null ? void 0 : state.presetId) === "string" && state.presetId ? state.presetId : void 0
+    };
+    if (this.inputEl) this.applyPendingContext();
+  }
+  /** 外部（审核页）预填输入框内容并聚焦。 */
+  prefillInput(text) {
+    if (!this.inputEl) return;
+    this.inputEl.value = text;
+    this.onInputChanged();
+    this.inputEl.focus();
+  }
+  /**
+   * v0.8.9：外部（审核页）注入上下文——切换到指定预设 + 预填完整 prompt 文本。
+   * 供 `openChatWith` 在**复用已有聊天视图**时调用：Obsidian 的 setViewState 在
+   * leaf 已是同类型视图时只调 setState 不重跑 onOpen，导致 applyPendingContext
+   * 不会执行（v0.8.9 实测修复）。
+   */
+  async applyChatContext(prompt, presetId) {
+    this.pendingContext = {
+      prompt: typeof prompt === "string" && prompt ? prompt : void 0,
+      presetId: typeof presetId === "string" && presetId ? presetId : void 0
+    };
+    this.applyPendingContext();
+  }
+  /** 应用 setState 收到的上下文（onOpen 建好 DOM 后调用一次）。 */
+  applyPendingContext() {
+    const ctx = this.pendingContext;
+    if (!ctx) return;
+    if (ctx.presetId) {
+      const presets = this.plugin.settings.toolPresets || [];
+      const p = presets.find((x) => x.id === ctx.presetId);
+      if (p) {
+        this.plugin.settings.activePresetId = ctx.presetId;
+        void this.plugin.saveSettings();
+        this.refreshPresetConfig();
+      }
+    }
+    if (ctx.prompt) {
+      this.prefillInput(ctx.prompt);
+    }
+    this.pendingContext = null;
   }
   async onOpen() {
     const container = this.contentEl;
@@ -3476,6 +4111,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     });
     this.streamState = "idle";
     this.onInputChanged();
+    this.applyPendingContext();
   }
   async onClose() {
     var _a;
@@ -3958,7 +4594,10 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
         settings: effSettings,
         moment: window.moment,
         searchMode: cfg == null ? void 0 : cfg.searchMode,
-        searchRestrictions: cfg == null ? void 0 : cfg.searchRestrictions
+        searchRestrictions: cfg == null ? void 0 : cfg.searchRestrictions,
+        searchQueryEnabled: cfg == null ? void 0 : cfg.searchQueryEnabled,
+        recentOutputAttr: cfg == null ? void 0 : cfg.recentOutputAttr,
+        recentOutputFormat: cfg == null ? void 0 : cfg.recentOutputFormat
       };
       const toolResults = {};
       for (const b of blocks.filter((x) => x.type === "tool_use")) {
@@ -4299,13 +4938,18 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     this.copyText(this.buildDiagnosticLog(), this.copyLogBtn, "clipboard-copy");
   }
   async executeTool(ctx, name, input) {
-    var _a, _b;
+    var _a, _b, _c;
     const a = input != null ? input : {};
     const cfg = this.resolvedConfig;
     try {
       if (name === "list_recent_notes") {
         const days = (_a = a.days) != null ? _a : cfg == null ? void 0 : cfg.listRecentDays;
         const r = await listRecentNotesTool(ctx, { days });
+        return "error" in r ? `ERROR: ${r.error}` : JSON.stringify(r.result);
+      }
+      if (name === "list_recent_output_notes") {
+        const days = (_b = a.days) != null ? _b : cfg == null ? void 0 : cfg.listRecentDays;
+        const r = await listRecentOutputNotesTool(ctx, { days });
         return "error" in r ? `ERROR: ${r.error}` : JSON.stringify(r.result);
       }
       if (name === "read_note") {
@@ -4340,22 +4984,387 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       }
       return `ERROR: \u672A\u77E5\u5DE5\u5177 ${name}`;
     } catch (e) {
-      return `ERROR: ${(_b = e == null ? void 0 : e.message) != null ? _b : "\u5DE5\u5177\u6267\u884C\u5931\u8D25"}`;
+      return `ERROR: ${(_c = e == null ? void 0 : e.message) != null ? _c : "\u5DE5\u5177\u6267\u884C\u5931\u8D25"}`;
     }
   }
 };
 
+// src/sidebarView.ts
+var import_obsidian6 = require("obsidian");
+var VIEW_TYPE_SIDEBAR = "knowledge-system-sidebar";
+var REFRESH_DEBOUNCE_MS = 1e3;
+var POLL_INTERVAL_MS = 6e4;
+var SidebarView = class extends import_obsidian6.ItemView {
+  constructor(plugin, leaf) {
+    super(leaf);
+    /** 防抖定时器（vault/metadataCache 事件合并）。 */
+    this.debounceTimer = null;
+    /** 60 秒轮询定时器。 */
+    this.pollTimer = null;
+    /** onClose 后置位，防止挂起的防抖回调在视图关闭后仍渲染。 */
+    this.disposed = false;
+    this.plugin = plugin;
+  }
+  getViewType() {
+    return VIEW_TYPE_SIDEBAR;
+  }
+  getIcon() {
+    return "panel-left";
+  }
+  getDisplayText() {
+    return "\u63D0\u9192\u9762\u677F";
+  }
+  async onOpen() {
+    const container = this.contentEl;
+    container.empty();
+    container.addClass("ks-sidebar-view");
+    this.disposed = false;
+    this.render();
+    this.registerEvent(this.app.vault.on("create", () => this.scheduleRefresh()));
+    this.registerEvent(this.app.vault.on("delete", () => this.scheduleRefresh()));
+    this.registerEvent(this.app.vault.on("rename", () => this.scheduleRefresh()));
+    this.registerEvent(this.app.vault.on("modify", () => this.scheduleRefresh()));
+    this.registerEvent(this.app.metadataCache.on("changed", () => this.scheduleRefresh()));
+    this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleRefresh()));
+    this.pollTimer = window.setInterval(() => this.render(), POLL_INTERVAL_MS);
+  }
+  async onClose() {
+    this.disposed = true;
+    if (this.debounceTimer !== null) {
+      window.clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    if (this.pollTimer !== null) {
+      window.clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.contentEl.empty();
+  }
+  /** 防抖刷新：1 秒内的连续事件合并为一次重渲染。 */
+  scheduleRefresh() {
+    if (this.disposed) return;
+    if (this.debounceTimer !== null) window.clearTimeout(this.debounceTimer);
+    this.debounceTimer = window.setTimeout(() => {
+      this.debounceTimer = null;
+      if (!this.disposed) this.render();
+    }, REFRESH_DEBOUNCE_MS);
+  }
+  /** 全量重渲染：头部（标题 + 刷新按钮）+ 规则条目列表。 */
+  render() {
+    if (this.disposed) return;
+    const container = this.contentEl;
+    container.empty();
+    const head = container.createDiv({ cls: "ks-sidebar-head" });
+    head.createSpan({ cls: "ks-sidebar-title", text: "\u63D0\u9192" });
+    const refreshBtn = head.createEl("button", {
+      cls: "clickable-icon ks-sidebar-refresh",
+      attr: { "aria-label": "\u5237\u65B0", "title": "\u5237\u65B0" }
+    });
+    (0, import_obsidian6.setIcon)(refreshBtn, "refresh-cw");
+    refreshBtn.addEventListener("click", () => this.render());
+    const rules = this.plugin.settings.sidebarRules || [];
+    const list = container.createDiv({ cls: "ks-sidebar-list" });
+    if (rules.length === 0) {
+      list.createDiv({ cls: "ks-sidebar-empty", text: "\u672A\u914D\u7F6E\u89C4\u5219\uFF08\u8BF7\u5728\u8BBE\u7F6E \u2192 \u4FA7\u8FB9\u680F \u6DFB\u52A0\u89C4\u5219\uFF09" });
+      return;
+    }
+    let shown = 0;
+    for (const rule of rules) {
+      if (!rule || rule.enabled === false) continue;
+      const matches = evaluateCondition(this.app, this.plugin.settings, rule.condition);
+      if (matches.length === 0) continue;
+      shown += this.renderRuleEntries(list, rule, matches);
+    }
+    if (shown === 0) {
+      list.createDiv({ cls: "ks-sidebar-empty", text: "\u6CA1\u6709\u6EE1\u8DB3\u6761\u4EF6\u7684\u89C4\u5219" });
+    }
+  }
+  /** 渲染一条规则下的条目；返回渲染的条目数。 */
+  renderRuleEntries(list, rule, matches) {
+    if (rule.action.type === "open_review") {
+      const row = list.createDiv({ cls: "ks-sidebar-item" });
+      row.createDiv({ cls: "ks-sidebar-item-desc", text: `${rule.name || "\u672A\u547D\u540D\u89C4\u5219"}\uFF08${matches.length} \u4E2A\u5339\u914D\uFF09` });
+      const btn = row.createEl("button", {
+        cls: "clickable-icon ks-sidebar-item-btn",
+        attr: { "aria-label": "\u6253\u5F00\u5BA1\u6838\u9762\u677F", "title": "\u6253\u5F00\u5BA1\u6838\u9762\u677F" }
+      });
+      (0, import_obsidian6.setIcon)(btn, "external-link");
+      btn.addEventListener("click", () => {
+        void this.plugin.openReviewView();
+      });
+      return 1;
+    }
+    const action = rule.action;
+    for (const file of matches) {
+      const row = list.createDiv({ cls: "ks-sidebar-item" });
+      row.createDiv({ cls: "ks-sidebar-item-desc", text: this.entryDescription(file, rule) });
+      const btn = row.createEl("button", {
+        cls: "clickable-icon ks-sidebar-item-btn",
+        attr: { "aria-label": "\u6253\u5F00\u804A\u5929", "title": "\u6253\u5F00\u804A\u5929" }
+      });
+      (0, import_obsidian6.setIcon)(btn, "message-square");
+      btn.addEventListener("click", () => {
+        const template = action.promptTemplate || "";
+        const prompt = renderPromptTemplate(template, file.basename);
+        void this.plugin.openChatWith(prompt, action.presetId || void 0);
+      });
+    }
+    return matches.length;
+  }
+  /** open_chat 条目的描述文本（文件名；缺属性规则附带说明）。 */
+  entryDescription(file, rule) {
+    if (rule.condition.type === "missing_property") {
+      const prop = (rule.condition.property || "").trim();
+      const expected = rule.condition.expectedValue;
+      if (expected !== void 0 && expected !== null && String(expected).trim() !== "") {
+        return `${file.basename}.md ${prop}\u2260${String(expected)}`;
+      }
+      return `${file.basename}.md \u7F3A${prop || "\u5C5E\u6027"}`;
+    }
+    return `${file.basename}.md`;
+  }
+};
+
+// src/reviewView.ts
+var import_obsidian7 = require("obsidian");
+var REVIEW_VIEW_TYPE = "ks-review";
+function excludeValueLiteral(value) {
+  const v = String(value).trim();
+  if (v === "true" || v === "false") return v;
+  if (/^-?\d+(\.\d+)?$/.test(v)) return v;
+  return JSON.stringify(v);
+}
+function buildReviewBaseYaml(outputFolder, reviewAttr, excludes) {
+  const folder = (outputFolder || "/").replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const conditions = [];
+  if (folder !== "/") conditions.push(`file.inFolder("${folder}")`);
+  for (const ex of excludes || []) {
+    if (!ex || !ex.key) continue;
+    conditions.push(`note["${ex.key}"] != ${excludeValueLiteral(ex.value)}`);
+  }
+  const lines = [];
+  if (conditions.length > 0) {
+    lines.push("filters:");
+    lines.push("  and:");
+    for (const c of conditions) lines.push(`    - ${c}`);
+  }
+  lines.push("views:");
+  lines.push(`  - type: ${REVIEW_VIEW_TYPE}`);
+  lines.push("    name: \u5BA1\u6838");
+  lines.push("    order:");
+  lines.push("      - file.name");
+  lines.push(`      - note["${reviewAttr}"]`);
+  return lines.join("\n") + "\n";
+}
+function reviewBasePathOf(plugin) {
+  const p = (plugin.settings.reviewBasePath || "\u5BA1\u6838.base").replace(/\\/g, "/").trim();
+  return p || "\u5BA1\u6838.base";
+}
+async function ensureReviewBase(plugin) {
+  const vault = plugin.app.vault;
+  const path = reviewBasePathOf(plugin);
+  const yaml = buildReviewBaseYaml(plugin.settings.outputFolder, plugin.settings.reviewAttr, plugin.settings.reviewExcludes);
+  const existing = vault.getAbstractFileByPath(path);
+  if (existing instanceof import_obsidian7.TFile) {
+    try {
+      const cur = await vault.read(existing);
+      if (cur !== yaml) await vault.modify(existing, yaml);
+    } catch (e) {
+    }
+    return existing;
+  }
+  try {
+    const created = await vault.create(path, yaml);
+    return created instanceof import_obsidian7.TFile ? created : null;
+  } catch (e) {
+    new import_obsidian7.Notice(`\u521B\u5EFA\u5BA1\u6838\u9762\u677F\u5931\u8D25\uFF1A${String(e)}`);
+    return null;
+  }
+}
+async function regenerateReviewBaseFile(plugin) {
+  const vault = plugin.app.vault;
+  const path = reviewBasePathOf(plugin);
+  const yaml = buildReviewBaseYaml(plugin.settings.outputFolder, plugin.settings.reviewAttr, plugin.settings.reviewExcludes);
+  try {
+    const existing = vault.getAbstractFileByPath(path);
+    if (existing instanceof import_obsidian7.TFile) {
+      await vault.modify(existing, yaml);
+      return existing;
+    }
+    const created = await vault.create(path, yaml);
+    return created instanceof import_obsidian7.TFile ? created : null;
+  } catch (e) {
+    new import_obsidian7.Notice(`\u91CD\u65B0\u751F\u6210\u5BA1\u6838\u9762\u677F\u5931\u8D25\uFF1A${String(e)}`);
+    return null;
+  }
+}
+var ReviewBasesView = class extends import_obsidian7.Component {
+  constructor(controller, containerEl, plugin) {
+    super();
+    this.type = REVIEW_VIEW_TYPE;
+    this.allProperties = [];
+    this.data = null;
+    /** 审核页头部选中的预设（「AI 修改」用它）；默认 = 当前聊天预设。 */
+    this.presetId = "";
+    this.containerEl = containerEl;
+    this.plugin = plugin;
+    this.app = plugin.app;
+    this.presetId = plugin.settings.activePresetId || "";
+  }
+  onload() {
+    this.containerEl.addClass("ks-review-view");
+    this.render();
+  }
+  /** Bases 查询结果变化（vault 文件/frontmatter 变化）时自动重渲染。 */
+  onDataUpdated() {
+    this.render();
+  }
+  render() {
+    var _a, _b, _c;
+    this.containerEl.empty();
+    const head = this.containerEl.createDiv({ cls: "ks-review-head" });
+    head.createSpan({ cls: "ks-review-title", text: "\u5BA1\u6838" });
+    const presets = this.plugin.settings.toolPresets || [];
+    const sel = head.createEl("select", { cls: "ks-review-preset" });
+    const def = sel.createEl("option");
+    def.value = "";
+    def.textContent = "AI \u4FEE\u6539\u9884\u8BBE\uFF1A\u9ED8\u8BA4\uFF08\u5168\u90E8\u5DE5\u5177\uFF09";
+    for (const p of presets) {
+      const o = sel.createEl("option");
+      o.value = p.id;
+      o.textContent = p.name;
+      if (p.id === this.presetId) o.selected = true;
+    }
+    sel.addEventListener("change", () => {
+      this.presetId = sel.value;
+    });
+    const refreshBtn = head.createEl("button", { cls: "clickable-icon ks-review-refresh", attr: { "aria-label": "\u5237\u65B0", "title": "\u5237\u65B0" } });
+    (0, import_obsidian7.setIcon)(refreshBtn, "refresh-cw");
+    refreshBtn.addEventListener("click", () => this.render());
+    head.createSpan({ cls: "ks-review-hint", text: "\u70B9\u51FB\u7B14\u8BB0\u6807\u9898\u6253\u5F00\u6587\u4EF6\uFF1B\u70B9\u51FB\u804A\u5929\u56FE\u6807\u7528\u6240\u9009\u9884\u8BBE\u8FDB\u5165\u804A\u5929\u5E76\u5F15\u7528\u6B64\u6587\u4EF6\u3002" });
+    const reviewAttr = this.plugin.settings.reviewAttr;
+    const reviewDefault = this.plugin.settings.reviewDefault;
+    const excludes = this.plugin.settings.reviewExcludes || [];
+    const list = this.containerEl.createDiv({ cls: "ks-review-list" });
+    const entries = (_b = (_a = this.data) == null ? void 0 : _a.data) != null ? _b : [];
+    let count = 0;
+    for (const entry of entries) {
+      const file = entry.file;
+      if (!file) continue;
+      const fm = (_c = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _c.frontmatter;
+      if (!isUnreviewed(fm, reviewAttr, reviewDefault)) continue;
+      if (isExcluded(fm, excludes)) continue;
+      count++;
+      const row = list.createDiv({ cls: "ks-review-item" });
+      const info = row.createDiv({ cls: "ks-review-item-info" });
+      const nameEl = info.createDiv({ cls: "ks-review-item-name", text: file.basename });
+      nameEl.addEventListener("click", () => {
+        void this.app.workspace.getLeaf("tab").openFile(file);
+      });
+      const raw = fm == null ? void 0 : fm[reviewAttr];
+      const isDone = raw !== void 0 && raw !== null && raw !== "" && String(raw) === this.plugin.settings.reviewDoneValue;
+      const ops = row.createDiv({ cls: "ks-review-item-ops" });
+      const doneToggle = new import_obsidian7.ToggleComponent(ops).setValue(isDone).setTooltip(`\u6807\u8BB0\u4E3A\u300C${this.plugin.settings.reviewDoneValue || "\u5DF2\u5BA1\u6838"}\u300D`).onChange((on) => {
+        if (on) void this.markFileDone(file, reviewAttr);
+        else void this.markFileUndone(file, reviewAttr);
+      });
+      const chatBtn = ops.createEl("button", { cls: "clickable-icon ks-review-chat", attr: { "aria-label": "AI \u4FEE\u6539", "title": "AI \u4FEE\u6539" } });
+      (0, import_obsidian7.setIcon)(chatBtn, "messages-square");
+      chatBtn.addEventListener("click", () => {
+        const template = (this.plugin.settings.reviewChatPrompt || "").trim() || "\u8BF7\u8BFB\u53D6\u8F93\u51FA\u6587\u4EF6\u5939\u4E2D\u7684\u7B14\u8BB0\u300C{{filename}}\u300D\uFF0C\u4E0E\u6211\u6C9F\u901A\u5982\u4F55\u4FEE\u6539\uFF0C\u7136\u540E\u6309\u6211\u7684\u8981\u6C42\u4FEE\u6539\u5B83\u3002";
+        const prompt = renderPromptTemplate(template, file.basename);
+        void this.plugin.openChatWith(prompt, this.presetId || void 0);
+      });
+    }
+    if (count === 0) {
+      list.createDiv({ cls: "ks-review-empty", text: "\u8F93\u51FA\u6587\u4EF6\u5939\u91CC\u6CA1\u6709\u672A\u5BA1\u6838\u7684\u6587\u4EF6" });
+    } else {
+      list.createDiv({ cls: "ks-review-count", text: `\u5171 ${count} \u4E2A\u672A\u5BA1\u6838\u6587\u4EF6` });
+    }
+  }
+  /** v0.8.9：审核开关打开——把该文件 frontmatter[reviewAttr] 写为「已审标记值」，
+   *  文件随即移出审核列表（vault.process 触发 metadataCache 更新 → Bases onDataUpdated）。 */
+  async markFileDone(file, reviewAttr) {
+    const value = (this.plugin.settings.reviewDoneValue || "").trim() || "\u5DF2\u5BA1";
+    try {
+      await this.app.vault.process(file, (raw) => {
+        const fm = parseFrontmatterObj(raw);
+        fm[reviewAttr] = value;
+        return serializeFileWithFrontmatter(raw, fm);
+      });
+      new import_obsidian7.Notice(`\u5DF2\u6807\u8BB0\u300C${file.basename}\u300D\u4E3A ${value}`);
+    } catch (e) {
+      new import_obsidian7.Notice(`\u6807\u8BB0\u5931\u8D25\uFF1A${String(e)}`);
+    }
+  }
+  /** v0.8.9：审核开关关闭——把该文件 frontmatter[reviewAttr] 写为「未审标记值」，
+   *  文件回到审核列表（如误标记后撤销）。 */
+  async markFileUndone(file, reviewAttr) {
+    const value = (this.plugin.settings.reviewDefault || "").trim();
+    try {
+      await this.app.vault.process(file, (raw) => {
+        const fm = parseFrontmatterObj(raw);
+        fm[reviewAttr] = value || "";
+        return serializeFileWithFrontmatter(raw, fm);
+      });
+      new import_obsidian7.Notice(`\u5DF2\u53D6\u6D88\u6807\u8BB0\u300C${file.basename}\u300D`);
+    } catch (e) {
+      new import_obsidian7.Notice(`\u53D6\u6D88\u6807\u8BB0\u5931\u8D25\uFF1A${String(e)}`);
+    }
+  }
+};
+function registerReviewBasesView(plugin) {
+  if (typeof plugin.registerBasesView !== "function") return false;
+  try {
+    const factory = (controller, containerEl) => new ReviewBasesView(controller, containerEl, plugin);
+    return plugin.registerBasesView(REVIEW_VIEW_TYPE, {
+      name: "\u5BA1\u6838",
+      icon: "check-check",
+      factory
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("already exists")) return true;
+    return false;
+  }
+}
+function unregisterReviewBasesView(app) {
+  var _a;
+  try {
+    const internal = app.internalPlugins;
+    const bases = (_a = internal == null ? void 0 : internal.getEnabledPluginById) == null ? void 0 : _a.call(internal, "bases");
+    if (bases == null ? void 0 : bases.registrations) delete bases.registrations[REVIEW_VIEW_TYPE];
+  } catch (e) {
+  }
+}
+
 // src/main.ts
-var KnowledgeSystemPlugin = class extends import_obsidian6.Plugin {
+var KnowledgeSystemPlugin = class extends import_obsidian8.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
+    /** Bases 视图注册重试定时器（Bases 核心插件可能晚于本插件加载）。 */
+    this.basesRetryTimer = null;
+    /** v0.8.8：设置写盘串行队列——保证写盘顺序 = 调用顺序、最后一次为最新状态。 */
+    this.saveChain = Promise.resolve();
   }
   async onload() {
     await this.loadSettings();
     this.addSettingTab(new KnowledgeSystemSettingTab(this.app, this));
     this.registerView(VIEW_TYPE_KS, (leaf) => new KnowledgeSettingsView(this, leaf));
     this.registerView(VIEW_TYPE_CHAT, (leaf) => new KnowledgeChatView(this, leaf));
+    this.registerView(VIEW_TYPE_SIDEBAR, (leaf) => new SidebarView(this, leaf));
+    if (!registerReviewBasesView(this)) {
+      let tries = 0;
+      this.basesRetryTimer = window.setInterval(() => {
+        tries++;
+        if (registerReviewBasesView(this) || tries >= 12) {
+          if (this.basesRetryTimer !== null) {
+            window.clearInterval(this.basesRetryTimer);
+            this.basesRetryTimer = null;
+          }
+        }
+      }, 5e3);
+    }
     this.addCommand({
       id: "show-knowledge-system-settings-view",
       name: "Show Knowledge System settings view",
@@ -4370,10 +5379,37 @@ var KnowledgeSystemPlugin = class extends import_obsidian6.Plugin {
         void this.activateChatView();
       }
     });
+    this.addCommand({
+      id: "open-review-view",
+      name: "Open review view (\u5BA1\u6838\u672A\u5BA1\u6838\u6587\u4EF6)",
+      callback: () => {
+        void this.openReviewView();
+      }
+    });
+    this.addCommand({
+      id: "regenerate-review-base",
+      name: "Regenerate review panel (\u6309\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210\u5BA1\u6838\u9762\u677F)",
+      callback: () => {
+        void this.regenerateReviewBase();
+      }
+    });
+    this.addCommand({
+      id: "open-sidebar-panel",
+      name: "Open sidebar panel (\u6253\u5F00\u5DE6\u4FA7\u8FB9\u680F\u9762\u677F)",
+      callback: () => {
+        void this.openSidebarPanel();
+      }
+    });
   }
   onunload() {
+    if (this.basesRetryTimer !== null) {
+      window.clearInterval(this.basesRetryTimer);
+      this.basesRetryTimer = null;
+    }
+    unregisterReviewBasesView(this.app);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
   }
   /** Open the standalone settings view in a new tab leaf. */
   async activateView() {
@@ -4394,6 +5430,70 @@ var KnowledgeSystemPlugin = class extends import_obsidian6.Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
   /**
+   * v0.8.6：打开「审核」Bases 视图——确保 vault 根「审核.base」存在（filters 跟随
+   * 当前输出文件夹），然后在 tab 里打开它（Bases 核心插件按 views[].type 渲染审核视图）。
+   */
+  async openReviewView() {
+    const baseFile = await ensureReviewBase(this);
+    if (!baseFile) return;
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.openFile(baseFile);
+    this.app.workspace.revealLeaf(leaf);
+  }
+  /**
+   * v0.8.7：按当前设置重新生成审核面板（已存在则覆盖重建一次）。
+   * 由命令「Regenerate review panel」和设置页「审核」tab 的按钮调用。
+   */
+  async regenerateReviewBase() {
+    const baseFile = await regenerateReviewBaseFile(this);
+    if (baseFile) new import_obsidian8.Notice("\u5BA1\u6838\u9762\u677F\u5DF2\u6309\u5F53\u524D\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210");
+  }
+  /**
+   * v0.9.0：打开左侧边栏「提醒面板」——已存在该视图时复用第一个 leaf 并
+   * revealLeaf（不新建，避免重复面板）；不存在才新建：优先左侧边栏 leaf
+   * （getLeftLeaf(false) 无则回退 getLeaf('tab') 作为普通标签页打开）。
+   * 公开方法：命令「Open sidebar panel」与设置页「侧边栏」tab 的按钮都调用它。
+   */
+  async openSidebarPanel() {
+    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_SIDEBAR);
+    if (existing.length > 0 && existing[0].view) {
+      this.app.workspace.revealLeaf(existing[0]);
+      new import_obsidian8.Notice("\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F");
+      return;
+    }
+    let leaf = this.app.workspace.getLeftLeaf(false);
+    const inSidebar = leaf !== null;
+    if (!leaf) leaf = this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: VIEW_TYPE_SIDEBAR, active: true });
+    this.app.workspace.revealLeaf(leaf);
+    new import_obsidian8.Notice(inSidebar ? "\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F\uFF08\u5DE6\u4FA7\u8FB9\u680F\uFF09" : "\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F\uFF08\u6807\u7B7E\u9875\uFF09");
+  }
+  /**
+   * v0.8.6：打开聊天视图并注入上下文（审核页「AI 修改」按钮用）：
+   * 预填 prompt 文本（审核页已用「AI 修改提示词」模板替换 {{filename}} → 文件名）
+   * + 切换到指定预设。上下文经 setViewState 的 state 传给 KnowledgeChatView.setState。
+   *
+   * v0.8.9：`prompt` = 最终提示词文本（不含路径；模板无占位符时原样使用）。
+   * v0.8.9 修复：聊天视图已打开（leaf 存在）时 setViewState 只调 setState 不重跑
+   * onOpen，导致预设/文件引用不生效——此时改为直接调用视图的 applyChatContext。
+   */
+  async openChatWith(prompt, presetId) {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT);
+    if (leaves.length > 0 && leaves[0].view) {
+      const view = leaves[0].view;
+      await view.applyChatContext(prompt, presetId);
+      this.app.workspace.revealLeaf(leaves[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({
+      type: VIEW_TYPE_CHAT,
+      active: true,
+      state: { prompt, presetId }
+    });
+    this.app.workspace.revealLeaf(leaf);
+  }
+  /**
    * Issue one Anthropic-compatible chat request (POST {baseUrl}/v1/messages,
    * stream). Exposed so the acceptance harness can assert the protocol headers /
    * endpoint without using the chat UI. Returns the response status + body text.
@@ -4408,6 +5508,25 @@ var KnowledgeSystemPlugin = class extends import_obsidian6.Plugin {
       await this.loadData()
     );
     this.migrateLegacyOutputProps();
+    if (this.migratePresetEnabledTools()) await this.saveSettings();
+  }
+  /**
+   * v0.8.8：迁移旧数据——旧语义「空 enabledTools = 全部启用」改为「显式集合」：
+   * 缺失或空数组的预设改写为 TOOL_NAMES.slice()（显式全开），迁移后行为与旧版
+   * 一致（全开），但磁盘上的数据不再有歧义（空数组现在 = 全部关闭）。
+   * @returns 是否有任何预设被改写（有 → 需要保存一次）。
+   */
+  migratePresetEnabledTools() {
+    var _a;
+    const presets = (_a = this.settings.toolPresets) != null ? _a : [];
+    let changed = false;
+    for (const p of presets) {
+      if (!p || !Array.isArray(p.enabledTools) || p.enabledTools.length === 0) {
+        p.enabledTools = TOOL_NAMES.slice();
+        changed = true;
+      }
+    }
+    return changed;
   }
   /**
    * Move the legacy `reviewAttr`/`categoryAttr` output attributes into the new
@@ -4417,8 +5536,13 @@ var KnowledgeSystemPlugin = class extends import_obsidian6.Plugin {
   migrateLegacyOutputProps() {
     this.settings.extraProperties = migrateExtraProperties(this.settings);
   }
+  /**
+   * v0.8.8：设置保存串行化——连续快速调用时按调用顺序排队写盘（每次写最新
+   *  `this.settings`），避免并发写盘顺序无保证/失败静默吞掉造成内存与磁盘分叉。
+   */
   async saveSettings() {
-    await this.saveData(this.settings);
+    this.saveChain = this.saveChain.then(() => this.saveData(this.settings)).catch(() => void 0);
+    return this.saveChain;
   }
   /**
    * Fetch the provider's model list (GET /models). Exposed publicly so the

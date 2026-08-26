@@ -10,6 +10,19 @@ import {
   validateYamlRules,
 } from './yamlRules';
 
+/** Build the Anthropic schema for `list_recent_output_notes` (v0.8.9). */
+export function buildListRecentOutputNotesTool(): AnthropicTool {
+  return {
+    name: 'list_recent_output_notes',
+    description: '列出输出文件夹内最近 N 天的 Markdown 笔记（标题 + 时间戳）。',
+    input_schema: {
+      type: 'object',
+      properties: { days: { type: 'integer', description: '回看天数；缺省用设置的最近 N 天' } },
+      required: [],
+    },
+  };
+}
+
 /**
  * Anthropic-compatible built-in tools: pure validation / mat[]ching / YAML
  * stripping / path-safety helpers. They accept a duck-typed `ctx` of
@@ -50,6 +63,12 @@ export interface ToolCtx {
   searchMode?: 'full' | 'restricted';
   /** Whitelisted keys for the restricted search (preset-driven). */
   searchRestrictions?: { key: string; values: string[] }[];
+  /** v0.8.9：search_output_notes 是否允许 query（缺省 true = 允许）。 */
+  searchQueryEnabled?: boolean;
+  /** v0.8.9：list_recent_output_notes 的日期属性名（预设配置，缺省回退全局 timeAttr）。 */
+  recentOutputAttr?: string;
+  /** v0.8.9：list_recent_output_notes 的日期格式（预设配置，moment 双大括号模板）。 */
+  recentOutputFormat?: string;
 }
 
 /** Shape of one Anthropic-compatible tool in the request. */
@@ -264,14 +283,40 @@ function parseEarliest(value: string, format: string, zeit: any): number | null 
   return null;
 }
 
-/** A file's timestamp: configured frontmatter attribute, then ctime. */
-function fileTimestamp(file: any, ctx: ToolCtx): number {
+/**
+ * v0.8.9：把用户填的「moment 双大括号模板」转成 moment 解析用 format。
+ * 如 `{{YYYY.MM.DD}}T{{HH:mm:ss}}` → `YYYY.MM.DD[T]HH:mm:ss`（字面量包 []）。
+ * 不含 `{{` 时按标准 moment format 原样返回（兼容直接填 `YYYY-MM-DD`）。
+ */
+export function momentTemplateToFormat(tpl: string): string {
+  const s = String(tpl ?? '').trim();
+  if (!s.includes('{{')) return s;
+  let out = '';
+  let last = 0;
+  const re = /\{\{(.*?)\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > last) out += '[' + s.slice(last, m.index) + ']';
+    out += String(m[1]).trim();
+    last = m.index + m[0].length;
+  }
+  if (last < s.length) out += '[' + s.slice(last) + ']';
+  return out;
+}
+
+/**
+ * A file's timestamp: configured frontmatter attribute, then ctime.
+ * v0.8.9：`overrides` 可指定属性名与 format（moment 双大括号模板），用于 list 工具
+ * 的预设级日期配置；缺省回退全局 timeAttr/timeFormat，再回退 ctime。
+ */
+function fileTimestamp(file: any, ctx: ToolCtx, overrides?: { attr?: string; format?: string }): number {
   const settings = ctx.settings;
   const zeit = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
-  const prop = (settings.timeAttr || '').trim();
+  const prop = (overrides?.attr ?? settings.timeAttr ?? '').trim();
+  const formatTpl = (overrides?.format ?? settings.timeFormat ?? '').trim();
   const fm = ctx.app.metadataCache.getFileCache(file)?.frontmatter ?? file?.frontmatter ?? {};
   if (prop && fm && fm[prop] != null) {
-    const formats = [settings.timeFormat, ...FALLBACK_FORMATS].filter(
+    const formats = [momentTemplateToFormat(formatTpl), ...FALLBACK_FORMATS].filter(
       (f, i, arr) => !!f && arr.indexOf(f) === i
     );
     for (const format of formats) {
@@ -323,14 +368,62 @@ export async function listRecentNotesTool(
   const settings = ctx.settings;
   const now = ctx.now ?? Date.now();
   const zeit = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
-  const days = typeof args?.days === 'number' ? args.days : (settings.recentDays ?? 7);
+  // v0.8.9：days 上限 = 配置的最近 N 天（AI 可在 1..N 内自选，不得超出）。
+  const cap = Math.max(1, Math.floor(settings.recentDays ?? 7));
+  const days = typeof args?.days === 'number'
+    ? Math.min(Math.max(1, Math.floor(args.days)), cap)
+    : cap;
   const folder = (settings.sourceFolder || '/').trim();
   const earliest = parseEarliest(settings.earliestTime ?? '', settings.timeFormat ?? '', zeit);
+  // v0.8.9：预设「日期属性名 / 日期格式」对 list_recent_notes 同样生效（缺省回退全局）。
+  const overrides =
+    ctx.recentOutputAttr || ctx.recentOutputFormat
+      ? { attr: ctx.recentOutputAttr, format: ctx.recentOutputFormat }
+      : undefined;
 
   const files = (ctx.app.vault.getMarkdownFiles?.() ?? []) as VaultFile[];
   const entries = files
     .filter((f) => inFolder(f.path, folder))
-    .map((f) => ({ f, ts: fileTimestamp(f, ctx), ctime: f?.stat?.ctime ?? 0 }));
+    .map((f) => ({ f, ts: fileTimestamp(f, ctx, overrides), ctime: f?.stat?.ctime ?? 0 }));
+
+  if (earliest != null && entries.some((e) => e.ts < earliest)) {
+    return { error: `ERROR: 快照更早于最早时间 ${settings.earliestTime}` };
+  }
+
+  const cutoff = Math.max(now - Math.max(1, Math.floor(days)) * DAY_MS, earliest ?? -Infinity);
+  const recent = entries.filter((e) => e.ts >= cutoff);
+  recent.sort((a, b) => (b.ts - a.ts) || (a.ctime - b.ctime));
+
+  return {
+    result: recent.map((e) => ({ title: stripExt(e.f.basename ?? e.f.name ?? e.f.path), timestamp: e.ts })),
+  };
+}
+
+/**
+ * v0.8.9：列出**输出文件夹**内最近 N 天的 Markdown 笔记（标题 + 时间戳）。
+ * 与 list_recent_notes 行为一致，但作用于 outputFolder；日期属性/格式由预设配置
+ * （toolOverrides.recentOutputAttr / recentOutputFormat，moment 双大括号模板），
+ * 缺省回退全局 timeAttr/timeFormat，再回退 ctime。
+ */
+export async function listRecentOutputNotesTool(
+  ctx: ToolCtx,
+  args: { days?: number }
+): Promise<{ result: { title: string; timestamp: number }[] } | { error: string }> {
+  const settings = ctx.settings;
+  const now = ctx.now ?? Date.now();
+  const zeit = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
+  const days = typeof args?.days === 'number' ? args.days : (settings.recentDays ?? 7);
+  const folder = (settings.outputFolder || '/').trim();
+  const earliest = parseEarliest(settings.earliestTime ?? '', settings.timeFormat ?? '', zeit);
+  const overrides =
+    ctx.recentOutputAttr || ctx.recentOutputFormat
+      ? { attr: ctx.recentOutputAttr, format: ctx.recentOutputFormat }
+      : undefined;
+
+  const files = (ctx.app.vault.getMarkdownFiles?.() ?? []) as VaultFile[];
+  const entries = files
+    .filter((f) => inFolder(f.path, folder))
+    .map((f) => ({ f, ts: fileTimestamp(f, ctx, overrides), ctime: f?.stat?.ctime ?? 0 }));
 
   if (earliest != null && entries.some((e) => e.ts < earliest)) {
     return { error: `ERROR: 快照更早于最早时间 ${settings.earliestTime}` };
@@ -625,9 +718,11 @@ export function buildUpdateNoteYamlTool(updateRules?: UpdateYamlRule[]): Anthrop
  */
 export function buildSearchOutputNotesTool(
   searchMode?: 'full' | 'restricted',
-  restrictions?: { key: string; values: string[] }[]
+  restrictions?: { key: string; values: string[] }[],
+  queryEnabled?: boolean
 ): AnthropicTool {
   const restricted = searchMode === 'restricted';
+  const allowQuery = queryEnabled !== false; // 缺省 = 允许 query（v0.8.9）
   let filtersSchema: any;
   if (restricted) {
     const allowed = Array.isArray(restrictions) ? restrictions : [];
@@ -657,7 +752,8 @@ export function buildSearchOutputNotesTool(
     };
   }
   const properties: Record<string, any> = { filters: filtersSchema };
-  if (!restricted) {
+  // v0.8.9：queryEnabled=false 时从 schema 移除 query（AI 无法使用正文/文件名子串搜索）。
+  if (allowQuery && !restricted) {
     properties.query = { type: 'string', description: '文件名或正文包含的子串（大小写不敏感）。' };
   }
   properties.limit = { type: 'integer', description: '返回条数上限，默认 20，最大 100。' };
@@ -665,7 +761,11 @@ export function buildSearchOutputNotesTool(
     name: 'search_output_notes',
     description:
       '在输出文件夹内搜索笔记，只返回匹配的标题（path + title）；需要正文全文请用 read_output_note。' +
-      'filters 的值为包含匹配（子串、大小写不敏感）；query 为正文/文件名子串；limit 默认 20 最大 100。',
+      'filters 按 frontmatter 键值对过滤，值为包含匹配（子串、大小写不敏感）；' +
+      '可传数组 [{"key":"属性名","value":"值"}] 或对象 {"属性名":"值"}，两种写法都支持。' +
+      '注意：属性缺失或不包含该值的文件**不会**出现在结果里（除非 filters 为空 = 不按属性过滤）。' +
+      (allowQuery ? 'query 为正文/文件名子串；' : '此工具**不允许使用 query**（预设已禁用正文/文件名子串搜索），只能按 filters 属性过滤；') +
+      'limit 默认 20 最大 100。',
     input_schema: { type: 'object', properties, required: [] },
   };
 }
@@ -725,8 +825,26 @@ export async function searchOutputNotesTool(
 ): Promise<{ result: { path: string; title: string }[] } | { error: string }> {
   const settings = ctx.settings;
   const folder = (settings.outputFolder || '/').trim();
-  const filters = Array.isArray(args?.filters) ? (args!.filters as { key: string; value: string }[]) : [];
-  const query = typeof args?.query === 'string' ? args.query : '';
+  // v0.8.9 修复：兼容两种 filters 形态——数组 [{key,value}]（full 模式 schema）或
+  // 对象 {key: value}（restricted 模式 schema / AI 习惯写法）。此前对象形态被
+  // Array.isArray 判 false → filters=[] → 全量列出（不按属性过滤）。
+  const rawFilters = args?.filters;
+  let filters: { key: string; value: string }[] = [];
+  if (Array.isArray(rawFilters)) {
+    filters = rawFilters as { key: string; value: string }[];
+  } else if (rawFilters && typeof rawFilters === 'object') {
+    filters = Object.entries(rawFilters as Record<string, unknown>).map(([key, value]) => ({
+      key,
+      value: value == null ? '' : String(value),
+    }));
+  }
+  const queryRaw = typeof args?.query === 'string' ? args.query : '';
+  // v0.8.9：queryEnabled=false 时 query 从 schema 移除（AI 不该传）；若模型仍绕过
+  // schema 传了 query，直接报错（不静默忽略——避免「看起来能用但其实是全列」）。
+  if (ctx.searchQueryEnabled === false && queryRaw) {
+    return { error: 'ERROR: 此搜索工具不允许使用 query（预设已禁用正文/文件名子串搜索），请只按 filters 属性过滤' };
+  }
+  const query = queryRaw;
   let limit = typeof args?.limit === 'number' ? Math.floor(args.limit) : 20;
   if (!Number.isFinite(limit) || limit <= 0) limit = 20;
   if (limit > 100) limit = 100;
@@ -791,9 +909,11 @@ export function buildModifyOutputNoteTool(
     name: 'modify_output_note',
     description:
       '在输出文件夹内覆盖修改一篇已有笔记的正文与 frontmatter。' +
+      '此工具**不做任何归档、不写版本号、不创建任何附加文件**——直接原地覆盖原文件。' +
       'sections 的键必须是原文中已存在的标题文本（值=该标题下要写入的新内容）：' +
       '只能修改标题下的文字，不能修改标题文字或新增标题，禁止以 # 符号创建任何标题。' +
-      'frontmatter 只能使用已配置的属性（若开启限制）。',
+      'frontmatter 只能使用已配置的属性（若开启限制）。' +
+      '默认修改笔记请用本工具；只有用户明确要求「保留修改前的版本/归档」时才用 modify_output_note_versioned。',
     input_schema: {
       type: 'object',
       properties: {
@@ -827,6 +947,8 @@ export function buildModifyOutputNoteVersionedTool(
     name: 'modify_output_note_versioned',
     description:
       '在输出文件夹内覆盖修改一篇已有笔记并自动归档（与 modify_output_note 相同的参数，版本/归档自动处理）。' +
+      '**仅当用户明确要求「保留修改前的版本」「归档」「历史版本」时才使用本工具**；' +
+      '普通修改请用 modify_output_note（不做归档）。' +
       'sections 的键必须是原文中已存在的标题文本（值=该标题下要写入的新内容）：' +
       '只能修改标题下的文字，不能修改标题文字或新增标题，禁止以 # 符号创建任何标题。' +
       '每次修改前把当前文件版本自动追加到该文件的归档文件（原文名+归档后缀.md），并写入新版本号与归档标记。',

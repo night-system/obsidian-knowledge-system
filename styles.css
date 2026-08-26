@@ -805,6 +805,131 @@
 }
 
 /* ------------------------------------------------------------------ */
+/* v0.8.6：审核页（Bases 核心插件自定义视图，参考 TaskNotes 的 Bases 视图样式机制） */
+/* ------------------------------------------------------------------ */
+
+.ks-review-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--size-4-2);
+}
+
+.ks-review-head {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: var(--size-2-2);
+}
+
+.ks-review-title {
+  font-size: var(--font-ui-large);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.ks-review-preset {
+  max-width: 16em;
+}
+
+.ks-review-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  flex: 1 1 100%;
+}
+
+.ks-review-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--size-2-1) var(--size-2-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+}
+
+.ks-review-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* v0.8.9：刷新/聊天 icon 按钮——无底色无边框，hover 仅变色（对齐设置页 icon-only 按钮）。 */
+.ks-review-refresh,
+.ks-review-chat {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.ks-review-refresh:hover,
+.ks-review-chat:hover {
+  background: transparent;
+  color: var(--interactive-accent);
+}
+
+.ks-review-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-2);
+}
+
+.ks-review-item {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  flex-wrap: wrap;
+  padding: var(--size-2-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+}
+
+.ks-review-item-info {
+  flex: 1 1 12em;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ks-review-item-name {
+  font-weight: 600;
+  word-break: break-all;
+  cursor: pointer;
+}
+
+.ks-review-item-name:hover {
+  color: var(--interactive-accent);
+}
+
+.ks-review-item-status {
+  color: var(--text-warning);
+  font-size: var(--font-ui-small);
+}
+
+.ks-review-item-ops {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  flex: 0 0 auto;
+}
+
+.ks-review-empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: var(--size-4-2);
+}
+
+.ks-review-count {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+/* ------------------------------------------------------------------ */
 /* Preset tab (v0.5.0) & chat preset selector bar                       */
 /* ------------------------------------------------------------------ */
 
@@ -1029,6 +1154,17 @@
   width: 100%;
 }
 
+/* v0.8.9：审核页「AI 修改提示词」多行输入框。 */
+.ks-review-prompt-row .setting-item-control {
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+}
+
+.ks-review-prompt-row .setting-item-control .text-area {
+  min-height: 4em;
+  width: 100%;
+}
+
 /* Template row (v0.7.0 B.4): level select + title + allow toggle + desc + ops. */
 .ks-template-rows {
   display: flex;
@@ -1160,6 +1296,171 @@
   color: var(--text-normal);
   font-size: var(--font-ui-small);
   font-family: var(--font-monospace);
+}
+
+/* ------------------------------------------------------------------ */
+/* v0.9.0：侧边栏「提醒面板」（左侧边栏视图）                            */
+/* 全部用 Obsidian CSS 变量（主题可控制）；条目 = flex 行（描述 flex:1   */
+/* 左对齐 + 右侧图标按钮）；图标按钮无底色无边框，hover 仅变色（触屏友好）。*/
+/* ------------------------------------------------------------------ */
+
+.ks-sidebar-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--size-4-2);
+  gap: var(--size-4-2);
+  overflow-y: auto;
+}
+
+.ks-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-2-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: var(--size-2-2);
+}
+
+.ks-sidebar-title {
+  font-size: var(--font-ui-large);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+/* 刷新按钮：无底色无边框，hover 仅变色。 */
+.ks-sidebar-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px; /* 触屏友好触控区 */
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ks-sidebar-refresh:hover {
+  background: transparent !important;
+  color: var(--interactive-accent);
+}
+
+.ks-sidebar-refresh svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+}
+
+.ks-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-2);
+}
+
+/* 条目行：描述 flex:1 左对齐 + 右侧图标按钮。 */
+.ks-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-2-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+}
+
+.ks-sidebar-item-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  word-break: break-all;
+  user-select: none;
+}
+
+/* 右侧动作图标按钮：无底色无边框，hover 仅变色，触屏大触控区。 */
+.ks-sidebar-item-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 10px; /* 触屏友好（≥ 40px 触控区） */
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ks-sidebar-item-btn:hover {
+  background: transparent !important;
+  color: var(--interactive-accent);
+}
+
+.ks-sidebar-item-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+}
+
+.ks-sidebar-empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: var(--size-4-2);
+  font-size: var(--font-ui-small);
+}
+
+/* ------------------------------------------------------------------ */
+/* v0.9.0：设置页「侧边栏」tab 的规则卡片（仿预设折叠卡片模式）           */
+/* ------------------------------------------------------------------ */
+
+.ks-sidebar-rule-item {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  margin-bottom: var(--size-2-2);
+  background: var(--background-secondary);
+}
+
+.ks-sidebar-rule-head {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-2-1) var(--size-2-2);
+}
+
+.ks-sidebar-rule-name {
+  font-weight: var(--font-semibold);
+}
+
+.ks-sidebar-rule-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.ks-sidebar-rule-toggle .checkbox-container {
+  cursor: pointer;
+}
+
+.ks-sidebar-rule-body {
+  padding: 0 var(--size-2-2) var(--size-2-2);
+}
+
+.ks-sidebar-rule-collapsed .ks-sidebar-rule-body {
+  display: none;
+}
+
+.ks-sidebar-rule-body .setting-item-control {
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
 }
 
 /* ====================================================================== */

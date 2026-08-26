@@ -1,14 +1,15 @@
 import { App, DropdownComponent, Notice, PluginSettingTab, Setting, ToggleComponent, setIcon } from 'obsidian';
-import { KnowledgeSystemSettings, ToolPreset, UpdateYamlRule, NoteTemplateEntry, YamlRule } from './settings';
+import { KnowledgeSystemSettings, TOOL_NAMES, ToolPreset, UpdateYamlRule, NoteTemplateEntry, YamlRule, SidebarRule } from './settings';
 import { FolderSuggest } from './folderSuggest';
 import { countRecentFiles, outputLatestContent } from './core';
+import { evaluateCondition } from './utils/sidebarRules';
 import type KnowledgeSystemPlugin from './main';
 
-/** The settings tabs; `test` is the 5th (test tools), `preset` the 6th (v0.5.0). */
-export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'test' | 'preset' | 'uiPreview';
+/** The settings tabs; `test` is the 5th (test tools), `preset` the 6th (v0.5.0),
+ *  `sidebar` the 9th (v0.9.0 侧边栏提醒面板规则). */
+export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'review' | 'test' | 'preset' | 'uiPreview' | 'sidebar';
 
-/** Stable tool order for the preset tool-config editors (v0.7.0 B.2). */
-const TOOL_NAMES = ['list_recent_notes', 'read_note', 'create_note', 'update_note_yaml', 'search_output_notes', 'modify_output_note', 'modify_output_note_versioned', 'read_output_note'];
+// v0.8.8：TOOL_NAMES 移到 src/settings.ts 导出（main.ts 迁移 / utils/presets.ts 共用）。
 
 // ---------------------------------------------------------------------------
 // v0.8.3：每个工具折叠组的配置复制/导入（JSON 剪贴板）。导入前严格校验格式：
@@ -107,6 +108,37 @@ const listRecentIo: ToolConfigIO = {
   },
 };
 
+/** v0.8.9：list_recent_output_notes 的配置 IO（日期属性名 / 日期格式，moment 双大括号模板）。 */
+const listRecentOutputIo: ToolConfigIO = {
+  label: 'list_recent_output_notes',
+  exportFromPreset(p) {
+    const cfg: Record<string, unknown> = {};
+    if (p.toolOverrides.recentOutputAttr) cfg.recentOutputAttr = p.toolOverrides.recentOutputAttr;
+    if (p.toolOverrides.recentOutputFormat) cfg.recentOutputFormat = p.toolOverrides.recentOutputFormat;
+    return cfg;
+  },
+  exportFromGlobal() {
+    return {};
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: '必须是 JSON 对象' };
+    const bad = rejectUnknownFields(raw, ['recentOutputAttr', 'recentOutputFormat']);
+    if (bad) return { ok: false, error: bad };
+    if (raw.recentOutputAttr !== undefined && typeof raw.recentOutputAttr !== 'string') {
+      return { ok: false, error: 'recentOutputAttr 必须是字符串' };
+    }
+    if (raw.recentOutputFormat !== undefined && typeof raw.recentOutputFormat !== 'string') {
+      return { ok: false, error: 'recentOutputFormat 必须是字符串' };
+    }
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    p.toolOverrides.recentOutputAttr = (cfg.recentOutputAttr as string | undefined) || undefined;
+    p.toolOverrides.recentOutputFormat = (cfg.recentOutputFormat as string | undefined) || undefined;
+  },
+  applyToGlobal() {},
+};
+
 const searchIo: ToolConfigIO = {
   label: 'search_output_notes',
   exportFromPreset(p) {
@@ -115,6 +147,7 @@ const searchIo: ToolConfigIO = {
     if (p.toolOverrides.searchRestrictions !== undefined && p.toolOverrides.searchRestrictions.length > 0) {
       cfg.searchRestrictions = p.toolOverrides.searchRestrictions;
     }
+    if (p.toolOverrides.searchQueryEnabled !== undefined) cfg.searchQueryEnabled = p.toolOverrides.searchQueryEnabled;
     return cfg;
   },
   exportFromGlobal() {
@@ -122,7 +155,7 @@ const searchIo: ToolConfigIO = {
   },
   validate(raw) {
     if (!isPlainObject(raw)) return { ok: false, error: '必须是 JSON 对象' };
-    const bad = rejectUnknownFields(raw, ['searchMode', 'searchRestrictions']);
+    const bad = rejectUnknownFields(raw, ['searchMode', 'searchRestrictions', 'searchQueryEnabled']);
     if (bad) return { ok: false, error: bad };
     if (raw.searchMode !== undefined && raw.searchMode !== 'full' && raw.searchMode !== 'restricted') {
       return { ok: false, error: 'searchMode 只能是 full 或 restricted' };
@@ -133,11 +166,15 @@ const searchIo: ToolConfigIO = {
     if (raw.searchRestrictions !== undefined && !raw.searchRestrictions.every(isRestriction)) {
       return { ok: false, error: 'searchRestrictions 每项必须是 {key, values[]}' };
     }
+    if (raw.searchQueryEnabled !== undefined && typeof raw.searchQueryEnabled !== 'boolean') {
+      return { ok: false, error: 'searchQueryEnabled 必须是布尔值' };
+    }
     return { ok: true, cfg: raw };
   },
   applyToPreset(p, cfg) {
     p.toolOverrides.searchMode = cfg.searchMode as 'full' | 'restricted' | undefined;
     p.toolOverrides.searchRestrictions = cfg.searchRestrictions as { key: string; values: string[] }[] | undefined;
+    p.toolOverrides.searchQueryEnabled = cfg.searchQueryEnabled as boolean | undefined;
   },
   applyToGlobal() {
     // search 模式无全局配置（只在预设内）。
@@ -306,6 +343,8 @@ class SettingsRenderer {
   private presetExpanded = new Set<string>();
   /** Expanded per-tool config group keys `${presetId}:${toolName}` (B.2). */
   private toolExpanded = new Set<string>();
+  /** v0.9.0：侧边栏规则卡片折叠状态（collapsed 的 rule id；缺省展开）。 */
+  private sidebarRuleCollapsed = new Set<string>();
 
   constructor(app: App, plugin: KnowledgeSystemPlugin) {
     this.app = app;
@@ -337,9 +376,11 @@ class SettingsRenderer {
       { id: 'folder', label: '文件夹' },
       { id: 'time', label: '时间' },
       { id: 'output', label: '输出属性' },
+      { id: 'review', label: '审核' },
       { id: 'test', label: '测试工具' },
       { id: 'preset', label: '预设' },
       { id: 'uiPreview', label: 'UI 方案' },
+      { id: 'sidebar', label: '侧边栏' },
     ];
 
     const tabsEl = containerEl.createDiv({ cls: 'ks-tabs' });
@@ -370,6 +411,9 @@ class SettingsRenderer {
       case 'output':
         this.renderOutputGroup(containerEl);
         break;
+      case 'review':
+        this.renderReviewGroup(containerEl);
+        break;
       case 'test':
         this.renderTestGroup(containerEl);
         break;
@@ -378,6 +422,9 @@ class SettingsRenderer {
         break;
       case 'uiPreview':
         this.renderUiPreviewGroup(containerEl);
+        break;
+      case 'sidebar':
+        this.renderSidebarGroup(containerEl);
         break;
     }
   }
@@ -690,6 +737,420 @@ class SettingsRenderer {
         })
       );
     this.markSearchable(addBtn, '输出属性 添加属性 增加 添加');
+  }
+
+  // -------------------------------------------------------------------------
+  // review（v0.8.7：审核页配置——审核属性 / 排除规则 / 面板位置 / 生成面板）
+  // -------------------------------------------------------------------------
+
+  private renderReviewGroup(containerEl: HTMLElement): void {
+    const info = new Setting(containerEl)
+      .setName('')
+      .setDesc('配置「审核」页（Bases 核心插件自定义视图，参考 TaskNotes 集成）：列出输出文件夹里未审核的文件。判定：frontmatter 的「审核状态属性」缺失、为空、或等于「未审标记值」→ 未审核；命中「排除规则」的文件不显示。改完设置后点「生成审核面板」重建面板（已存在则按设置重新生成一次）。需要 Obsidian 1.10.0+ 并启用 Bases 核心插件。');
+    this.markSearchable(info, '审核 说明 Bases 面板 未审核 未审');
+
+    const attr = new Setting(containerEl)
+      .setName('审核状态属性名')
+      .setDesc('frontmatter 中标记审核状态的属性名（输出文件创建时写入；如 approved）。')
+      .addText((text) =>
+        text
+          .setPlaceholder('approved')
+          .setValue(this.plugin.settings.reviewAttr)
+          .onChange((value) => this.updateSetting('reviewAttr', value))
+      );
+    this.markSearchable(attr, '审核 审核状态属性名 reviewAttr approved');
+
+    const def = new Setting(containerEl)
+      .setName('未审标记值')
+      .setDesc('frontmatter 的审核状态属性等于该值 = 未审核（输出文件创建时写入的默认值；如 未审）。')
+      .addText((text) =>
+        text
+          .setPlaceholder('未审')
+          .setValue(this.plugin.settings.reviewDefault)
+          .onChange((value) => this.updateSetting('reviewDefault', value))
+      );
+    this.markSearchable(def, '审核 未审标记值 reviewDefault');
+
+    const done = new Setting(containerEl)
+      .setName('已审标记值')
+      .setDesc('审核页每行开关打开时，写入 frontmatter 审核状态属性的值（如 已审）。开关打开后该文件移出审核列表。')
+      .addText((text) =>
+        text
+          .setPlaceholder('已审')
+          .setValue(this.plugin.settings.reviewDoneValue)
+          .onChange((value) => this.updateSetting('reviewDoneValue', value))
+      );
+    this.markSearchable(done, '审核 已审标记值 reviewDoneValue 审核完成 开关');
+
+    const exHead = new Setting(containerEl)
+      .setName('排除规则')
+      .setDesc('frontmatter 属性等于该值的文件不进入审核列表（如 archived = true 排除归档文件）。');
+    this.markSearchable(exHead, '审核 排除规则 排除 归档 archived');
+
+    const exListEl = containerEl.createDiv();
+    const renderExcludes = () => {
+      exListEl.empty();
+      const list = this.plugin.settings.reviewExcludes || [];
+      list.forEach((entry, index) => {
+        const row = new Setting(exListEl)
+          .setName('')
+          .setDesc('')
+          .addText((text) =>
+            text
+              .setPlaceholder('属性名，如 archived')
+              .setValue(entry.key)
+              .onChange((value) => {
+                entry.key = value;
+                void this.plugin.saveSettings();
+              })
+          )
+          .addText((text) =>
+            text
+              .setPlaceholder('排除的值，如 true')
+              .setValue(entry.value)
+              .onChange((value) => {
+                entry.value = value;
+                void this.plugin.saveSettings();
+              })
+          )
+          .addButton((btn) =>
+            btn
+              .setIcon('trash-2')
+              .setTooltip('删除')
+              .onClick(() => {
+                const a = this.plugin.settings.reviewExcludes || [];
+                a.splice(index, 1);
+                void this.plugin.saveSettings();
+                renderExcludes();
+              })
+          );
+        row.settingEl.addClass('ks-extra-props-row');
+        this.markSearchable(row, `审核 排除规则 ${entry.key} ${entry.value}`);
+      });
+    };
+    renderExcludes();
+    const addEx = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setIcon('plus').setButtonText('添加排除规则').onClick(() => {
+          if (!Array.isArray(this.plugin.settings.reviewExcludes)) this.plugin.settings.reviewExcludes = [];
+          this.plugin.settings.reviewExcludes.push({ key: '', value: '' });
+          void this.plugin.saveSettings();
+          renderExcludes();
+        })
+      );
+    this.markSearchable(addEx, '审核 排除规则 添加 增加');
+
+    const path = new Setting(containerEl)
+      .setName('审核面板位置')
+      .setDesc('审核面板（.base 文件）在库中的路径；生成后由 Bases 核心插件渲染。')
+      .addText((text) =>
+        text
+          .setPlaceholder('审核.base')
+          .setValue(this.plugin.settings.reviewBasePath)
+          .onChange((value) => this.updateSetting('reviewBasePath', value))
+      );
+    this.markSearchable(path, '审核 审核面板位置 面板 路径 base');
+
+    const prompt = new Setting(containerEl)
+      .setName('AI 修改提示词')
+      .setDesc('点击审核列表的聊天图标时，预填到聊天输入框的提示词。`{{filename}}` 会被替换为被修改笔记的文件名（不含路径，工具以文件名作参数定位文件）。留空 = 使用默认提示词；不含 `{{filename}}` 时原样使用。')
+      .addTextArea((text) =>
+        text
+          .setPlaceholder('请读取输出文件夹中的笔记「{{filename}}」，与我沟通如何修改，然后按我的要求修改它。')
+          .setValue(this.plugin.settings.reviewChatPrompt || '')
+          .onChange((value) => this.updateSetting('reviewChatPrompt', value))
+      );
+    prompt.settingEl.addClass('ks-review-prompt-row');
+    this.markSearchable(prompt, '审核 AI 修改提示词 提示词 模板 filename');
+
+    const ops = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setIcon('refresh-cw').setButtonText('生成审核面板').onClick(() => {
+          void this.plugin.regenerateReviewBase();
+        })
+      )
+      .addButton((btn) =>
+        btn.setIcon('external-link').setButtonText('打开审核面板').onClick(() => {
+          void this.plugin.openReviewView();
+        })
+      );
+    this.markSearchable(ops, '审核 生成审核面板 打开审核面板 重新生成');
+  }
+
+  // -------------------------------------------------------------------------
+  // sidebar（v0.9.0：侧边栏「提醒面板」规则——条件 + 动作；仿预设折叠卡片模式）
+  // -------------------------------------------------------------------------
+
+  private renderSidebarGroup(containerEl: HTMLElement): void {
+    containerEl.empty();
+
+    const info = new Setting(containerEl)
+      .setName('')
+      .setDesc('配置左侧边栏「提醒面板」（命令「Open sidebar panel」或下方按钮打开）的规则：每条规则 = 条件 + 动作。条件匹配 0 条时该规则不显示条目。条件：未审核文件（输出文件夹）或缺少属性（指定文件夹 + 可选最近 N 天）；动作：打开审核面板或打开聊天（应用预设 + 预填 prompt 模板，{{filename}} 会被替换为匹配文件的文件名，不含路径与 .md）。');
+    this.markSearchable(info, '侧边栏 提醒面板 规则 条件 动作 未审核 缺少属性 打开审核 打开聊天 filename');
+
+    const openBtn = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setIcon('panel-left').setButtonText('打开左侧边栏面板').onClick(() => {
+          void this.plugin.openSidebarPanel();
+        })
+      );
+    this.markSearchable(openBtn, '侧边栏 打开 面板 左侧边栏');
+
+    const rules = this.plugin.settings.sidebarRules || (this.plugin.settings.sidebarRules = []);
+    rules.forEach((rule, index) => this.renderSidebarRuleCard(containerEl, rule, index));
+
+    const addBtn = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
+          const nr: SidebarRule = {
+            id: String(Date.now()),
+            name: '新规则',
+            enabled: true,
+            condition: { type: 'unreviewed' },
+            action: { type: 'open_review' },
+          };
+          this.plugin.settings.sidebarRules.push(nr);
+          void this.plugin.saveSettings();
+          this.renderSidebarGroup(containerEl);
+        })
+      );
+    this.markSearchable(addBtn, '侧边栏 添加规则 增加 新建');
+  }
+
+  /**
+   * 渲染一条侧边栏规则卡片（可折叠）：头部 = chevron + 名称输入 + 启用开关 +
+   * 删除按钮；主体 = 条件编辑器 + 动作编辑器 + 「测试」按钮。折叠状态按 rule.id
+   * 记忆（缺省展开）；条件/动作类型下拉切换后整组重绘。
+   */
+  private renderSidebarRuleCard(containerEl: HTMLElement, rule: SidebarRule, index: number): void {
+    const rerenderAll = () => this.renderSidebarGroup(containerEl);
+    const collapsed = this.sidebarRuleCollapsed.has(rule.id);
+
+    const card = containerEl.createDiv({ cls: 'ks-sidebar-rule-item' });
+    const head = card.createDiv({ cls: 'ks-sidebar-rule-head' });
+    const chev = head.createSpan({ cls: 'ks-preset-item-chev' });
+    this.setIconSafe(chev, collapsed ? 'chevron-right' : 'chevron-down', collapsed ? '\u203A' : '\u2304');
+    chev.addEventListener('click', () => {
+      const isCollapsed = card.hasClass('ks-sidebar-rule-collapsed');
+      if (isCollapsed) this.sidebarRuleCollapsed.delete(rule.id);
+      else this.sidebarRuleCollapsed.add(rule.id);
+      this.setIconSafe(chev, isCollapsed ? 'chevron-down' : 'chevron-right', isCollapsed ? '\u2304' : '\u203A');
+      card.toggleClass('ks-sidebar-rule-collapsed', !isCollapsed);
+    });
+    const nameInput = head.createEl('input', { cls: 'ks-preset-item-name ks-sidebar-rule-name' });
+    nameInput.type = 'text';
+    nameInput.value = rule.name || '';
+    nameInput.placeholder = '规则名，如「有未审核文件」';
+    nameInput.addEventListener('input', () => {
+      rule.name = nameInput.value;
+      void this.plugin.saveSettings();
+    });
+    // 启用开关（stopPropagation 防止冒泡——头部无折叠监听，这里仅为稳妥）。
+    const toggleWrap = head.createSpan({ cls: 'ks-sidebar-rule-toggle' });
+    toggleWrap.addEventListener('click', (ev) => ev.stopPropagation());
+    new ToggleComponent(toggleWrap)
+      .setValue(rule.enabled !== false)
+      .setTooltip('启用此规则')
+      .onChange((v) => {
+        rule.enabled = v;
+        void this.plugin.saveSettings();
+      });
+    const delBtn = head.createEl('button', { cls: 'ks-preset-item-del' });
+    delBtn.setAttribute('aria-label', '删除此规则');
+    delBtn.setAttribute('title', '删除此规则');
+    this.setIconSafe(delBtn, 'trash-2', '\u00d7');
+    delBtn.addEventListener('click', () => {
+      this.plugin.settings.sidebarRules.splice(index, 1);
+      this.sidebarRuleCollapsed.delete(rule.id);
+      void this.plugin.saveSettings();
+      rerenderAll();
+    });
+
+    const body = card.createDiv({ cls: 'ks-sidebar-rule-body' });
+    if (collapsed) card.addClass('ks-sidebar-rule-collapsed');
+
+    // ---- 条件编辑器 ----
+    const condSel = new Setting(body)
+      .setName('条件类型')
+      .setDesc('「未审核文件」= 输出文件夹中未审核文件数 ≥ 最小数量；「缺少属性」= 指定文件夹里 frontmatter 缺少某属性（或值不等于期望值）的文件。')
+      .addDropdown((drop) => {
+        drop.addOptions({ unreviewed: '未审核文件', missing_property: '缺少属性' });
+        drop.setValue(rule.condition.type);
+        drop.onChange((v) => {
+          rule.condition = v === 'unreviewed'
+            ? { type: 'unreviewed' }
+            : { type: 'missing_property', folder: 'output', property: '' };
+          void this.plugin.saveSettings();
+          rerenderAll();
+        });
+      });
+    this.markSearchable(condSel, '侧边栏 条件类型 未审核文件 缺少属性 条件');
+
+    if (rule.condition.type === 'unreviewed') {
+      const cond = rule.condition as Extract<SidebarRule['condition'], { type: 'unreviewed' }>;
+      const minCount = new Setting(body)
+        .setName('最小数量')
+        .setDesc('未审核文件数 ≥ 该值时规则匹配（留空 = 1）。')
+        .addText((text) => {
+          text.inputEl.type = 'number';
+          text.setValue(cond.minCount === undefined ? '' : String(cond.minCount));
+          text.onChange((value) => {
+            if (value.trim() === '') {
+              cond.minCount = undefined;
+            } else {
+              const n = parseInt(value, 10);
+              if (!Number.isNaN(n)) cond.minCount = n;
+            }
+            void this.plugin.saveSettings();
+          });
+        });
+      this.markSearchable(minCount, '侧边栏 未审核 最小数量 minCount 数量');
+    } else {
+      const cond = rule.condition as Extract<SidebarRule['condition'], { type: 'missing_property' }>;
+      const isCustom = cond.folder !== 'source' && cond.folder !== 'output';
+      const folderSel = new Setting(body)
+        .setName('文件夹')
+        .setDesc('「源文件夹」/「输出文件夹」映射设置里的对应文件夹；「自定义」= 手动填路径。')
+        .addDropdown((drop) => {
+          drop.addOptions({ source: '源文件夹', output: '输出文件夹', custom: '自定义' });
+          drop.setValue(isCustom ? 'custom' : cond.folder);
+          drop.onChange((v) => {
+            if (v === 'custom') cond.folder = '';
+            else cond.folder = v as 'source' | 'output';
+            void this.plugin.saveSettings();
+            rerenderAll();
+          });
+        });
+      this.markSearchable(folderSel, '侧边栏 缺少属性 文件夹 源文件夹 输出文件夹 自定义');
+
+      if (isCustom) {
+        const pathSel = new Setting(body)
+          .setName('自定义文件夹路径')
+          .setDesc('库内文件夹路径；留空 = 库根目录。')
+          .addText((text) =>
+            text
+              .setPlaceholder('如：工作/待办')
+              .setValue(cond.folder)
+              .onChange((value) => {
+                cond.folder = value;
+                void this.plugin.saveSettings();
+              })
+          );
+        this.markSearchable(pathSel, '侧边栏 缺少属性 自定义 文件夹 路径');
+      }
+
+      const afterSel = new Setting(body)
+        .setName('此日期之后')
+        .setDesc('只看此日期之后（含当天）修改的文件，之前的不管；格式 YYYY-MM-DD（如 2026-08-01）；留空 = 不限。')
+        .addText((text) =>
+          text
+            .setPlaceholder('如：2026-08-01')
+            .setValue(cond.afterDate ?? '')
+            .onChange((value) => {
+              cond.afterDate = value.trim() === '' ? undefined : value.trim();
+              void this.plugin.saveSettings();
+            })
+        );
+      this.markSearchable(afterSel, '侧边栏 缺少属性 此日期之后 afterDate 日期 时间 修改');
+
+      const propSel = new Setting(body)
+        .setName('属性名')
+        .setDesc('要检查的 frontmatter 属性名（如 approved）。')
+        .addText((text) =>
+          text
+            .setPlaceholder('如：approved')
+            .setValue(cond.property)
+            .onChange((value) => {
+              cond.property = value;
+              void this.plugin.saveSettings();
+            })
+        );
+      this.markSearchable(propSel, '侧边栏 缺少属性 属性名 property frontmatter');
+
+      const expSel = new Setting(body)
+        .setName('期望值')
+        .setDesc('留空 = 属性缺失即匹配；填写 = 属性缺失或值不等于期望值都匹配。')
+        .addText((text) =>
+          text
+            .setPlaceholder('留空 = 仅属性缺失')
+            .setValue(cond.expectedValue ?? '')
+            .onChange((value) => {
+              cond.expectedValue = value.trim() === '' ? undefined : value;
+              void this.plugin.saveSettings();
+            })
+        );
+      this.markSearchable(expSel, '侧边栏 缺少属性 期望值 expectedValue 匹配');
+    }
+
+    // ---- 动作编辑器 ----
+    const actSel = new Setting(body)
+      .setName('动作类型')
+      .setDesc('「打开审核面板」= 点击条目右侧图标打开审核页（单条，显示匹配数）；「打开聊天」= 每个匹配文件一条，点击图标打开聊天（应用预设 + 预填 prompt 模板）。')
+      .addDropdown((drop) => {
+        drop.addOptions({ open_review: '打开审核面板', open_chat: '打开聊天' });
+        drop.setValue(rule.action.type);
+        drop.onChange((v) => {
+          rule.action = v === 'open_review' ? { type: 'open_review' } : { type: 'open_chat' };
+          void this.plugin.saveSettings();
+          rerenderAll();
+        });
+      });
+    this.markSearchable(actSel, '侧边栏 动作类型 打开审核面板 打开聊天 动作');
+
+    if (rule.action.type === 'open_chat') {
+      const act = rule.action as Extract<SidebarRule['action'], { type: 'open_chat' }>;
+      const presetSel = new Setting(body)
+        .setName('聊天预设')
+        .setDesc('点击图标打开聊天时应用的预设；「默认（全部工具）」= 当前聊天预设（全部工具）。')
+        .addDropdown((drop) => {
+          const presets = this.plugin.settings.toolPresets || [];
+          const opts: Record<string, string> = { '': '默认（全部工具）' };
+          for (const p of presets) opts[p.id] = p.name;
+          drop.addOptions(opts);
+          drop.setValue(presets.some((p) => p.id === act.presetId) ? act.presetId ?? '' : '');
+          drop.onChange((v) => {
+            act.presetId = v || undefined;
+            void this.plugin.saveSettings();
+          });
+        });
+      this.markSearchable(presetSel, '侧边栏 打开聊天 预设 preset 全部工具');
+
+      const promptSel = new Setting(body)
+        .setName('Prompt 模板')
+        .setDesc('点击图标时预填到聊天输入框的提示词；`{{filename}}` 会被替换为匹配文件的文件名（不含路径、不含 .md）。留空 = 只打开聊天、不预填。')
+        .addTextArea((text) =>
+          text
+            .setPlaceholder('请帮我处理笔记「{{filename}}」…')
+            .setValue(act.promptTemplate ?? '')
+            .onChange((value) => {
+              act.promptTemplate = value;
+              void this.plugin.saveSettings();
+            })
+        );
+      promptSel.settingEl.addClass('ks-review-prompt-row');
+      this.markSearchable(promptSel, '侧边栏 打开聊天 prompt 模板 提示词 filename');
+    }
+
+    // ---- 测试按钮 ----
+    const testBtn = new Setting(body)
+      .setName('')
+      .setDesc('立即按当前条件求值一次，显示匹配文件数量。')
+      .addButton((btn) =>
+        btn.setIcon('play').setButtonText('测试').onClick(() => {
+          const matches = evaluateCondition(this.app, this.plugin.settings, rule.condition);
+          new Notice(`条件「${rule.name || '未命名规则'}」匹配 ${matches.length} 个文件`);
+        })
+      );
+    this.markSearchable(testBtn, '侧边栏 测试 匹配 数量 求值');
   }
 
   /**
@@ -1564,7 +2025,8 @@ class SettingsRenderer {
             id: String(Date.now()),
             name: '新预设',
             systemPrompt: '',
-            enabledTools: [],
+            // v0.8.8：显式全开（而不是 []）——空数组现在是「全部关闭」。
+            enabledTools: TOOL_NAMES.slice(),
             toolOverrides: {},
           };
           this.plugin.settings.toolPresets.push(np);
@@ -1661,7 +2123,77 @@ class SettingsRenderer {
             });
           });
         this.markSearchable(daysSetting, '预设 listRecentDays 天数 覆写 回看天数');
+        const attrSetting = new Setting(body)
+          .setName('日期属性名（可选）')
+          .setDesc('每个文件 frontmatter 里记录日期的属性名（如 created）；留空 = 用设置里「时间属性」。')
+          .addText((text) =>
+            text
+              .setPlaceholder('created')
+              .setValue(preset.toolOverrides.recentOutputAttr ?? '')
+              .onChange((value) => {
+                preset.toolOverrides.recentOutputAttr = value.trim() || undefined;
+                void this.plugin.saveSettings();
+              })
+          );
+        this.markSearchable(attrSetting, '预设 list_recent_notes 日期属性 时间属性 recentOutputAttr');
+        const fmtSetting = new Setting(body)
+          .setName('日期格式（可选，moment 双大括号）')
+          .setDesc('解析该属性用的 moment 格式，双大括号写法如 {{YYYY.MM.DD}}T{{HH:mm:ss}}；留空 = 用设置里「时间格式」。')
+          .addText((text) =>
+            text
+              .setPlaceholder('{{YYYY.MM.DD}}T{{HH:mm:ss}}')
+              .setValue(preset.toolOverrides.recentOutputFormat ?? '')
+              .onChange((value) => {
+                preset.toolOverrides.recentOutputFormat = value.trim() || undefined;
+                void this.plugin.saveSettings();
+              })
+          );
+        this.markSearchable(fmtSetting, '预设 list_recent_notes 日期格式 时间格式 moment recentOutputFormat 双大括号');
       }, listRecentIo, rerenderAll);
+
+    // v0.8.9：列出输出文件夹最近文件（与 list_recent_notes 对称，作用于输出文件夹）。
+    this.renderToolConfigGroup(toolArea, preset, 'list_recent_output_notes',
+      '列出输出文件夹最近 N 天笔记（参数：days 回看天数）', (body) => {
+        const daysSetting = new Setting(body)
+          .setName('回看天数')
+          .setDesc('覆写 list_recent_output_notes 的 days；留空 = 用设置里「最近 N 天」。')
+          .addText((text) => {
+            text.inputEl.type = 'number';
+            text.setValue(String(preset.toolOverrides.listRecentDays ?? ''));
+            text.onChange((value) => {
+              const n = parseInt(value, 10);
+              preset.toolOverrides.listRecentDays = value.trim() === '' || Number.isNaN(n) ? undefined : n;
+              void this.plugin.saveSettings();
+            });
+          });
+        this.markSearchable(daysSetting, '预设 list_recent_output_notes 天数 回看天数');
+        const attrSetting = new Setting(body)
+          .setName('日期属性名（必填建议）')
+          .setDesc('每个文件 frontmatter 里记录日期的属性名（如 created）；留空 = 回退用设置里「时间属性」，再回退文件创建时间。')
+          .addText((text) =>
+            text
+              .setPlaceholder('created')
+              .setValue(preset.toolOverrides.recentOutputAttr ?? '')
+              .onChange((value) => {
+                preset.toolOverrides.recentOutputAttr = value.trim() || undefined;
+                void this.plugin.saveSettings();
+              })
+          );
+        this.markSearchable(attrSetting, '预设 list_recent_output_notes 日期属性 时间属性 recentOutputAttr');
+        const fmtSetting = new Setting(body)
+          .setName('日期格式（必填建议，moment 双大括号）')
+          .setDesc('解析该属性用的 moment 格式，双大括号写法如 {{YYYY.MM.DD}}T{{HH:mm:ss}}；留空 = 回退用设置里「时间格式」。')
+          .addText((text) =>
+            text
+              .setPlaceholder('{{YYYY.MM.DD}}T{{HH:mm:ss}}')
+              .setValue(preset.toolOverrides.recentOutputFormat ?? '')
+              .onChange((value) => {
+                preset.toolOverrides.recentOutputFormat = value.trim() || undefined;
+                void this.plugin.saveSettings();
+              })
+          );
+        this.markSearchable(fmtSetting, '预设 list_recent_output_notes 日期格式 时间格式 moment recentOutputFormat 双大括号');
+      }, listRecentOutputIo, rerenderAll);
 
     this.renderToolConfigGroup(toolArea, preset, 'read_note',
       '读取源文件夹笔记正文（无参数）', (body) => {
@@ -1764,6 +2296,17 @@ class SettingsRenderer {
             });
           });
         this.markSearchable(searchSetting, '预设 searchMode search_output_notes 模式 完整 阉割');
+        // v0.8.9：是否允许 query（正文/文件名子串搜索）。缺省允许；关闭后 schema 移除 query、执行时忽略。
+        const querySetting = new Setting(body)
+          .setName('允许使用 query（正文/文件名搜索）')
+          .setDesc('开 = AI 可用 query 按正文/文件名子串搜索；关 = 只能按 filters 属性过滤（schema 移除 query，AI 无法使用）。')
+          .addToggle((t) =>
+            t.setValue(preset.toolOverrides.searchQueryEnabled !== false).onChange((v) => {
+              preset.toolOverrides.searchQueryEnabled = v;
+              void this.plugin.saveSettings();
+            })
+          );
+        this.markSearchable(querySetting, '预设 searchQueryEnabled query 正文搜索 文件名搜索');
         const restrEl = body.createDiv({ cls: 'ks-preset-restrictions' });
         this.renderSearchRestrictions(restrEl, preset);
       }, searchIo, rerenderAll);
@@ -2146,7 +2689,7 @@ class SettingsRenderer {
   }
 
   /** 折叠头部右侧的「启用该工具」开关（v0.8.0，折叠区外）。映射到 preset
-   *  `enabledTools` 白名单；语义与 v0.5.0 完全一致（空 = 全部启用）。 */
+   *  `enabledTools` 白名单；v0.8.8 语义：显式集合（缺省 = 全开，空数组 = 全关）。 */
   private renderToolHeaderToggle(headEl: HTMLElement, preset: ToolPreset, name: string): void {
     const toggleWrap = headEl.createSpan({ cls: 'ks-tool-config-toggle' });
     // 点击开关不触发头部的展开/收起（阻止冒泡到 headEl 的折叠监听）。
@@ -2165,27 +2708,22 @@ class SettingsRenderer {
     else this.presetExpanded.delete(id);
   }
 
-  /** Whether tool `name` is enabled in the preset (empty enabledTools = all on). */
+  /** v0.8.8：`enabledTools` = 显式启用集合。是数组时返回 includes(name)
+   *  （空数组 = 全部关闭）；不是数组（undefined/缺失）时返回 true（缺省 = 全开）。 */
   private isToolEnabled(preset: ToolPreset, name: string): boolean {
-    const list = preset.enabledTools || [];
-    if (list.length === 0) return true; // 空 = 全部启用（默认）
-    return list.includes(name);
+    if (!Array.isArray(preset.enabledTools)) return true; // 缺省 = 全部启用（兼容旧数据）
+    return preset.enabledTools.includes(name);
   }
 
-  /** Toggle tool `name` in the preset, writing back `enabledTools`. Empty list
-   *  means all-enabled; turning one off materialises the whitelist explicitly. */
+  /** v0.8.8：开关工具，写回 `enabledTools` 显式集合。关到空 = 保持空数组
+   *  （= 全部关闭），不再回退为全开（v0.8.8 修复反向语义陷阱）。 */
   private setToolEnabled(preset: ToolPreset, name: string, on: boolean): void {
-    const list = preset.enabledTools || [];
-    if (list.length === 0) {
-      // 空 = 全部启用；要关某工具才写出「除它之外的全部」
-      preset.enabledTools = on ? [] : TOOL_NAMES.filter((x) => x !== name);
+    if (!Array.isArray(preset.enabledTools)) preset.enabledTools = TOOL_NAMES.slice();
+    const list = preset.enabledTools;
+    if (on) {
+      if (!list.includes(name)) preset.enabledTools = list.concat(name);
     } else {
-      if (on) {
-        if (!list.includes(name)) preset.enabledTools = list.concat(name);
-      } else {
-        const next = list.filter((x) => x !== name);
-        preset.enabledTools = next.length === 0 ? [] : next; // 关到空 = 回退默认全部（同 v0.5.0）
-      }
+      preset.enabledTools = list.filter((x) => x !== name); // 空数组 = 全部关闭
     }
     void this.plugin.saveSettings();
   }

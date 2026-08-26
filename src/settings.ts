@@ -8,6 +8,14 @@
  * hardcoding frontmatter property names.
  */
 /**
+ * Stable tool order for the preset tool-config editors and the base tool set.
+ * v0.8.8: moved here from settingsTab.ts so main.ts (preset migration) and
+ * utils/presets.ts share the same constant. Do NOT change the array contents
+ * or order — `enabledTools` persisted values are compared against these names.
+ */
+export const TOOL_NAMES = ['list_recent_notes', 'read_note', 'create_note', 'update_note_yaml', 'search_output_notes', 'modify_output_note', 'modify_output_note_versioned', 'read_output_note', 'list_recent_output_notes'];
+
+/**
  * One configurable frontmatter property rule for the `create_note` tool.
  * `values` empty = any value allowed (no validation); `default` empty = the
  * property is not added when the AI omits it, and may carry a moment template
@@ -39,7 +47,9 @@ export interface YamlRule {
  * overrides and a custom system prompt. `activePresetId` selects the one in use
  * in the chat view; `''` means the default "all tools + settings rules".
  *
- * `enabledTools` empty = the full base tool set (intersection rules below).
+ * v0.8.8 语义（反向陷阱修复）：`enabledTools` = 显式启用集合——缺失/undefined =
+ * 全部启用（默认，兼容旧数据）；空数组 = 全部关闭；非空数组 = 白名单（交集）。
+ * 旧数据迁移（main.ts loadSettings）把缺失/空数组改写为 TOOL_NAMES.slice()（显式全开）。
  * `toolOverrides.yamlRules` is intentionally NOT supported (per v0.5.0
  * decision) — yaml rules always come from `settings.yamlRules`.
  */
@@ -81,7 +91,7 @@ export interface ToolPreset {
   name: string;
   /** Custom system prompt; empty = default (no system message sent). */
   systemPrompt: string;
-  /** Enabled tool-name subset; empty = all (default). */
+  /** 显式启用集合（v0.8.8）：缺失 = 全部启用；空数组 = 全部关闭；非空 = 白名单。 */
   enabledTools: string[];
   /** Tool parameter overrides / constraints. */
   toolOverrides: {
@@ -95,6 +105,13 @@ export interface ToolPreset {
     searchMode?: 'full' | 'restricted';
     /** Whitelisted keys for the restricted search mode. */
     searchRestrictions?: { key: string; values: string[] }[];
+    /** v0.8.9：search_output_notes 是否允许使用 query（正文/文件名子串搜索）。
+     *  缺省/true = 允许；false = 从 schema 移除 query，执行时忽略 query。 */
+    searchQueryEnabled?: boolean;
+    /** v0.8.9：list_recent_output_notes 的日期属性名（frontmatter 键）；空 = 回退全局 timeAttr。 */
+    recentOutputAttr?: string;
+    /** v0.8.9：list_recent_output_notes 的日期格式（moment 双大括号模板，如 {{YYYY.MM.DD}}T{{HH:mm:ss}}）；空 = 回退全局 timeFormat。 */
+    recentOutputFormat?: string;
   };
   /**
    * v0.8.2：预设级「输出属性」覆盖（可选；每项未启用 = 该项继承默认预设/全局设置）。
@@ -117,6 +134,55 @@ export interface ToolPreset {
     createRestrictYaml?: boolean;
   };
 }
+
+/**
+ * v0.9.0：侧边栏「提醒面板」的一条规则 = 条件 + 动作。
+ * - 面板按规则显示条目；条件匹配 0 条时该规则不显示任何条目。
+ * - `open_review` 动作 = 单条（描述 = 规则名（N 个匹配））；`open_chat` 动作 =
+ *   每个匹配文件一条（描述 = 文件名）。
+ */
+export interface SidebarRule {
+  /** 唯一 id（创建时 String(Date.now())）。 */
+  id: string;
+  /** 规则显示名（用户填，如「有未审核文件」）。 */
+  name: string;
+  /** 规则开关（关 = 面板不显示该规则的条目）。 */
+  enabled: boolean;
+  /** 条件（求值返回匹配文件列表）。 */
+  condition: SidebarCondition;
+  /** 动作（点击条目右侧图标按钮时执行）。 */
+  action: SidebarAction;
+}
+
+/**
+ * 侧边栏规则条件（v0.9.0）。
+ * - `unreviewed`：输出文件夹未审核文件数 >= minCount（缺省 1）。
+ * - `missing_property`：folder 'source'/'output' 映射 settings.sourceFolder /
+ *   outputFolder，其他值视为自定义文件夹路径；afterDate 只看在该日期当天 00:00
+ *   及之后修改的文件（日期文本如 '2026-08-01'，解析失败忽略该过滤不报错，
+ *   留空/未填 = 不限；判定基于 file.stat.mtime，无 mtime 回退 ctime）；
+ *   property 为要检查的属性名；expectedValue 留空 = 属性缺失即匹配，填写 =
+ *   属性缺失或 String(值) !== expectedValue 都匹配。
+ */
+export type SidebarCondition =
+  | { type: 'unreviewed'; minCount?: number }
+  | {
+      type: 'missing_property';
+      folder: 'source' | 'output' | string;
+      afterDate?: string;
+      property: string;
+      expectedValue?: string;
+    };
+
+/**
+ * 侧边栏规则动作（v0.9.0）。
+ * - `open_review`：点击图标 → 打开审核面板（plugin.openReviewView()）。
+ * - `open_chat`：点击图标 → 打开聊天：应用 presetId 预设 + 输入框预填
+ *   promptTemplate 渲染结果（{{filename}} → 匹配文件 basename，不含 .md）。
+ */
+export type SidebarAction =
+  | { type: 'open_review' }
+  | { type: 'open_chat'; presetId?: string; promptTemplate?: string };
 
 export interface KnowledgeSystemSettings {
   /** Main provider API key (masked text input). */
@@ -189,6 +255,26 @@ export interface KnowledgeSystemSettings {
    * 强制覆写为渲染后的默认值（如 created=当前时间）。
    */
   modifyYamlRules: YamlRule[];
+  /**
+   * v0.8.7：审核页排除规则——frontmatter[key] 等于 value 的文件不出现在审核列表
+   * （如 {key: 'archived', value: 'true'} 排除已归档文件）。
+   */
+  reviewExcludes: { key: string; value: string }[];
+  /** v0.8.7：审核面板（.base 文件）在 vault 中的位置（如「审核.base」）。 */
+  reviewBasePath: string;
+  /**
+   * v0.8.9：审核页每行「审核开关」打开时写入 reviewAttr 的值（如「已审」）。
+   * 点击开关 → 把该文件 frontmatter[reviewAttr] 改为该值 → 文件移出审核列表。
+   */
+  reviewDoneValue: string;
+  /**
+   * v0.8.9：审核页「AI 修改」预填提示词模板。`{{filename}}` = 被修改笔记的文件名
+   * （不含路径，工具以文件名作参数）。留空 = 使用默认模板；模板无 `{{filename}}`
+   * 时原样使用（允许完全自定义）。
+   */
+  reviewChatPrompt: string;
+  /** v0.9.0：侧边栏「提醒面板」的条件动作规则列表（默认空 = 面板显示空态）。 */
+  sidebarRules: SidebarRule[];
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -222,4 +308,9 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   modifyVersionProperty: '',
   modifyArchiveProperty: '',
   modifyYamlRules: [],
+  reviewExcludes: [],
+  reviewBasePath: '审核.base',
+  reviewDoneValue: '已审',
+  reviewChatPrompt: '请读取输出文件夹中的笔记「{{filename}}」，与我沟通如何修改，然后按我的要求修改它。',
+  sidebarRules: [],
 };

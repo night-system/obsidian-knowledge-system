@@ -5,6 +5,7 @@ import { parseAnthropicResponse, AnthropicBlock } from './utils/sse';
 import { chatEndpointCandidates, hasAnthropicPath } from './utils/endpoints';
 import {
   listRecentNotesTool,
+  listRecentOutputNotesTool,
   readNoteTool,
   createNoteTool,
   updateNoteYamlTool,
@@ -122,6 +123,10 @@ export class KnowledgeChatView extends ItemView {
   /** 与上面的 pending 配对的 timer id，用于在块结算时取消挂起的节流渲染。 */
   private mdRenderTimers: Record<number, number> = {};
   private streamState: 'idle' | 'streaming' | 'done' = 'idle';
+
+  /** v0.8.6：审核页注入的上下文（openChatWith → setViewState state → setState）。
+   *  v0.8.9：携带**最终 prompt 文本**（审核页已用模板替换 {{filename}} → 文件名）。 */
+  private pendingContext: { prompt?: string; presetId?: string } | null = null;
   private streamCursorEl: HTMLElement | null = null;
   /** 输入栏上方的 AI 流式状态行（dsh shimmer），流式期间显示。 */
   private statusEl!: HTMLElement;
@@ -153,6 +158,70 @@ export class KnowledgeChatView extends ItemView {
 
   getDisplayText(): string {
     return 'Knowledge System Chat';
+  }
+
+  // -------------------------------------------------------------------------
+  // v0.8.6：带上下文打开（审核页「AI 修改」）——setViewState 的 state 在这里接收，
+  // onOpen 完成后应用（预设切换 + 预填引用该文件的输入框）。
+  // v0.8.9：上下文携带**最终 prompt 文本**（审核页已用「AI 修改提示词」模板替换
+  // `{{filename}}` → 文件名）；聊天视图只负责预填，不再拼接文件路径。
+  // -------------------------------------------------------------------------
+
+  getState(): Record<string, unknown> {
+    return this.pendingContext ? { ...this.pendingContext } : {};
+  }
+
+  async setState(state: Record<string, unknown>, result: unknown): Promise<void> {
+    void result;
+    this.pendingContext = {
+      prompt: typeof state?.prompt === 'string' && state.prompt ? state.prompt : undefined,
+      presetId: typeof state?.presetId === 'string' && state.presetId ? state.presetId : undefined,
+    };
+    // v0.8.9 修复：首次 setViewState 打开聊天视图时，Obsidian 的调用顺序是
+    // onOpen() 先于 setState()——onOpen 里 applyPendingContext 拿到的是空上下文，
+    // 之后 setState 才写入 pendingContext 却无人消费。这里在 DOM 已就绪时立即补一次。
+    if (this.inputEl) this.applyPendingContext();
+  }
+
+  /** 外部（审核页）预填输入框内容并聚焦。 */
+  prefillInput(text: string): void {
+    if (!this.inputEl) return;
+    this.inputEl.value = text;
+    this.onInputChanged();
+    this.inputEl.focus();
+  }
+
+  /**
+   * v0.8.9：外部（审核页）注入上下文——切换到指定预设 + 预填完整 prompt 文本。
+   * 供 `openChatWith` 在**复用已有聊天视图**时调用：Obsidian 的 setViewState 在
+   * leaf 已是同类型视图时只调 setState 不重跑 onOpen，导致 applyPendingContext
+   * 不会执行（v0.8.9 实测修复）。
+   */
+  async applyChatContext(prompt?: string, presetId?: string): Promise<void> {
+    this.pendingContext = {
+      prompt: typeof prompt === 'string' && prompt ? prompt : undefined,
+      presetId: typeof presetId === 'string' && presetId ? presetId : undefined,
+    };
+    this.applyPendingContext();
+  }
+
+  /** 应用 setState 收到的上下文（onOpen 建好 DOM 后调用一次）。 */
+  private applyPendingContext(): void {
+    const ctx = this.pendingContext;
+    if (!ctx) return;
+    if (ctx.presetId) {
+      const presets = this.plugin.settings.toolPresets || [];
+      const p = presets.find((x) => x.id === ctx.presetId);
+      if (p) {
+        this.plugin.settings.activePresetId = ctx.presetId;
+        void this.plugin.saveSettings();
+        this.refreshPresetConfig();
+      }
+    }
+    if (ctx.prompt) {
+      this.prefillInput(ctx.prompt);
+    }
+    this.pendingContext = null;
   }
 
   async onOpen(): Promise<void> {
@@ -205,6 +274,8 @@ export class KnowledgeChatView extends ItemView {
 
     this.streamState = 'idle';
     this.onInputChanged();
+    // v0.8.6：应用审核页注入的上下文（预设 + 引用文件）。
+    this.applyPendingContext();
   }
 
   async onClose(): Promise<void> {
@@ -736,6 +807,9 @@ export class KnowledgeChatView extends ItemView {
         moment: window.moment,
         searchMode: cfg?.searchMode,
         searchRestrictions: cfg?.searchRestrictions,
+        searchQueryEnabled: cfg?.searchQueryEnabled,
+        recentOutputAttr: cfg?.recentOutputAttr,
+        recentOutputFormat: cfg?.recentOutputFormat,
       };
       const toolResults: Record<string, string> = {};
       for (const b of blocks.filter((x) => x.type === 'tool_use')) {
@@ -1121,6 +1195,11 @@ export class KnowledgeChatView extends ItemView {
       if (name === 'list_recent_notes') {
         const days = a.days ?? cfg?.listRecentDays;
         const r = await listRecentNotesTool(ctx, { days });
+        return 'error' in r ? `ERROR: ${r.error}` : JSON.stringify(r.result);
+      }
+      if (name === 'list_recent_output_notes') {
+        const days = a.days ?? cfg?.listRecentDays;
+        const r = await listRecentOutputNotesTool(ctx, { days });
         return 'error' in r ? `ERROR: ${r.error}` : JSON.stringify(r.result);
       }
       if (name === 'read_note') {

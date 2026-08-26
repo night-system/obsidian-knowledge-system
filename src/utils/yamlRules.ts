@@ -26,6 +26,11 @@ import { stripFrontmatter } from './index';
  * - object → shallow copy (values kept as-is)
  * - string → split on lines; each line split at its first `:`, both sides
  *   trimmed; values kept as strings; empty lines and invalid lines ignored.
+ *
+ * v0.8.1：字符串分支会剥离 YAML 成对引号（`key: "value"` / `key: 'value'` →
+ * `value`），避免 AI 以「字符串形式 + 带引号值」传参时，引号字符残留在值里、
+ * 之后被 `serializeYamlFromObj` 的 needsQuoting 再次加引号（同一 yaml 在不同
+ * 设备上出现「带引号/不带引号」的差异即源于 AI 传参形式随机）。
  */
 export function parseYamlObject(yaml: unknown): Record<string, unknown> {
   if (yaml == null) return {};
@@ -38,7 +43,15 @@ export function parseYamlObject(yaml: unknown): Record<string, unknown> {
       if (idx <= 0) continue; // 非法行（无冒号或冒号在开头）
       // 首个冒号切分：键名、值（值保留字符串）
       const key = line.slice(0, idx).trim();
-      const value = line.slice(idx + 1).trim();
+      let value = line.slice(idx + 1).trim();
+      // 剥离 YAML 成对引号（整体被单引号或双引号包裹时去掉两端引号）
+      if (
+        value.length >= 2 &&
+        ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'")))
+      ) {
+        value = value.slice(1, -1);
+      }
       if (!key) continue;
       obj[key] = value;
     }

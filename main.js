@@ -71,7 +71,8 @@ var DEFAULT_SETTINGS = {
   tidyBasePath: "\u6574\u7406.base",
   tidyChatPresetId: "",
   tidyChatPrompt: "\u8BF7\u67E5\u770B\u300C{{filename}}\u300D\u5E76\u5E2E\u6211\u6574\u7406\uFF0C\u7136\u540E\u628A\u5B83\u6807\u8BB0\u4E3A\u5B8C\u6210\u3002",
-  panels: []
+  panels: [],
+  panelOpenMode: "tab"
 };
 
 // src/settingsTab.ts
@@ -1280,6 +1281,13 @@ var SettingsRenderer = class {
     containerEl.empty();
     const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u7528\u6237\u81EA\u5B9A\u4E49\u9762\u677F\uFF08Bases \u6838\u5FC3\u63D2\u4EF6\u81EA\u5B9A\u4E49\u89C6\u56FE\uFF09\uFF1A\u53EF\u521B\u5EFA\u4EFB\u610F\u591A\u4E2A\u9762\u677F\uFF0C\u6BCF\u4E2A\u9762\u677F\u626B\u63CF\u4E00\u4E2A\u6587\u4EF6\u5939\uFF08\u6E90\u6587\u4EF6\u5939/\u8F93\u51FA\u6587\u4EF6\u5939\u8DDF\u968F\u300C\u6587\u4EF6\u5939\u300Dtab \u7684\u5168\u5C40\u8BBE\u7F6E\uFF0C\u6216\u586B\u81EA\u5B9A\u4E49\u8DEF\u5F84\uFF09\uFF0C\u5217\u51FA bool \u5C5E\u6027\u5B58\u5728\u4E14\u4E0D\u662F true \u7684\u6587\u4EF6\uFF08v0.9.9\uFF1A\u5C5E\u6027\u7F3A\u5931\u7684\u6587\u4EF6\u4E0D\u663E\u793A\uFF09\uFF1B\u53EF\u8BBE\u6700\u65E9\u65E5\u671F\uFF08\u8BE5\u65E5\u671F\u4E4B\u540E\u4FEE\u6539/\u521B\u5EFA\u7684\u6587\u4EF6\u624D\u663E\u793A\uFF09\u3002\u70B9\u51FB\u6587\u4EF6\u540D\u6253\u5F00\u6587\u4EF6\u3001\u70B9\u51FB\u804A\u5929\u56FE\u6807\u7528\u9762\u677F\u81EA\u5DF1\u7684\u9884\u8BBE + prompt \u6A21\u677F\u8DF3\u804A\u5929\u3002\u6BCF\u4E2A\u9762\u677F\u53EF\u300C\u751F\u6210\u9762\u677F\u300D\uFF08\u6309\u914D\u7F6E\u91CD\u5EFA .base\uFF09\u4E0E\u300C\u6253\u5F00\u9762\u677F\u300D\u3002\u9700\u8981 Obsidian 1.10.0+ \u5E76\u542F\u7528 Bases \u6838\u5FC3\u63D2\u4EF6\u3002");
     this.markSearchable(info, "\u9762\u677F \u8BF4\u660E Bases \u81EA\u5B9A\u4E49 \u591A\u9762\u677F \u626B\u63CF\u6587\u4EF6\u5939 \u751F\u6210\u9762\u677F \u6253\u5F00\u9762\u677F \u804A\u5929\u9884\u8BBE prompt");
+    const openMode = new import_obsidian3.Setting(containerEl).setName("\u6253\u5F00\u65B9\u5F0F").setDesc("\u70B9\u51FB\u9762\u677F/\u8BBE\u7F6E\u65F6\u5728\u54EA\u91CC\u6253\u5F00\uFF1A\u65B0\u6807\u7B7E\u9875 = \u6700\u521D\u884C\u4E3A\uFF08\u9ED8\u8BA4\uFF09\uFF1B\u5F53\u524D\u6807\u7B7E\u9875 = \u66FF\u6362\u5F53\u524D\u663E\u793A\u7684\u6807\u7B7E\uFF08\u6B63\u5728\u7F16\u8F91\u7B14\u8BB0\u65F6\u53EF\u80FD\u66FF\u6362\u6389\u7B14\u8BB0\uFF09\u3002").addDropdown((drop) => {
+      drop.addOption("tab", "\u65B0\u6807\u7B7E\u9875\uFF08\u9ED8\u8BA4\uFF09");
+      drop.addOption("current", "\u5F53\u524D\u6807\u7B7E\u9875");
+      drop.setValue(this.plugin.settings.panelOpenMode || "tab");
+      drop.onChange((value) => this.updateSetting("panelOpenMode", value));
+    });
+    this.markSearchable(openMode, "\u9762\u677F \u6253\u5F00\u65B9\u5F0F \u65B0\u6807\u7B7E\u9875 \u5F53\u524D\u6807\u7B7E\u9875 tab current \u66FF\u6362");
     const panels = this.plugin.settings.panels || (this.plugin.settings.panels = []);
     panels.forEach((panel, index) => this.renderPanelCard(containerEl, panel, index));
     const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
@@ -5763,39 +5771,39 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
   }
   /**
-   * v0.9.8：打开本插件独立设置视图——**模拟点击内部链接跳转**：在当前标签页打开并
-   * 替换其内容。Obsidian 的 getLeaf(false) 在 active leaf 是笔记编辑器时返回 null
-   * （保守行为，防止替换编辑中的 leaf），所以这里兜底取「当前正显示笔记的 markdown
-   * leaf」直接 setViewState 替换（= 点链接跳转语义）。detachLeavesOfType 旧逻辑删除
-   * （它会关闭旧设置视图再新开，与「当前标签页跳转」冲突）；若目标 leaf 已是本插件
-   * 设置视图则直接 reveal，避免自我替换。
+   * v0.9.10：按「打开方式」设置返回目标 leaf（面板 .base / 设置视图共用）：
+   * - 'tab'（默认）= 新标签页（最初行为）；
+   * - 'current' = 当前标签页：getLeaf(false) ?? 第一个 markdown leaf ?? 新标签页；
+   *   若目标 leaf 已是目标视图类型（targetViewType；面板再校验显示的 .base 路径
+   *   targetPath 相同）则直接 reveal 并返回 null（避免 current 模式下自我替换）。
    */
-  async activateView() {
-    var _a, _b;
-    const leaf = (_b = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeavesOfType("markdown")[0]) != null ? _b : this.app.workspace.getLeaf("tab");
-    if (!leaf) return;
-    if (leaf.view && leaf.view.getViewType() === VIEW_TYPE_KS) {
-      this.app.workspace.revealLeaf(leaf);
-      return;
+  leafForOpen(targetViewType, targetPath) {
+    var _a, _b, _c;
+    if (this.settings.panelOpenMode !== "current") {
+      return this.app.workspace.getLeaf("tab");
     }
-    await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
-    this.app.workspace.revealLeaf(leaf);
+    const leaf = (_b = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeavesOfType("markdown")[0]) != null ? _b : this.app.workspace.getLeaf("tab");
+    if (!leaf) return null;
+    if (leaf.view) {
+      const fileView = leaf.view;
+      const sameTarget = leaf.view.getViewType() === targetViewType && (!targetPath || ((_c = fileView.file) == null ? void 0 : _c.path) === targetPath);
+      if (sameTarget) {
+        this.app.workspace.revealLeaf(leaf);
+        return null;
+      }
+    }
+    return leaf;
   }
   /**
-   * v0.9.8：打开 .base 文件——**模拟点击内部链接**（workspace.openLinkText）：
-   * 在当前标签页跳转并替换内容（即使 active leaf 是笔记编辑器——此时 getLeaf(false)
-   * 返回 null，所以 openLinkText 是正解）。openLinkText 不可用时回退
-   * getLeaf(false)（非 null 才用）/ getLeaf('tab')。
+   * v0.9.10：打开本插件独立设置视图——按「打开方式」设置：'tab' 新标签页（默认，
+   * 最初行为）/'current' 当前标签页（leafForOpen 已处理自我替换检测：若当前 leaf
+   * 已是设置视图则直接 reveal）。不再使用 detachLeavesOfType（tab 模式本来就新开，
+   * current 模式自我替换检测已覆盖）。
    */
-  async openBaseFileLikeLink(baseFile) {
-    var _a;
-    const workspace = this.app.workspace;
-    if (workspace && typeof workspace.openLinkText === "function") {
-      await workspace.openLinkText(baseFile.path, "");
-      return;
-    }
-    const leaf = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeaf("tab");
-    await leaf.openFile(baseFile);
+  async activateView() {
+    const leaf = this.leafForOpen(VIEW_TYPE_KS);
+    if (!leaf) return;
+    await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
   /** Open the chat view in a new tab leaf. */
@@ -5809,13 +5817,16 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
   }
   /**
    * v0.8.6：打开「审核」Bases 视图——确保 vault 根「审核.base」存在（filters 跟随
-   * 当前输出文件夹），然后在当前标签页打开它（v0.9.8：模拟点击内部链接 openLinkText，
-   * 替换当前 leaf 内容，即使正在编辑笔记；Bases 核心插件按 views[].type 渲染审核视图）。
+   * 当前输出文件夹），然后按「打开方式」设置打开（v0.9.10：'tab' 新标签页默认 /
+   * 'current' 当前标签页；Bases 核心插件按 views[].type 渲染审核视图）。
    */
   async openReviewView() {
     const baseFile = await ensureReviewBase(this);
     if (!baseFile) return;
-    await this.openBaseFileLikeLink(baseFile);
+    const leaf = this.leafForOpen(REVIEW_VIEW_TYPE, baseFile.path);
+    if (!leaf) return;
+    await leaf.openFile(baseFile);
+    this.app.workspace.revealLeaf(leaf);
   }
   /**
    * v0.8.7：按当前设置重新生成审核面板（已存在则覆盖重建一次）。
@@ -5827,14 +5838,17 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
   }
   /**
    * v0.9.2：打开「整理」Bases 视图——确保 settings.tidyBasePath 的 .base 存在
-   * （filters 跟随当前源文件夹），然后在当前标签页打开它（v0.9.8：模拟点击内部链接
-   * openLinkText，替换当前 leaf 内容；Bases 核心插件按 views[].type 渲染整理视图）。
+   * （filters 跟随当前源文件夹），然后按「打开方式」设置打开（v0.9.10：'tab' 新标签页
+   * 默认 / 'current' 当前标签页；Bases 核心插件按 views[].type 渲染整理视图）。
    * 由命令「Open tidy view」和设置页「整理」tab 的按钮调用。
    */
   async openTidyView() {
     const baseFile = await ensureTidyBase(this);
     if (!baseFile) return;
-    await this.openBaseFileLikeLink(baseFile);
+    const leaf = this.leafForOpen(TIDY_VIEW_TYPE, baseFile.path);
+    if (!leaf) return;
+    await leaf.openFile(baseFile);
+    this.app.workspace.revealLeaf(leaf);
   }
   /**
    * v0.9.2：按当前设置重新生成整理面板（已存在则覆盖重建一次）。
@@ -5851,10 +5865,10 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
   }
   /**
    * v0.9.3：打开用户自定义面板——panelId 缺省 = 第一个启用的面板。按 id 找面板
-   * 配置 → 确保其 .base 存在（filters 跟随面板扫描文件夹），然后在当前标签页打开
-   * （v0.9.8：模拟点击内部链接 openLinkText，替换当前 leaf 内容，即使正在编辑笔记；
-   * Bases 核心插件按 views[].type = ks-panel 渲染面板视图）。由命令「Open panel」、
-   * 设置页「面板」tab 的「打开面板」按钮和左侧边栏面板导航行调用。
+   * 配置 → 确保其 .base 存在（filters 跟随面板扫描文件夹），然后按「打开方式」设置
+   * 打开（v0.9.10：'tab' 新标签页默认 / 'current' 当前标签页；Bases 核心插件按
+   * views[].type = ks-panel 渲染面板视图）。由命令「Open panel」、设置页「面板」
+   * tab 的「打开面板」按钮和左侧边栏面板导航行调用。
    */
   async openPanel(panelId) {
     const panels = this.settings.panels || [];
@@ -5865,7 +5879,10 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
     }
     const baseFile = await ensurePanelBase(this, panel);
     if (!baseFile) return;
-    await this.openBaseFileLikeLink(baseFile);
+    const leaf = this.leafForOpen(PANEL_VIEW_TYPE, baseFile.path);
+    if (!leaf) return;
+    await leaf.openFile(baseFile);
+    this.app.workspace.revealLeaf(leaf);
   }
   /**
    * v0.9.3：按面板配置重新生成 .base（已存在则覆盖重建一次）。panelId 缺省 =

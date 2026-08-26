@@ -277,6 +277,11 @@ export interface KnowledgeSystemSettings {
   tidyChatPrompt: string;
   /** v0.9.3：用户自定义面板列表（默认空 = 无面板；每个面板见 PanelConfig）。 */
   panels: PanelConfig[];
+  /**
+   * v0.9.10：面板/设置「打开方式」——'tab' = 新标签页（默认，最初行为）；
+   * 'current' = 当前标签页（替换当前显示的标签；正在编辑笔记时可能替换掉笔记）。
+   */
+  panelOpenMode: 'tab' | 'current';
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -320,4 +325,5 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   tidyChatPresetId: '',
   tidyChatPrompt: '请查看「{{filename}}」并帮我整理，然后把它标记为完成。',
   panels: [],
+  panelOpenMode: 'tab',
 };

@@ -787,6 +787,19 @@ class SettingsRenderer {
       .setDesc('配置用户自定义面板（Bases 核心插件自定义视图）：可创建任意多个面板，每个面板扫描一个文件夹（源文件夹/输出文件夹跟随「文件夹」tab 的全局设置，或填自定义路径），列出 bool 属性存在且不是 true 的文件（v0.9.9：属性缺失的文件不显示）；可设最早日期（该日期之后修改/创建的文件才显示）。点击文件名打开文件、点击聊天图标用面板自己的预设 + prompt 模板跳聊天。每个面板可「生成面板」（按配置重建 .base）与「打开面板」。需要 Obsidian 1.10.0+ 并启用 Bases 核心插件。');
     this.markSearchable(info, '面板 说明 Bases 自定义 多面板 扫描文件夹 生成面板 打开面板 聊天预设 prompt');
 
+    // v0.9.10：打开方式（全局设置）——'tab' = 新标签页（默认，最初行为）；
+    // 'current' = 当前标签页（替换当前显示的标签，正在编辑笔记时可能替换掉笔记）。
+    const openMode = new Setting(containerEl)
+      .setName('打开方式')
+      .setDesc('点击面板/设置时在哪里打开：新标签页 = 最初行为（默认）；当前标签页 = 替换当前显示的标签（正在编辑笔记时可能替换掉笔记）。')
+      .addDropdown((drop) => {
+        drop.addOption('tab', '新标签页（默认）');
+        drop.addOption('current', '当前标签页');
+        drop.setValue(this.plugin.settings.panelOpenMode || 'tab');
+        drop.onChange((value) => this.updateSetting('panelOpenMode', value as 'tab' | 'current'));
+      });
+    this.markSearchable(openMode, '面板 打开方式 新标签页 当前标签页 tab current 替换');
+
     const panels = this.plugin.settings.panels || (this.plugin.settings.panels = []);
     panels.forEach((panel, index) => this.renderPanelCard(containerEl, panel, index));
 

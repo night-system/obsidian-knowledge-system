@@ -1,10 +1,8 @@
-import { ItemView, TFile, WorkspaceLeaf, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon } from 'obsidian';
 import type KnowledgeSystemPlugin from './main';
-import type { SidebarRule } from './settings';
-import { evaluateCondition } from './utils/sidebarRules';
-import { renderPromptTemplate } from './utils/review';
+import { collectPanelMatches } from './panelView';
 
-/** The workspace view type for the sidebar 提醒面板. Contract value. */
+/** The workspace view type for the sidebar 面板导航. Contract value. */
 export const VIEW_TYPE_SIDEBAR = 'knowledge-system-sidebar';
 
 /** 刷新防抖毫秒数（vault/metadataCache 事件合并）。 */
@@ -13,14 +11,13 @@ const REFRESH_DEBOUNCE_MS = 1000;
 const POLL_INTERVAL_MS = 60_000;
 
 /**
- * v0.9.0：左侧边栏「提醒面板」。
+ * v0.9.5：左侧边栏「面板导航」（重写自 v0.9.0 的「提醒面板」规则列表）。
  *
- * 按规则显示条目：每条规则 = 条件 + 动作；条目形态 = 一行描述文本 + 右侧一个
- * 图标按钮，点图标执行动作（点描述不响应）。
- * - `open_review` 动作：单条（描述 = 规则名（N 个匹配）），图标打开审核面板。
- * - `open_chat` 动作：每个匹配文件一条（描述 = 文件名），图标打开聊天
- *   （应用 presetId 预设 + 预填 promptTemplate 渲染结果，{{filename}} → basename）。
- * - 条件匹配 0 条 → 该规则不显示条目（不显示空行）。
+ * 每行一个启用的面板：左侧 = 面板名称，右侧 = 匹配文件数
+ * （collectPanelMatches(app, settings, panel).length）；点击行 → 打开对应面板
+ * （plugin.openPanel(panel.id)，确保 .base 存在并打开）。底部固定「设置」按钮 →
+ * 优先打开设置页并定位本插件 tab（app.setting.open + openTabById），不可用时
+ * 回退独立设置视图（plugin.activateView()）。
  *
  * 刷新触发：vault create/delete/rename/modify + metadataCache changed/resolved
  * （防抖 1s 重渲染）、60 秒定时轮询、手动刷新按钮。
@@ -48,7 +45,7 @@ export class SidebarView extends ItemView {
   }
 
   getDisplayText(): string {
-    return '提醒面板';
+    return '面板';
   }
 
   async onOpen(): Promise<void> {
@@ -59,7 +56,7 @@ export class SidebarView extends ItemView {
 
     this.render();
 
-    // v0.9.0：vault 事件 + metadataCache 事件 → 防抖 1s 重渲染。
+    // vault 事件 + metadataCache 事件 → 防抖 1s 重渲染。
     this.registerEvent(this.app.vault.on('create', () => this.scheduleRefresh()));
     this.registerEvent(this.app.vault.on('delete', () => this.scheduleRefresh()));
     this.registerEvent(this.app.vault.on('rename', () => this.scheduleRefresh()));
@@ -94,15 +91,36 @@ export class SidebarView extends ItemView {
     }, REFRESH_DEBOUNCE_MS);
   }
 
-  /** 全量重渲染：头部（标题 + 刷新按钮）+ 规则条目列表。 */
+  /**
+   * 打开设置：优先设置页 + 定位本插件 tab（openTabById('obsidian-knowledge-system')）；
+   * app.setting 不在公开类型里（Settings 核心插件），运行时存在，用安全 cast；
+   * 不可用/抛错则回退独立设置视图。
+   */
+  private openSettings(): void {
+    const setting = (this.app as unknown as {
+      setting?: { open?: () => void; openTabById?: (id: string) => void };
+    }).setting;
+    try {
+      if (setting && typeof setting.open === 'function' && typeof setting.openTabById === 'function') {
+        setting.open();
+        setting.openTabById('obsidian-knowledge-system');
+        return;
+      }
+    } catch {
+      /* 回退独立设置视图 */
+    }
+    void this.plugin.activateView();
+  }
+
+  /** 全量重渲染：头部（标题 + 刷新按钮）+ 启用的面板导航列表 + 底部设置按钮。 */
   private render(): void {
     if (this.disposed) return;
     const container = this.contentEl;
     container.empty();
 
-    // 头部：标题「提醒」+ 手动刷新图标按钮。
+    // 头部：标题「面板」+ 手动刷新图标按钮。
     const head = container.createDiv({ cls: 'ks-sidebar-head' });
-    head.createSpan({ cls: 'ks-sidebar-title', text: '提醒' });
+    head.createSpan({ cls: 'ks-sidebar-title', text: '面板' });
     const refreshBtn = head.createEl('button', {
       cls: 'clickable-icon ks-sidebar-refresh',
       attr: { 'aria-label': '刷新', 'title': '刷新' },
@@ -110,72 +128,26 @@ export class SidebarView extends ItemView {
     setIcon(refreshBtn, 'refresh-cw');
     refreshBtn.addEventListener('click', () => this.render());
 
-    const rules = this.plugin.settings.sidebarRules || [];
+    const panels = (this.plugin.settings.panels || []).filter((p) => p && p.enabled !== false);
     const list = container.createDiv({ cls: 'ks-sidebar-list' });
 
-    if (rules.length === 0) {
-      list.createDiv({ cls: 'ks-sidebar-empty', text: '未配置规则（请在设置 → 侧边栏 添加规则）' });
-      return;
-    }
-
-    let shown = 0;
-    for (const rule of rules) {
-      if (!rule || rule.enabled === false) continue;
-      const matches = evaluateCondition(this.app, this.plugin.settings, rule.condition);
-      if (matches.length === 0) continue; // 条件匹配 0 条 → 不显示条目（不显示空行）
-      shown += this.renderRuleEntries(list, rule, matches);
-    }
-    if (shown === 0) {
-      list.createDiv({ cls: 'ks-sidebar-empty', text: '没有满足条件的规则' });
-    }
-  }
-
-  /** 渲染一条规则下的条目；返回渲染的条目数。 */
-  private renderRuleEntries(list: HTMLElement, rule: SidebarRule, matches: TFile[]): number {
-    if (rule.action.type === 'open_review') {
-      // 单条：描述 = 规则名（N 个匹配）；图标 = 打开审核面板。
-      const row = list.createDiv({ cls: 'ks-sidebar-item' });
-      row.createDiv({ cls: 'ks-sidebar-item-desc', text: `${rule.name || '未命名规则'}（${matches.length} 个匹配）` });
-      const btn = row.createEl('button', {
-        cls: 'clickable-icon ks-sidebar-item-btn',
-        attr: { 'aria-label': '打开审核面板', 'title': '打开审核面板' },
-      });
-      setIcon(btn, 'external-link');
-      btn.addEventListener('click', () => {
-        void this.plugin.openReviewView();
-      });
-      return 1;
-    }
-
-    // open_chat：每个匹配文件一条；描述 = 文件名；图标 = 聊天。
-    const action = rule.action as Extract<SidebarRule['action'], { type: 'open_chat' }>;
-    for (const file of matches) {
-      const row = list.createDiv({ cls: 'ks-sidebar-item' });
-      row.createDiv({ cls: 'ks-sidebar-item-desc', text: this.entryDescription(file, rule) });
-      const btn = row.createEl('button', {
-        cls: 'clickable-icon ks-sidebar-item-btn',
-        attr: { 'aria-label': '打开聊天', 'title': '打开聊天' },
-      });
-      setIcon(btn, 'message-square');
-      btn.addEventListener('click', () => {
-        const template = action.promptTemplate || '';
-        const prompt = renderPromptTemplate(template, file.basename);
-        void this.plugin.openChatWith(prompt, action.presetId || undefined);
-      });
-    }
-    return matches.length;
-  }
-
-  /** open_chat 条目的描述文本（文件名；缺属性规则附带说明）。 */
-  private entryDescription(file: TFile, rule: SidebarRule): string {
-    if (rule.condition.type === 'missing_property') {
-      const prop = (rule.condition.property || '').trim();
-      const expected = rule.condition.expectedValue;
-      if (expected !== undefined && expected !== null && String(expected).trim() !== '') {
-        return `${file.basename}.md ${prop}≠${String(expected)}`;
+    if (panels.length === 0) {
+      list.createDiv({ cls: 'ks-sidebar-empty', text: '未配置面板（请在设置 → 面板 添加）' });
+    } else {
+      for (const panel of panels) {
+        const count = collectPanelMatches(this.app, this.plugin.settings, panel).length;
+        const row = list.createDiv({ cls: 'ks-sidebar-item ks-sidebar-panel-row' });
+        row.createDiv({ cls: 'ks-sidebar-item-name', text: panel.name || '未命名面板' });
+        row.createDiv({ cls: 'ks-sidebar-item-count', text: `${count} 个` });
+        row.addEventListener('click', () => {
+          void this.plugin.openPanel(panel.id);
+        });
       }
-      return `${file.basename}.md 缺${prop || '属性'}`;
     }
-    return `${file.basename}.md`;
+
+    // 底部固定「设置」按钮。
+    const footer = container.createDiv({ cls: 'ks-sidebar-footer' });
+    const settingsBtn = footer.createEl('button', { cls: 'ks-sidebar-settings-btn', text: '设置' });
+    settingsBtn.addEventListener('click', () => this.openSettings());
   }
 }

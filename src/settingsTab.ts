@@ -1,14 +1,13 @@
 import { App, DropdownComponent, Notice, PluginSettingTab, Setting, ToggleComponent, setIcon } from 'obsidian';
-import { KnowledgeSystemSettings, TOOL_NAMES, ToolPreset, UpdateYamlRule, NoteTemplateEntry, YamlRule, SidebarRule, PanelConfig } from './settings';
+import { KnowledgeSystemSettings, TOOL_NAMES, ToolPreset, UpdateYamlRule, NoteTemplateEntry, YamlRule, PanelConfig } from './settings';
 import { FolderSuggest } from './folderSuggest';
 import { countRecentFiles, outputLatestContent } from './core';
-import { evaluateCondition } from './utils/sidebarRules';
 import type KnowledgeSystemPlugin from './main';
 
-/** The settings tabs; `test` is the 5th (test tools), `preset` the 6th (v0.5.0),
- *  `sidebar` the 9th (v0.9.0 侧边栏提醒面板规则), `panel` the 5th (v0.9.3 用户自定义面板；
- *  取代 v0.8.7 审核 / v0.9.2 整理两个固定 tab——旧面板配置字段保留但无 UI)。 */
-export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'panel' | 'test' | 'preset' | 'uiPreview' | 'sidebar';
+/** The settings tabs; `test` the 6th (test tools), `preset` the 7th (v0.5.0),
+ *  `panel` the 5th (v0.9.3 用户自定义面板；取代 v0.8.7 审核 / v0.9.2 整理两个固定
+ *  tab 与 v0.9.0 侧边栏规则 tab——旧配置字段保留但无 UI)。 */
+export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'panel' | 'test' | 'preset' | 'uiPreview';
 
 // v0.8.8：TOOL_NAMES 移到 src/settings.ts 导出（main.ts 迁移 / utils/presets.ts 共用）。
 
@@ -383,8 +382,6 @@ class SettingsRenderer {
   private presetExpanded = new Set<string>();
   /** Expanded per-tool config group keys `${presetId}:${toolName}` (B.2). */
   private toolExpanded = new Set<string>();
-  /** v0.9.0：侧边栏规则卡片折叠状态（collapsed 的 rule id；缺省展开）。 */
-  private sidebarRuleCollapsed = new Set<string>();
   /** v0.9.3：面板卡片折叠状态（collapsed 的 panel.id；缺省展开）。 */
   private panelCollapsed = new Set<string>();
 
@@ -422,7 +419,6 @@ class SettingsRenderer {
       { id: 'test', label: '测试工具' },
       { id: 'preset', label: '预设' },
       { id: 'uiPreview', label: 'UI 方案' },
-      { id: 'sidebar', label: '侧边栏' },
     ];
 
     const tabsEl = containerEl.createDiv({ cls: 'ks-tabs' });
@@ -464,9 +460,6 @@ class SettingsRenderer {
         break;
       case 'uiPreview':
         this.renderUiPreviewGroup(containerEl);
-        break;
-      case 'sidebar':
-        this.renderSidebarGroup(containerEl);
         break;
     }
   }
@@ -1016,278 +1009,6 @@ class SettingsRenderer {
         })
       );
     this.markSearchable(ops, '面板 生成面板 打开面板 重新生成');
-  }
-
-  // -------------------------------------------------------------------------
-  // sidebar（v0.9.0：侧边栏「提醒面板」规则——条件 + 动作；仿预设折叠卡片模式）
-  // -------------------------------------------------------------------------
-
-  private renderSidebarGroup(containerEl: HTMLElement): void {
-    containerEl.empty();
-
-    const info = new Setting(containerEl)
-      .setName('')
-      .setDesc('配置左侧边栏「提醒面板」（命令「Open sidebar panel」或下方按钮打开）的规则：每条规则 = 条件 + 动作。条件匹配 0 条时该规则不显示条目。条件：未审核文件（输出文件夹）或缺少属性（指定文件夹 + 可选最近 N 天）；动作：打开审核面板或打开聊天（应用预设 + 预填 prompt 模板，{{filename}} 会被替换为匹配文件的文件名，不含路径与 .md）。');
-    this.markSearchable(info, '侧边栏 提醒面板 规则 条件 动作 未审核 缺少属性 打开审核 打开聊天 filename');
-
-    const openBtn = new Setting(containerEl)
-      .setName('')
-      .setDesc('')
-      .addButton((btn) =>
-        btn.setIcon('panel-left').setButtonText('打开左侧边栏面板').onClick(() => {
-          void this.plugin.openSidebarPanel();
-        })
-      );
-    this.markSearchable(openBtn, '侧边栏 打开 面板 左侧边栏');
-
-    const rules = this.plugin.settings.sidebarRules || (this.plugin.settings.sidebarRules = []);
-    rules.forEach((rule, index) => this.renderSidebarRuleCard(containerEl, rule, index));
-
-    const addBtn = new Setting(containerEl)
-      .setName('')
-      .setDesc('')
-      .addButton((btn) =>
-        btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
-          const nr: SidebarRule = {
-            id: String(Date.now()),
-            name: '新规则',
-            enabled: true,
-            condition: { type: 'unreviewed' },
-            action: { type: 'open_review' },
-          };
-          this.plugin.settings.sidebarRules.push(nr);
-          void this.plugin.saveSettings();
-          this.renderSidebarGroup(containerEl);
-        })
-      );
-    this.markSearchable(addBtn, '侧边栏 添加规则 增加 新建');
-  }
-
-  /**
-   * 渲染一条侧边栏规则卡片（可折叠）：头部 = chevron + 名称输入 + 启用开关 +
-   * 删除按钮；主体 = 条件编辑器 + 动作编辑器 + 「测试」按钮。折叠状态按 rule.id
-   * 记忆（缺省展开）；条件/动作类型下拉切换后整组重绘。
-   */
-  private renderSidebarRuleCard(containerEl: HTMLElement, rule: SidebarRule, index: number): void {
-    const rerenderAll = () => this.renderSidebarGroup(containerEl);
-    const collapsed = this.sidebarRuleCollapsed.has(rule.id);
-
-    const card = containerEl.createDiv({ cls: 'ks-sidebar-rule-item' });
-    const head = card.createDiv({ cls: 'ks-sidebar-rule-head' });
-    const chev = head.createSpan({ cls: 'ks-preset-item-chev' });
-    this.setIconSafe(chev, collapsed ? 'chevron-right' : 'chevron-down', collapsed ? '\u203A' : '\u2304');
-    chev.addEventListener('click', () => {
-      const isCollapsed = card.hasClass('ks-sidebar-rule-collapsed');
-      if (isCollapsed) this.sidebarRuleCollapsed.delete(rule.id);
-      else this.sidebarRuleCollapsed.add(rule.id);
-      this.setIconSafe(chev, isCollapsed ? 'chevron-down' : 'chevron-right', isCollapsed ? '\u2304' : '\u203A');
-      card.toggleClass('ks-sidebar-rule-collapsed', !isCollapsed);
-    });
-    const nameInput = head.createEl('input', { cls: 'ks-preset-item-name ks-sidebar-rule-name' });
-    nameInput.type = 'text';
-    nameInput.value = rule.name || '';
-    nameInput.placeholder = '规则名，如「有未审核文件」';
-    nameInput.addEventListener('input', () => {
-      rule.name = nameInput.value;
-      void this.plugin.saveSettings();
-    });
-    // 启用开关（stopPropagation 防止冒泡——头部无折叠监听，这里仅为稳妥）。
-    const toggleWrap = head.createSpan({ cls: 'ks-sidebar-rule-toggle' });
-    toggleWrap.addEventListener('click', (ev) => ev.stopPropagation());
-    new ToggleComponent(toggleWrap)
-      .setValue(rule.enabled !== false)
-      .setTooltip('启用此规则')
-      .onChange((v) => {
-        rule.enabled = v;
-        void this.plugin.saveSettings();
-      });
-    const delBtn = head.createEl('button', { cls: 'ks-preset-item-del' });
-    delBtn.setAttribute('aria-label', '删除此规则');
-    delBtn.setAttribute('title', '删除此规则');
-    this.setIconSafe(delBtn, 'trash-2', '\u00d7');
-    delBtn.addEventListener('click', () => {
-      this.plugin.settings.sidebarRules.splice(index, 1);
-      this.sidebarRuleCollapsed.delete(rule.id);
-      void this.plugin.saveSettings();
-      rerenderAll();
-    });
-
-    const body = card.createDiv({ cls: 'ks-sidebar-rule-body' });
-    if (collapsed) card.addClass('ks-sidebar-rule-collapsed');
-
-    // ---- 条件编辑器 ----
-    const condSel = new Setting(body)
-      .setName('条件类型')
-      .setDesc('「未审核文件」= 输出文件夹中未审核文件数 ≥ 最小数量；「缺少属性」= 指定文件夹里 frontmatter 缺少某属性（或值不等于期望值）的文件。')
-      .addDropdown((drop) => {
-        drop.addOptions({ unreviewed: '未审核文件', missing_property: '缺少属性' });
-        drop.setValue(rule.condition.type);
-        drop.onChange((v) => {
-          rule.condition = v === 'unreviewed'
-            ? { type: 'unreviewed' }
-            : { type: 'missing_property', folder: 'output', property: '' };
-          void this.plugin.saveSettings();
-          rerenderAll();
-        });
-      });
-    this.markSearchable(condSel, '侧边栏 条件类型 未审核文件 缺少属性 条件');
-
-    if (rule.condition.type === 'unreviewed') {
-      const cond = rule.condition as Extract<SidebarRule['condition'], { type: 'unreviewed' }>;
-      const minCount = new Setting(body)
-        .setName('最小数量')
-        .setDesc('未审核文件数 ≥ 该值时规则匹配（留空 = 1）。')
-        .addText((text) => {
-          text.inputEl.type = 'number';
-          text.setValue(cond.minCount === undefined ? '' : String(cond.minCount));
-          text.onChange((value) => {
-            if (value.trim() === '') {
-              cond.minCount = undefined;
-            } else {
-              const n = parseInt(value, 10);
-              if (!Number.isNaN(n)) cond.minCount = n;
-            }
-            void this.plugin.saveSettings();
-          });
-        });
-      this.markSearchable(minCount, '侧边栏 未审核 最小数量 minCount 数量');
-    } else {
-      const cond = rule.condition as Extract<SidebarRule['condition'], { type: 'missing_property' }>;
-      const isCustom = cond.folder !== 'source' && cond.folder !== 'output';
-      const folderSel = new Setting(body)
-        .setName('文件夹')
-        .setDesc('「源文件夹」/「输出文件夹」映射设置里的对应文件夹；「自定义」= 手动填路径。')
-        .addDropdown((drop) => {
-          drop.addOptions({ source: '源文件夹', output: '输出文件夹', custom: '自定义' });
-          drop.setValue(isCustom ? 'custom' : cond.folder);
-          drop.onChange((v) => {
-            if (v === 'custom') cond.folder = '';
-            else cond.folder = v as 'source' | 'output';
-            void this.plugin.saveSettings();
-            rerenderAll();
-          });
-        });
-      this.markSearchable(folderSel, '侧边栏 缺少属性 文件夹 源文件夹 输出文件夹 自定义');
-
-      if (isCustom) {
-        const pathSel = new Setting(body)
-          .setName('自定义文件夹路径')
-          .setDesc('库内文件夹路径；留空 = 库根目录。')
-          .addText((text) =>
-            text
-              .setPlaceholder('如：工作/待办')
-              .setValue(cond.folder)
-              .onChange((value) => {
-                cond.folder = value;
-                void this.plugin.saveSettings();
-              })
-          );
-        this.markSearchable(pathSel, '侧边栏 缺少属性 自定义 文件夹 路径');
-      }
-
-      const afterSel = new Setting(body)
-        .setName('此日期之后')
-        .setDesc('只看此日期之后（含当天）修改的文件，之前的不管；格式 YYYY-MM-DD（如 2026-08-01）；留空 = 不限。')
-        .addText((text) =>
-          text
-            .setPlaceholder('如：2026-08-01')
-            .setValue(cond.afterDate ?? '')
-            .onChange((value) => {
-              cond.afterDate = value.trim() === '' ? undefined : value.trim();
-              void this.plugin.saveSettings();
-            })
-        );
-      this.markSearchable(afterSel, '侧边栏 缺少属性 此日期之后 afterDate 日期 时间 修改');
-
-      const propSel = new Setting(body)
-        .setName('属性名')
-        .setDesc('要检查的 frontmatter 属性名（如 approved）。')
-        .addText((text) =>
-          text
-            .setPlaceholder('如：approved')
-            .setValue(cond.property)
-            .onChange((value) => {
-              cond.property = value;
-              void this.plugin.saveSettings();
-            })
-        );
-      this.markSearchable(propSel, '侧边栏 缺少属性 属性名 property frontmatter');
-
-      const expSel = new Setting(body)
-        .setName('期望值')
-        .setDesc('留空 = 属性缺失即匹配；填写 = 属性缺失或值不等于期望值都匹配。')
-        .addText((text) =>
-          text
-            .setPlaceholder('留空 = 仅属性缺失')
-            .setValue(cond.expectedValue ?? '')
-            .onChange((value) => {
-              cond.expectedValue = value.trim() === '' ? undefined : value;
-              void this.plugin.saveSettings();
-            })
-        );
-      this.markSearchable(expSel, '侧边栏 缺少属性 期望值 expectedValue 匹配');
-    }
-
-    // ---- 动作编辑器 ----
-    const actSel = new Setting(body)
-      .setName('动作类型')
-      .setDesc('「打开审核面板」= 点击条目右侧图标打开审核页（单条，显示匹配数）；「打开聊天」= 每个匹配文件一条，点击图标打开聊天（应用预设 + 预填 prompt 模板）。')
-      .addDropdown((drop) => {
-        drop.addOptions({ open_review: '打开审核面板', open_chat: '打开聊天' });
-        drop.setValue(rule.action.type);
-        drop.onChange((v) => {
-          rule.action = v === 'open_review' ? { type: 'open_review' } : { type: 'open_chat' };
-          void this.plugin.saveSettings();
-          rerenderAll();
-        });
-      });
-    this.markSearchable(actSel, '侧边栏 动作类型 打开审核面板 打开聊天 动作');
-
-    if (rule.action.type === 'open_chat') {
-      const act = rule.action as Extract<SidebarRule['action'], { type: 'open_chat' }>;
-      const presetSel = new Setting(body)
-        .setName('聊天预设')
-        .setDesc('点击图标打开聊天时应用的预设；「默认（全部工具）」= 当前聊天预设（全部工具）。')
-        .addDropdown((drop) => {
-          const presets = this.plugin.settings.toolPresets || [];
-          const opts: Record<string, string> = { '': '默认（全部工具）' };
-          for (const p of presets) opts[p.id] = p.name;
-          drop.addOptions(opts);
-          drop.setValue(presets.some((p) => p.id === act.presetId) ? act.presetId ?? '' : '');
-          drop.onChange((v) => {
-            act.presetId = v || undefined;
-            void this.plugin.saveSettings();
-          });
-        });
-      this.markSearchable(presetSel, '侧边栏 打开聊天 预设 preset 全部工具');
-
-      const promptSel = new Setting(body)
-        .setName('Prompt 模板')
-        .setDesc('点击图标时预填到聊天输入框的提示词；`{{filename}}` 会被替换为匹配文件的文件名（不含路径、不含 .md）。留空 = 只打开聊天、不预填。')
-        .addTextArea((text) =>
-          text
-            .setPlaceholder('请帮我处理笔记「{{filename}}」…')
-            .setValue(act.promptTemplate ?? '')
-            .onChange((value) => {
-              act.promptTemplate = value;
-              void this.plugin.saveSettings();
-            })
-        );
-      promptSel.settingEl.addClass('ks-review-prompt-row');
-      this.markSearchable(promptSel, '侧边栏 打开聊天 prompt 模板 提示词 filename');
-    }
-
-    // ---- 测试按钮 ----
-    const testBtn = new Setting(body)
-      .setName('')
-      .setDesc('立即按当前条件求值一次，显示匹配文件数量。')
-      .addButton((btn) =>
-        btn.setIcon('play').setButtonText('测试').onClick(() => {
-          const matches = evaluateCondition(this.app, this.plugin.settings, rule.condition);
-          new Notice(`条件「${rule.name || '未命名规则'}」匹配 ${matches.length} 个文件`);
-        })
-      );
-    this.markSearchable(testBtn, '侧边栏 测试 匹配 数量 求值');
   }
 
   /**

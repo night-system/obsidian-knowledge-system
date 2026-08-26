@@ -2,13 +2,13 @@
  * Shared pure review helpers (v0.9.0).
  *
  * Extracted from `src/reviewView.ts` so the 审核页 (Bases review view) and the
- * 侧边栏提醒面板 (`src/sidebarRules.ts`) use the SAME 未审核/排除判定逻辑.
- * This module imports nothing from `obsidian` (no runtime values) so it stays
- * trivially testable; callers pass plain values.
+ * 侧边栏提醒面板（v0.9.5 起已改为面板导航，未再使用）use the SAME 未审核/排除
+ * 判定逻辑. This module imports nothing from `obsidian` (no runtime values) so
+ * it stays trivially testable; callers pass plain values.
  *
  * v0.9.0 also adds `renderPromptTemplate` — the shared `{{filename}}`
- * substitution used by the review page「AI 修改」button and by sidebar
- * `open_chat` rules.
+ * substitution used by the review page「AI 修改」button and by the old sidebar
+ * `open_chat` rules (removed in v0.9.5).
  */
 
 /**
@@ -54,8 +54,8 @@ export function renderPromptTemplate(template: string, filename: string): string
 /**
  * v0.9.2：解析 afterDate 日期文本（YYYY-MM-DD，如 '2026-08-01'）为该日期当天
  * 00:00 的 epoch 毫秒。解析失败返回 null（调用方忽略该过滤，不报错）；
- * 留空/未填也返回 null（= 不限）。从 sidebarRules.ts 提取共用——整理面板
- * （tidyView.ts）与侧边栏 missing_property 规则（sidebarRules.ts）用同一逻辑。
+ * 留空/未填也返回 null（= 不限）。从 sidebarRules.ts 提取共用（v0.9.5 起
+ * 该文件已删除）——面板（panelView.ts）与侧边栏面板导航用同一逻辑。
  */
 export function parseAfterDate(text: string | undefined): number | null {
   const s = (text || '').trim();

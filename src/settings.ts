@@ -172,55 +172,6 @@ export interface PanelConfig {
   showDelete?: boolean;
 }
 
-/**
- * v0.9.0：侧边栏「提醒面板」的一条规则 = 条件 + 动作。
- * - 面板按规则显示条目；条件匹配 0 条时该规则不显示任何条目。
- * - `open_review` 动作 = 单条（描述 = 规则名（N 个匹配））；`open_chat` 动作 =
- *   每个匹配文件一条（描述 = 文件名）。
- */
-export interface SidebarRule {
-  /** 唯一 id（创建时 String(Date.now())）。 */
-  id: string;
-  /** 规则显示名（用户填，如「有未审核文件」）。 */
-  name: string;
-  /** 规则开关（关 = 面板不显示该规则的条目）。 */
-  enabled: boolean;
-  /** 条件（求值返回匹配文件列表）。 */
-  condition: SidebarCondition;
-  /** 动作（点击条目右侧图标按钮时执行）。 */
-  action: SidebarAction;
-}
-
-/**
- * 侧边栏规则条件（v0.9.0）。
- * - `unreviewed`：输出文件夹未审核文件数 >= minCount（缺省 1）。
- * - `missing_property`：folder 'source'/'output' 映射 settings.sourceFolder /
- *   outputFolder，其他值视为自定义文件夹路径；afterDate 只看在该日期当天 00:00
- *   及之后修改的文件（日期文本如 '2026-08-01'，解析失败忽略该过滤不报错，
- *   留空/未填 = 不限；判定基于 file.stat.mtime，无 mtime 回退 ctime）；
- *   property 为要检查的属性名；expectedValue 留空 = 属性缺失即匹配，填写 =
- *   属性缺失或 String(值) !== expectedValue 都匹配。
- */
-export type SidebarCondition =
-  | { type: 'unreviewed'; minCount?: number }
-  | {
-      type: 'missing_property';
-      folder: 'source' | 'output' | string;
-      afterDate?: string;
-      property: string;
-      expectedValue?: string;
-    };
-
-/**
- * 侧边栏规则动作（v0.9.0）。
- * - `open_review`：点击图标 → 打开审核面板（plugin.openReviewView()）。
- * - `open_chat`：点击图标 → 打开聊天：应用 presetId 预设 + 输入框预填
- *   promptTemplate 渲染结果（{{filename}} → 匹配文件 basename，不含 .md）。
- */
-export type SidebarAction =
-  | { type: 'open_review' }
-  | { type: 'open_chat'; presetId?: string; promptTemplate?: string };
-
 export interface KnowledgeSystemSettings {
   /** Main provider API key (masked text input). */
   apiKey: string;
@@ -310,8 +261,6 @@ export interface KnowledgeSystemSettings {
    * 时原样使用（允许完全自定义）。
    */
   reviewChatPrompt: string;
-  /** v0.9.0：侧边栏「提醒面板」的条件动作规则列表（默认空 = 面板显示空态）。 */
-  sidebarRules: SidebarRule[];
   /**
    * v0.9.2：整理面板（Bases 视图，与审核页同机制）——bool 属性名：源文件夹里
    * 该属性缺失或不是 true 的文件显示在面板；用户处理后设为 true → 文件消失。
@@ -364,7 +313,6 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   reviewBasePath: '审核.base',
   reviewDoneValue: '已审',
   reviewChatPrompt: '请读取输出文件夹中的笔记「{{filename}}」，与我沟通如何修改，然后按我的要求修改它。',
-  sidebarRules: [],
   tidyAttr: 'tidy',
   tidyAfterDate: '',
   tidyBasePath: '整理.base',

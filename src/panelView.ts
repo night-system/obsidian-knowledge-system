@@ -1,7 +1,7 @@
 import { App, Component, Modal, Notice, TFile, ToggleComponent, setIcon } from 'obsidian';
 import type { BasesView, BasesViewFactory, QueryController } from 'obsidian';
 import type KnowledgeSystemPlugin from './main';
-import type { PanelConfig } from './settings';
+import type { KnowledgeSystemSettings, PanelConfig } from './settings';
 import { parseAfterDate, renderPromptTemplate } from './utils/review';
 
 /**
@@ -80,9 +80,79 @@ export const PANEL_VIEW_TYPE = 'ks-panel';
  * sourceFolder/outputFolder，其他值 = 自定义路径（留空 = '/' 全库）。
  */
 export function resolvePanelFolder(plugin: KnowledgeSystemPlugin, folder: string): string {
-  if (folder === 'source') return plugin.settings.sourceFolder || '/';
-  if (folder === 'output') return plugin.settings.outputFolder || '/';
+  return resolvePanelFolderFromSettings(plugin.settings, folder);
+}
+
+/** 同 resolvePanelFolder，但只依赖 settings（v0.9.5：collectPanelMatches 内部用）。 */
+function resolvePanelFolderFromSettings(settings: KnowledgeSystemSettings, folder: string): string {
+  if (folder === 'source') return settings.sourceFolder || '/';
+  if (folder === 'output') return settings.outputFolder || '/';
   return folder || '/';
+}
+
+/** 文件夹判定（duck-typing，避免 instanceof 需要 obsidian 运行时）。 */
+function isFolderLike(v: unknown): boolean {
+  return typeof v === 'object' && v !== null && Array.isArray((v as { children?: unknown }).children);
+}
+
+/** 把 vault 抽象文件按文件夹递归收集其下所有 Markdown 文件（与 core.ts 同语义）。 */
+function getMarkdownFilesInFolder(root: unknown): TFile[] {
+  const result: TFile[] = [];
+  const visit = (folder: { children: unknown[] }): void => {
+    for (const child of folder.children) {
+      const ext = (child as { extension?: string }).extension;
+      if (typeof ext === 'string' && ext === 'md') {
+        result.push(child as TFile);
+      } else if (isFolderLike(child)) {
+        visit(child as { children: unknown[] });
+      }
+    }
+  };
+  if (isFolderLike(root)) visit(root as { children: unknown[] });
+  return result;
+}
+
+/** 解析文件夹：路径 → TFolder（不存在/非法 → 库根）。 */
+function resolveFolder(app: App, raw: string): unknown {
+  const s = (raw || '/').trim();
+  if (s === '/' || s === '') return app.vault.getRoot();
+  const p = s.replace(/^\/+|\/+$/g, '');
+  if (!p) return app.vault.getRoot();
+  const found = app.vault.getAbstractFileByPath(p);
+  return isFolderLike(found) ? found : app.vault.getRoot();
+}
+
+/**
+ * v0.9.5：面板匹配判定提取为公共函数（面板视图与左侧边栏面板导航共用）。
+ * - folder 解析（source/output → settings.sourceFolder/outputFolder，其他 = 自定义路径）→
+ *   递归取 md → afterDate 过滤（parseAfterDate，mtime 回退 ctime）→
+ *   attr 判定（缺失/null/空/`String(v).toLowerCase() !== 'true'` → 匹配）。
+ * - 可选 `files` 参数：传入时跳过文件夹扫描，直接过滤给定列表（面板视图的数据来自
+ *   Bases，folder 已由 .base filters 限定，传入 entries 的 file 列表即可，行为一致）。
+ */
+export function collectPanelMatches(
+  app: App,
+  settings: KnowledgeSystemSettings,
+  panel: PanelConfig,
+  files?: TFile[]
+): TFile[] {
+  const list = files ?? getMarkdownFilesInFolder(resolveFolder(app, resolvePanelFolderFromSettings(settings, panel.folder)));
+  const afterMs = parseAfterDate(panel.afterDate);
+  const attr = (panel.attr || '').trim();
+  return list.filter((file) => {
+    if (afterMs !== null) {
+      const mtime = (file.stat && file.stat.mtime) || file.stat.ctime || 0;
+      if (mtime < afterMs) return false;
+    }
+    if (attr) {
+      const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+      const raw = fm?.[attr];
+      // bool 属性缺失、null、空、或值（字符串化、忽略大小写）非 'true' → 匹配。
+      const isDone = raw !== undefined && raw !== null && raw !== '' && String(raw).toLowerCase() === 'true';
+      if (isDone) return false;
+    }
+    return true;
+  });
 }
 
 /**
@@ -220,27 +290,17 @@ export class PanelBasesView extends Component {
     refreshBtn.addEventListener('click', () => this.render());
     head.createSpan({ cls: 'ks-panel-hint', text: '点击笔记标题打开文件；右侧开关把「bool 属性」设为 true（条目消失）、垃圾桶删除文件（需二次确认，可关）；聊天图标用面板配置的预设进入聊天并引用此文件。' });
 
-    // 列表：只显示 afterDate 之后修改/创建、且 bool 属性缺失或非 true 的文件。
+    // 列表：只显示匹配的面板文件（v0.9.5：判定提取为公共函数 collectPanelMatches；
+    // 视图数据来自 Bases，folder 已由 .base filters 限定，把 entries 的 file 列表传入即可）。
     const attr = (panel.attr || '').trim();
-    const afterMs = parseAfterDate(panel.afterDate);
     const list = this.containerEl.createDiv({ cls: 'ks-panel-list' });
     const entries = this.data?.data ?? [];
+    const files = entries.map((e) => e.file).filter((f): f is TFile => !!f);
+    const matches = collectPanelMatches(this.app, this.plugin.settings, panel, files);
     let count = 0;
-    for (const entry of entries) {
-      const file = entry.file;
-      if (!file) continue;
-      if (afterMs !== null) {
-        const mtime = (file.stat && file.stat.mtime) || file.stat.ctime || 0;
-        if (mtime < afterMs) continue;
-      }
-      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-      if (attr) {
-        const raw = fm?.[attr];
-        // bool 属性缺失、null、空、或值（字符串化、忽略大小写）非 'true' → 需要处理。
-        const isDone = raw !== undefined && raw !== null && raw !== '' && String(raw).toLowerCase() === 'true';
-        if (isDone) continue;
-      }
+    for (const file of matches) {
       count++;
+      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
 
       const row = list.createDiv({ cls: 'ks-panel-item' });
       const info = row.createDiv({ cls: 'ks-panel-item-info' });

@@ -50,3 +50,25 @@ export function renderPromptTemplate(template: string, filename: string): string
   if (!s.includes('{{filename}}')) return s;
   return s.replace(/\{\{filename\}\}/g, filename);
 }
+
+/**
+ * v0.9.2：解析 afterDate 日期文本（YYYY-MM-DD，如 '2026-08-01'）为该日期当天
+ * 00:00 的 epoch 毫秒。解析失败返回 null（调用方忽略该过滤，不报错）；
+ * 留空/未填也返回 null（= 不限）。从 sidebarRules.ts 提取共用——整理面板
+ * （tidyView.ts）与侧边栏 missing_property 规则（sidebarRules.ts）用同一逻辑。
+ */
+export function parseAfterDate(text: string | undefined): number | null {
+  const s = (text || '').trim();
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  const day = parseInt(m[3], 10);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const d = new Date(year, month - 1, day, 0, 0, 0, 0);
+  // 校验日期真实存在（如 2026-02-30 → Invalid Date / 溢出则判为解析失败）。
+  if (Number.isNaN(d.getTime())) return null;
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+  return d.getTime();
+}

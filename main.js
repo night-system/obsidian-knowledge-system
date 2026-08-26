@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => KnowledgeSystemPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 
 // src/settings.ts
 var TOOL_NAMES = ["list_recent_notes", "read_note", "create_note", "update_note_yaml", "search_output_notes", "modify_output_note", "modify_output_note_versioned", "read_output_note", "list_recent_output_notes"];
@@ -66,7 +66,12 @@ var DEFAULT_SETTINGS = {
   reviewBasePath: "\u5BA1\u6838.base",
   reviewDoneValue: "\u5DF2\u5BA1",
   reviewChatPrompt: "\u8BF7\u8BFB\u53D6\u8F93\u51FA\u6587\u4EF6\u5939\u4E2D\u7684\u7B14\u8BB0\u300C{{filename}}\u300D\uFF0C\u4E0E\u6211\u6C9F\u901A\u5982\u4F55\u4FEE\u6539\uFF0C\u7136\u540E\u6309\u6211\u7684\u8981\u6C42\u4FEE\u6539\u5B83\u3002",
-  sidebarRules: []
+  sidebarRules: [],
+  tidyAttr: "tidy",
+  tidyAfterDate: "",
+  tidyBasePath: "\u6574\u7406.base",
+  tidyChatPresetId: "",
+  tidyChatPrompt: "\u8BF7\u67E5\u770B\u300C{{filename}}\u300D\u5E76\u5E2E\u6211\u6574\u7406\uFF0C\u7136\u540E\u628A\u5B83\u6807\u8BB0\u4E3A\u5B8C\u6210\u3002"
 };
 
 // src/settingsTab.ts
@@ -630,6 +635,20 @@ function renderPromptTemplate(template, filename) {
   if (!s.includes("{{filename}}")) return s;
   return s.replace(/\{\{filename\}\}/g, filename);
 }
+function parseAfterDate(text) {
+  const s = (text || "").trim();
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  const day = parseInt(m[3], 10);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const d = new Date(year, month - 1, day, 0, 0, 0, 0);
+  if (Number.isNaN(d.getTime())) return null;
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+  return d.getTime();
+}
 
 // src/utils/sidebarRules.ts
 function isFolderLike(v) {
@@ -666,20 +685,6 @@ function resolveFolder(app, raw) {
 function frontmatterOf2(app, file) {
   var _a, _b;
   return (_b = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : {};
-}
-function parseAfterDate(text) {
-  const s = (text || "").trim();
-  if (!s) return null;
-  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
-  if (!m) return null;
-  const year = parseInt(m[1], 10);
-  const month = parseInt(m[2], 10);
-  const day = parseInt(m[3], 10);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const d = new Date(year, month - 1, day, 0, 0, 0, 0);
-  if (Number.isNaN(d.getTime())) return null;
-  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
-  return d.getTime();
 }
 function evaluateCondition(app, settings, condition) {
   if (!condition) return [];
@@ -1152,6 +1157,7 @@ var SettingsRenderer = class {
       { id: "time", label: "\u65F6\u95F4" },
       { id: "output", label: "\u8F93\u51FA\u5C5E\u6027" },
       { id: "review", label: "\u5BA1\u6838" },
+      { id: "tidy", label: "\u6574\u7406" },
       { id: "test", label: "\u6D4B\u8BD5\u5DE5\u5177" },
       { id: "preset", label: "\u9884\u8BBE" },
       { id: "uiPreview", label: "UI \u65B9\u6848" },
@@ -1186,6 +1192,9 @@ var SettingsRenderer = class {
         break;
       case "review":
         this.renderReviewGroup(containerEl);
+        break;
+      case "tidy":
+        this.renderTidyGroup(containerEl);
         break;
       case "test":
         this.renderTestGroup(containerEl);
@@ -1458,6 +1467,51 @@ var SettingsRenderer = class {
       })
     );
     this.markSearchable(ops, "\u5BA1\u6838 \u751F\u6210\u5BA1\u6838\u9762\u677F \u6253\u5F00\u5BA1\u6838\u9762\u677F \u91CD\u65B0\u751F\u6210");
+  }
+  // -------------------------------------------------------------------------
+  // tidy（v0.9.2：整理面板配置——bool 属性 / 日期 / 面板位置 / 聊天跳转）
+  // -------------------------------------------------------------------------
+  renderTidyGroup(containerEl) {
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u300C\u6574\u7406\u300D\u9875\uFF08Bases \u6838\u5FC3\u63D2\u4EF6\u81EA\u5B9A\u4E49\u89C6\u56FE\uFF0C\u4E0E\u5BA1\u6838\u9875\u540C\u673A\u5236\uFF09\uFF1A\u5217\u51FA\u6E90\u6587\u4EF6\u5939\u91CC\u3001\u6B64\u65E5\u671F\u4E4B\u540E\u4FEE\u6539/\u521B\u5EFA\u3001\u4E14 bool \u5C5E\u6027\u7F3A\u5931\u6216\u4E0D\u662F true \u7684\u6587\u4EF6\u3002\u7528\u6237\u5904\u7406\u540E\u628A\u8BE5\u5C5E\u6027\u8BBE\u4E3A true \u2192 \u6587\u4EF6\u4ECE\u9762\u677F\u6D88\u5931\u3002\u6539\u5B8C\u8BBE\u7F6E\u540E\u70B9\u300C\u751F\u6210\u6574\u7406\u9762\u677F\u300D\u91CD\u5EFA\u9762\u677F\uFF08\u5DF2\u5B58\u5728\u5219\u6309\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210\u4E00\u6B21\uFF09\u3002\u9700\u8981 Obsidian 1.10.0+ \u5E76\u542F\u7528 Bases \u6838\u5FC3\u63D2\u4EF6\u3002");
+    this.markSearchable(info, "\u6574\u7406 \u8BF4\u660E Bases \u9762\u677F bool \u5C5E\u6027 \u65E5\u671F \u672A\u6574\u7406");
+    const attr = new import_obsidian3.Setting(containerEl).setName("bool \u5C5E\u6027\u540D").setDesc("frontmatter \u4E2D\u6807\u8BB0\u300C\u5DF2\u6574\u7406\u300D\u7684 bool \u5C5E\u6027\u540D\uFF1B\u7F3A\u5931\u6216\u503C\u4E0D\u662F true \u7684\u6587\u4EF6\u663E\u793A\u5728\u9762\u677F\uFF0C\u8BBE\u4E3A true \u540E\u6D88\u5931\u3002").addText(
+      (text) => text.setPlaceholder("tidy").setValue(this.plugin.settings.tidyAttr).onChange((value) => this.updateSetting("tidyAttr", value))
+    );
+    this.markSearchable(attr, "\u6574\u7406 bool \u5C5E\u6027\u540D tidyAttr \u5C5E\u6027");
+    const afterDate = new import_obsidian3.Setting(containerEl).setName("\u6B64\u65E5\u671F\u4E4B\u540E").setDesc("\u53EA\u770B\u6B64\u65E5\u671F\u4E4B\u540E\uFF08\u542B\u5F53\u5929\uFF09\u4FEE\u6539/\u521B\u5EFA\u7684\u6587\u4EF6\uFF0C\u4E4B\u524D\u7684\u4E0D\u770B\uFF1B\u683C\u5F0F YYYY-MM-DD\uFF08\u5982 2026-08-01\uFF09\uFF1B\u7559\u7A7A = \u4E0D\u9650\u3002").addText(
+      (text) => text.setPlaceholder("\u5982\uFF1A2026-08-01").setValue(this.plugin.settings.tidyAfterDate || "").onChange((value) => this.updateSetting("tidyAfterDate", value))
+    );
+    this.markSearchable(afterDate, "\u6574\u7406 \u6B64\u65E5\u671F\u4E4B\u540E \u65E5\u671F \u65F6\u95F4 \u4FEE\u6539 \u521B\u5EFA afterDate");
+    const path = new import_obsidian3.Setting(containerEl).setName("\u6574\u7406\u9762\u677F\u4F4D\u7F6E").setDesc("\u6574\u7406\u9762\u677F\uFF08.base \u6587\u4EF6\uFF09\u5728\u5E93\u4E2D\u7684\u8DEF\u5F84\uFF1B\u751F\u6210\u540E\u7531 Bases \u6838\u5FC3\u63D2\u4EF6\u6E32\u67D3\u3002").addText(
+      (text) => text.setPlaceholder("\u6574\u7406.base").setValue(this.plugin.settings.tidyBasePath).onChange((value) => this.updateSetting("tidyBasePath", value))
+    );
+    this.markSearchable(path, "\u6574\u7406 \u6574\u7406\u9762\u677F\u4F4D\u7F6E \u9762\u677F \u8DEF\u5F84 base");
+    const preset = new import_obsidian3.Setting(containerEl).setName("\u804A\u5929\u9884\u8BBE").setDesc("\u70B9\u51FB\u9762\u677F\u6761\u76EE\u53F3\u4FA7\u804A\u5929\u56FE\u6807\u65F6\u4F7F\u7528\u7684\u9884\u8BBE\uFF1B\u300C\u9ED8\u8BA4\uFF08\u5168\u90E8\u5DE5\u5177\uFF09\u300D= \u4E0D\u5207\u6362\u9884\u8BBE\u3002").addDropdown((drop) => {
+      drop.addOption("", "\u9ED8\u8BA4\uFF08\u5168\u90E8\u5DE5\u5177\uFF09");
+      const presets = this.plugin.settings.toolPresets || [];
+      for (const p of presets) {
+        if (!p || !p.id) continue;
+        drop.addOption(p.id, p.name || p.id);
+      }
+      drop.setValue(this.plugin.settings.tidyChatPresetId || "");
+      drop.onChange((value) => this.updateSetting("tidyChatPresetId", value));
+    });
+    this.markSearchable(preset, "\u6574\u7406 \u804A\u5929\u9884\u8BBE \u9884\u8BBE \u4E0B\u62C9 dropdown");
+    const prompt = new import_obsidian3.Setting(containerEl).setName("\u804A\u5929 prompt \u6A21\u677F").setDesc("\u70B9\u51FB\u9762\u677F\u6761\u76EE\u53F3\u4FA7\u804A\u5929\u56FE\u6807\u65F6\uFF0C\u9884\u586B\u5230\u804A\u5929\u8F93\u5165\u6846\u7684\u63D0\u793A\u8BCD\u6A21\u677F\u3002`{{filename}}` \u4F1A\u88AB\u66FF\u6362\u4E3A\u6587\u4EF6\u540D\uFF08\u4E0D\u542B\u8DEF\u5F84\uFF09\uFF1B\u6A21\u677F\u4E0D\u542B `{{filename}}` \u65F6\u539F\u6837\u4F7F\u7528\u3002").addTextArea(
+      (text) => text.setPlaceholder("\u8BF7\u67E5\u770B\u300C{{filename}}\u300D\u5E76\u5E2E\u6211\u6574\u7406\uFF0C\u7136\u540E\u628A\u5B83\u6807\u8BB0\u4E3A\u5B8C\u6210\u3002").setValue(this.plugin.settings.tidyChatPrompt || "").onChange((value) => this.updateSetting("tidyChatPrompt", value))
+    );
+    prompt.settingEl.addClass("ks-tidy-prompt-row");
+    this.markSearchable(prompt, "\u6574\u7406 \u804A\u5929 prompt \u6A21\u677F \u63D0\u793A\u8BCD filename \u5360\u4F4D\u7B26");
+    const ops = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setIcon("refresh-cw").setButtonText("\u751F\u6210\u6574\u7406\u9762\u677F").onClick(() => {
+        void this.plugin.regenerateTidyBase();
+      })
+    ).addButton(
+      (btn) => btn.setIcon("external-link").setButtonText("\u6253\u5F00\u6574\u7406\u9762\u677F").onClick(() => {
+        void this.plugin.openTidyView();
+      })
+    );
+    this.markSearchable(ops, "\u6574\u7406 \u751F\u6210\u6574\u7406\u9762\u677F \u6253\u5F00\u6574\u7406\u9762\u677F \u91CD\u65B0\u751F\u6210");
   }
   // -------------------------------------------------------------------------
   // sidebar（v0.9.0：侧边栏「提醒面板」规则——条件 + 动作；仿预设折叠卡片模式）
@@ -5443,8 +5497,163 @@ function unregisterReviewBasesView(app) {
   }
 }
 
+// src/tidyView.ts
+var import_obsidian8 = require("obsidian");
+var TIDY_VIEW_TYPE = "ks-tidy";
+function buildTidyBaseYaml(sourceFolder, tidyAttr) {
+  const folder = (sourceFolder || "/").replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const conditions = [];
+  if (folder !== "/") conditions.push(`file.inFolder("${folder}")`);
+  const lines = [];
+  if (conditions.length > 0) {
+    lines.push("filters:");
+    lines.push("  and:");
+    for (const c of conditions) lines.push(`    - ${c}`);
+  }
+  lines.push("views:");
+  lines.push(`  - type: ${TIDY_VIEW_TYPE}`);
+  lines.push("    name: \u6574\u7406");
+  lines.push("    order:");
+  lines.push("      - file.name");
+  lines.push(`      - note["${tidyAttr}"]`);
+  return lines.join("\n") + "\n";
+}
+function tidyBasePathOf(plugin) {
+  const p = (plugin.settings.tidyBasePath || "\u6574\u7406.base").replace(/\\/g, "/").trim();
+  return p || "\u6574\u7406.base";
+}
+async function ensureTidyBase(plugin) {
+  const vault = plugin.app.vault;
+  const path = tidyBasePathOf(plugin);
+  const yaml = buildTidyBaseYaml(plugin.settings.sourceFolder, plugin.settings.tidyAttr);
+  const existing = vault.getAbstractFileByPath(path);
+  if (existing instanceof import_obsidian8.TFile) {
+    try {
+      const cur = await vault.read(existing);
+      if (cur !== yaml) await vault.modify(existing, yaml);
+    } catch (e) {
+    }
+    return existing;
+  }
+  try {
+    const created = await vault.create(path, yaml);
+    return created instanceof import_obsidian8.TFile ? created : null;
+  } catch (e) {
+    new import_obsidian8.Notice(`\u521B\u5EFA\u6574\u7406\u9762\u677F\u5931\u8D25\uFF1A${String(e)}`);
+    return null;
+  }
+}
+async function regenerateTidyBaseFile(plugin) {
+  const vault = plugin.app.vault;
+  const path = tidyBasePathOf(plugin);
+  const yaml = buildTidyBaseYaml(plugin.settings.sourceFolder, plugin.settings.tidyAttr);
+  try {
+    const existing = vault.getAbstractFileByPath(path);
+    if (existing instanceof import_obsidian8.TFile) {
+      await vault.modify(existing, yaml);
+      return existing;
+    }
+    const created = await vault.create(path, yaml);
+    return created instanceof import_obsidian8.TFile ? created : null;
+  } catch (e) {
+    new import_obsidian8.Notice(`\u91CD\u65B0\u751F\u6210\u6574\u7406\u9762\u677F\u5931\u8D25\uFF1A${String(e)}`);
+    return null;
+  }
+}
+var TidyBasesView = class extends import_obsidian8.Component {
+  constructor(controller, containerEl, plugin) {
+    super();
+    this.type = TIDY_VIEW_TYPE;
+    this.allProperties = [];
+    this.data = null;
+    this.containerEl = containerEl;
+    this.plugin = plugin;
+    this.app = plugin.app;
+  }
+  onload() {
+    this.containerEl.addClass("ks-tidy-view");
+    this.render();
+  }
+  /** Bases 查询结果变化（vault 文件/frontmatter 变化）时自动重渲染。 */
+  onDataUpdated() {
+    this.render();
+  }
+  render() {
+    var _a, _b, _c;
+    this.containerEl.empty();
+    const head = this.containerEl.createDiv({ cls: "ks-tidy-head" });
+    head.createSpan({ cls: "ks-tidy-title", text: "\u6574\u7406" });
+    const refreshBtn = head.createEl("button", { cls: "clickable-icon ks-tidy-refresh", attr: { "aria-label": "\u5237\u65B0", "title": "\u5237\u65B0" } });
+    (0, import_obsidian8.setIcon)(refreshBtn, "refresh-cw");
+    refreshBtn.addEventListener("click", () => this.render());
+    head.createSpan({ cls: "ks-tidy-hint", text: "\u70B9\u51FB\u7B14\u8BB0\u6807\u9898\u6253\u5F00\u6587\u4EF6\uFF1B\u70B9\u51FB\u804A\u5929\u56FE\u6807\u7528\u8BBE\u7F6E\u91CC\u7684\u9884\u8BBE\u8FDB\u5165\u804A\u5929\u5E76\u5F15\u7528\u6B64\u6587\u4EF6\u3002\u628A\u300Cbool \u5C5E\u6027\u300D\u8BBE\u4E3A true \u540E\u6587\u4EF6\u4F1A\u4ECE\u8FD9\u91CC\u6D88\u5931\u3002" });
+    const tidyAttr = (this.plugin.settings.tidyAttr || "").trim();
+    const afterMs = parseAfterDate(this.plugin.settings.tidyAfterDate);
+    const list = this.containerEl.createDiv({ cls: "ks-tidy-list" });
+    const entries = (_b = (_a = this.data) == null ? void 0 : _a.data) != null ? _b : [];
+    let count = 0;
+    for (const entry of entries) {
+      const file = entry.file;
+      if (!file) continue;
+      if (afterMs !== null) {
+        const mtime = file.stat && file.stat.mtime || file.stat.ctime || 0;
+        if (mtime < afterMs) continue;
+      }
+      const fm = (_c = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _c.frontmatter;
+      if (tidyAttr) {
+        const raw = fm == null ? void 0 : fm[tidyAttr];
+        const isDone = raw !== void 0 && raw !== null && raw !== "" && String(raw).toLowerCase() === "true";
+        if (isDone) continue;
+      }
+      count++;
+      const row = list.createDiv({ cls: "ks-tidy-item" });
+      const info = row.createDiv({ cls: "ks-tidy-item-info" });
+      const nameEl = info.createDiv({ cls: "ks-tidy-item-name", text: file.basename });
+      nameEl.addEventListener("click", () => {
+        void this.app.workspace.getLeaf("tab").openFile(file);
+      });
+      const ops = row.createDiv({ cls: "ks-tidy-item-ops" });
+      const chatBtn = ops.createEl("button", { cls: "clickable-icon ks-tidy-chat", attr: { "aria-label": "\u804A\u5929", "title": "\u804A\u5929" } });
+      (0, import_obsidian8.setIcon)(chatBtn, "messages-square");
+      chatBtn.addEventListener("click", () => {
+        const template = (this.plugin.settings.tidyChatPrompt || "").trim() || "\u8BF7\u67E5\u770B\u300C{{filename}}\u300D\u5E76\u5E2E\u6211\u6574\u7406\uFF0C\u7136\u540E\u628A\u5B83\u6807\u8BB0\u4E3A\u5B8C\u6210\u3002";
+        const prompt = renderPromptTemplate(template, file.basename);
+        void this.plugin.openChatWith(prompt, this.plugin.settings.tidyChatPresetId || void 0);
+      });
+    }
+    if (count === 0) {
+      list.createDiv({ cls: "ks-tidy-empty", text: "\u6E90\u6587\u4EF6\u5939\u91CC\u6CA1\u6709\u9700\u8981\u6574\u7406\u7684\u6587\u4EF6" });
+    } else {
+      list.createDiv({ cls: "ks-tidy-count", text: `\u5171 ${count} \u4E2A\u9700\u8981\u6574\u7406\u7684\u6587\u4EF6` });
+    }
+  }
+};
+function registerTidyBasesView(plugin) {
+  if (typeof plugin.registerBasesView !== "function") return false;
+  try {
+    const factory = (controller, containerEl) => new TidyBasesView(controller, containerEl, plugin);
+    return plugin.registerBasesView(TIDY_VIEW_TYPE, {
+      name: "\u6574\u7406",
+      icon: "list-todo",
+      factory
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("already exists")) return true;
+    return false;
+  }
+}
+function unregisterTidyBasesView(app) {
+  var _a;
+  try {
+    const internal = app.internalPlugins;
+    const bases = (_a = internal == null ? void 0 : internal.getEnabledPluginById) == null ? void 0 : _a.call(internal, "bases");
+    if (bases == null ? void 0 : bases.registrations) delete bases.registrations[TIDY_VIEW_TYPE];
+  } catch (e) {
+  }
+}
+
 // src/main.ts
-var KnowledgeSystemPlugin = class extends import_obsidian8.Plugin {
+var KnowledgeSystemPlugin = class extends import_obsidian9.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -5459,11 +5668,13 @@ var KnowledgeSystemPlugin = class extends import_obsidian8.Plugin {
     this.registerView(VIEW_TYPE_KS, (leaf) => new KnowledgeSettingsView(this, leaf));
     this.registerView(VIEW_TYPE_CHAT, (leaf) => new KnowledgeChatView(this, leaf));
     this.registerView(VIEW_TYPE_SIDEBAR, (leaf) => new SidebarView(this, leaf));
-    if (!registerReviewBasesView(this)) {
+    if (!registerReviewBasesView(this) || !registerTidyBasesView(this)) {
       let tries = 0;
       this.basesRetryTimer = window.setInterval(() => {
         tries++;
-        if (registerReviewBasesView(this) || tries >= 12) {
+        const reviewOk = registerReviewBasesView(this);
+        const tidyOk = registerTidyBasesView(this);
+        if (reviewOk && tidyOk || tries >= 12) {
           if (this.basesRetryTimer !== null) {
             window.clearInterval(this.basesRetryTimer);
             this.basesRetryTimer = null;
@@ -5500,6 +5711,20 @@ var KnowledgeSystemPlugin = class extends import_obsidian8.Plugin {
       }
     });
     this.addCommand({
+      id: "open-tidy-view",
+      name: "Open tidy view (\u6253\u5F00\u6574\u7406\u9762\u677F)",
+      callback: () => {
+        void this.openTidyView();
+      }
+    });
+    this.addCommand({
+      id: "regenerate-tidy-base",
+      name: "Regenerate tidy panel (\u6309\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210\u6574\u7406\u9762\u677F)",
+      callback: () => {
+        void this.regenerateTidyBase();
+      }
+    });
+    this.addCommand({
       id: "open-sidebar-panel",
       name: "Open sidebar panel (\u6253\u5F00\u5DE6\u4FA7\u8FB9\u680F\u9762\u677F)",
       callback: () => {
@@ -5513,6 +5738,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian8.Plugin {
       this.basesRetryTimer = null;
     }
     unregisterReviewBasesView(this.app);
+    unregisterTidyBasesView(this.app);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
@@ -5552,7 +5778,28 @@ var KnowledgeSystemPlugin = class extends import_obsidian8.Plugin {
    */
   async regenerateReviewBase() {
     const baseFile = await regenerateReviewBaseFile(this);
-    if (baseFile) new import_obsidian8.Notice("\u5BA1\u6838\u9762\u677F\u5DF2\u6309\u5F53\u524D\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210");
+    if (baseFile) new import_obsidian9.Notice("\u5BA1\u6838\u9762\u677F\u5DF2\u6309\u5F53\u524D\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210");
+  }
+  /**
+   * v0.9.2：打开「整理」Bases 视图——确保 settings.tidyBasePath 的 .base 存在
+   * （filters 跟随当前源文件夹），然后在 tab 里打开它（Bases 核心插件按
+   * views[].type 渲染整理视图）。由命令「Open tidy view」和设置页「整理」tab
+   * 的按钮调用。
+   */
+  async openTidyView() {
+    const baseFile = await ensureTidyBase(this);
+    if (!baseFile) return;
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.openFile(baseFile);
+    this.app.workspace.revealLeaf(leaf);
+  }
+  /**
+   * v0.9.2：按当前设置重新生成整理面板（已存在则覆盖重建一次）。
+   * 由命令「Regenerate tidy panel」和设置页「整理」tab 的按钮调用。
+   */
+  async regenerateTidyBase() {
+    const baseFile = await regenerateTidyBaseFile(this);
+    if (baseFile) new import_obsidian9.Notice("\u6574\u7406\u9762\u677F\u5DF2\u6309\u5F53\u524D\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210");
   }
   /**
    * v0.9.0：打开左侧边栏「提醒面板」——已存在该视图时复用第一个 leaf 并
@@ -5564,7 +5811,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian8.Plugin {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_SIDEBAR);
     if (existing.length > 0 && existing[0].view) {
       this.app.workspace.revealLeaf(existing[0]);
-      new import_obsidian8.Notice("\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F");
+      new import_obsidian9.Notice("\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F");
       return;
     }
     let leaf = this.app.workspace.getLeftLeaf(false);
@@ -5572,7 +5819,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian8.Plugin {
     if (!leaf) leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: VIEW_TYPE_SIDEBAR, active: true });
     this.app.workspace.revealLeaf(leaf);
-    new import_obsidian8.Notice(inSidebar ? "\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F\uFF08\u5DE6\u4FA7\u8FB9\u680F\uFF09" : "\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F\uFF08\u6807\u7B7E\u9875\uFF09");
+    new import_obsidian9.Notice(inSidebar ? "\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F\uFF08\u5DE6\u4FA7\u8FB9\u680F\uFF09" : "\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F\uFF08\u6807\u7B7E\u9875\uFF09");
   }
   /**
    * v0.8.6：打开聊天视图并注入上下文（审核页「AI 修改」按钮用）：

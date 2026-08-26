@@ -930,6 +930,106 @@
 }
 
 /* ------------------------------------------------------------------ */
+/* v0.9.2：整理面板（Bases 自定义视图，样式与审核页同构；独立前缀 .ks-tidy-* 避免耦合） */
+/* ------------------------------------------------------------------ */
+
+.ks-tidy-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--size-4-2);
+}
+
+.ks-tidy-head {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: var(--size-2-2);
+}
+
+.ks-tidy-title {
+  font-size: var(--font-ui-large);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.ks-tidy-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  flex: 1 1 100%;
+}
+
+/* 刷新/聊天 icon 按钮——无底色无边框，hover 仅变色（与审核页一致）。 */
+.ks-tidy-refresh,
+.ks-tidy-chat {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.ks-tidy-refresh:hover,
+.ks-tidy-chat:hover {
+  background: transparent;
+  color: var(--interactive-accent);
+}
+
+.ks-tidy-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-2);
+}
+
+.ks-tidy-item {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  flex-wrap: wrap;
+  padding: var(--size-2-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+}
+
+.ks-tidy-item-info {
+  flex: 1 1 12em;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ks-tidy-item-name {
+  font-weight: 600;
+  word-break: break-all;
+  cursor: pointer;
+}
+
+.ks-tidy-item-name:hover {
+  color: var(--interactive-accent);
+}
+
+.ks-tidy-item-ops {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  flex: 0 0 auto;
+}
+
+.ks-tidy-empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: var(--size-4-2);
+}
+
+.ks-tidy-count {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+/* ------------------------------------------------------------------ */
 /* Preset tab (v0.5.0) & chat preset selector bar                       */
 /* ------------------------------------------------------------------ */
 
@@ -1161,6 +1261,17 @@
 }
 
 .ks-review-prompt-row .setting-item-control .text-area {
+  min-height: 4em;
+  width: 100%;
+}
+
+/* v0.9.2：整理面板「聊天 prompt 模板」多行输入框（与审核页同款）。 */
+.ks-tidy-prompt-row .setting-item-control {
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+}
+
+.ks-tidy-prompt-row .setting-item-control .text-area {
   min-height: 4em;
   width: 100%;
 }

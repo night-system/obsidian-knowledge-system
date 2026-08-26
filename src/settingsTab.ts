@@ -6,8 +6,8 @@ import { evaluateCondition } from './utils/sidebarRules';
 import type KnowledgeSystemPlugin from './main';
 
 /** The settings tabs; `test` is the 5th (test tools), `preset` the 6th (v0.5.0),
- *  `sidebar` the 9th (v0.9.0 侧边栏提醒面板规则). */
-export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'review' | 'test' | 'preset' | 'uiPreview' | 'sidebar';
+ *  `sidebar` the 9th (v0.9.0 侧边栏提醒面板规则), `tidy` the 10th (v0.9.2 整理面板). */
+export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'review' | 'tidy' | 'test' | 'preset' | 'uiPreview' | 'sidebar';
 
 // v0.8.8：TOOL_NAMES 移到 src/settings.ts 导出（main.ts 迁移 / utils/presets.ts 共用）。
 
@@ -416,6 +416,7 @@ class SettingsRenderer {
       { id: 'time', label: '时间' },
       { id: 'output', label: '输出属性' },
       { id: 'review', label: '审核' },
+      { id: 'tidy', label: '整理' },
       { id: 'test', label: '测试工具' },
       { id: 'preset', label: '预设' },
       { id: 'uiPreview', label: 'UI 方案' },
@@ -452,6 +453,9 @@ class SettingsRenderer {
         break;
       case 'review':
         this.renderReviewGroup(containerEl);
+        break;
+      case 'tidy':
+        this.renderTidyGroup(containerEl);
         break;
       case 'test':
         this.renderTestGroup(containerEl);
@@ -918,6 +922,92 @@ class SettingsRenderer {
         })
       );
     this.markSearchable(ops, '审核 生成审核面板 打开审核面板 重新生成');
+  }
+
+  // -------------------------------------------------------------------------
+  // tidy（v0.9.2：整理面板配置——bool 属性 / 日期 / 面板位置 / 聊天跳转）
+  // -------------------------------------------------------------------------
+
+  private renderTidyGroup(containerEl: HTMLElement): void {
+    const info = new Setting(containerEl)
+      .setName('')
+      .setDesc('配置「整理」页（Bases 核心插件自定义视图，与审核页同机制）：列出源文件夹里、此日期之后修改/创建、且 bool 属性缺失或不是 true 的文件。用户处理后把该属性设为 true → 文件从面板消失。改完设置后点「生成整理面板」重建面板（已存在则按设置重新生成一次）。需要 Obsidian 1.10.0+ 并启用 Bases 核心插件。');
+    this.markSearchable(info, '整理 说明 Bases 面板 bool 属性 日期 未整理');
+
+    const attr = new Setting(containerEl)
+      .setName('bool 属性名')
+      .setDesc('frontmatter 中标记「已整理」的 bool 属性名；缺失或值不是 true 的文件显示在面板，设为 true 后消失。')
+      .addText((text) =>
+        text
+          .setPlaceholder('tidy')
+          .setValue(this.plugin.settings.tidyAttr)
+          .onChange((value) => this.updateSetting('tidyAttr', value))
+      );
+    this.markSearchable(attr, '整理 bool 属性名 tidyAttr 属性');
+
+    const afterDate = new Setting(containerEl)
+      .setName('此日期之后')
+      .setDesc('只看此日期之后（含当天）修改/创建的文件，之前的不看；格式 YYYY-MM-DD（如 2026-08-01）；留空 = 不限。')
+      .addText((text) =>
+        text
+          .setPlaceholder('如：2026-08-01')
+          .setValue(this.plugin.settings.tidyAfterDate || '')
+          .onChange((value) => this.updateSetting('tidyAfterDate', value))
+      );
+    this.markSearchable(afterDate, '整理 此日期之后 日期 时间 修改 创建 afterDate');
+
+    const path = new Setting(containerEl)
+      .setName('整理面板位置')
+      .setDesc('整理面板（.base 文件）在库中的路径；生成后由 Bases 核心插件渲染。')
+      .addText((text) =>
+        text
+          .setPlaceholder('整理.base')
+          .setValue(this.plugin.settings.tidyBasePath)
+          .onChange((value) => this.updateSetting('tidyBasePath', value))
+      );
+    this.markSearchable(path, '整理 整理面板位置 面板 路径 base');
+
+    const preset = new Setting(containerEl)
+      .setName('聊天预设')
+      .setDesc('点击面板条目右侧聊天图标时使用的预设；「默认（全部工具）」= 不切换预设。')
+      .addDropdown((drop) => {
+        drop.addOption('', '默认（全部工具）');
+        const presets = this.plugin.settings.toolPresets || [];
+        for (const p of presets) {
+          if (!p || !p.id) continue;
+          drop.addOption(p.id, p.name || p.id);
+        }
+        drop.setValue(this.plugin.settings.tidyChatPresetId || '');
+        drop.onChange((value) => this.updateSetting('tidyChatPresetId', value));
+      });
+    this.markSearchable(preset, '整理 聊天预设 预设 下拉 dropdown');
+
+    const prompt = new Setting(containerEl)
+      .setName('聊天 prompt 模板')
+      .setDesc('点击面板条目右侧聊天图标时，预填到聊天输入框的提示词模板。`{{filename}}` 会被替换为文件名（不含路径）；模板不含 `{{filename}}` 时原样使用。')
+      .addTextArea((text) =>
+        text
+          .setPlaceholder('请查看「{{filename}}」并帮我整理，然后把它标记为完成。')
+          .setValue(this.plugin.settings.tidyChatPrompt || '')
+          .onChange((value) => this.updateSetting('tidyChatPrompt', value))
+      );
+    prompt.settingEl.addClass('ks-tidy-prompt-row');
+    this.markSearchable(prompt, '整理 聊天 prompt 模板 提示词 filename 占位符');
+
+    const ops = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setIcon('refresh-cw').setButtonText('生成整理面板').onClick(() => {
+          void this.plugin.regenerateTidyBase();
+        })
+      )
+      .addButton((btn) =>
+        btn.setIcon('external-link').setButtonText('打开整理面板').onClick(() => {
+          void this.plugin.openTidyView();
+        })
+      );
+    this.markSearchable(ops, '整理 生成整理面板 打开整理面板 重新生成');
   }
 
   // -------------------------------------------------------------------------

@@ -278,6 +278,19 @@ export interface KnowledgeSystemSettings {
   reviewChatPrompt: string;
   /** v0.9.0：侧边栏「提醒面板」的条件动作规则列表（默认空 = 面板显示空态）。 */
   sidebarRules: SidebarRule[];
+  /**
+   * v0.9.2：整理面板（Bases 视图，与审核页同机制）——bool 属性名：源文件夹里
+   * 该属性缺失或不是 true 的文件显示在面板；用户处理后设为 true → 文件消失。
+   */
+  tidyAttr: string;
+  /** 整理面板只看此日期之后（含当天）修改/创建的文件（YYYY-MM-DD）；留空 = 不限。 */
+  tidyAfterDate: string;
+  /** 整理面板（.base 文件）在 vault 中的位置（如「整理.base」）。 */
+  tidyBasePath: string;
+  /** 整理面板跳聊天用的预设 id（空 = 默认全部工具）。 */
+  tidyChatPresetId: string;
+  /** 整理面板跳聊天用的 prompt 模板（{{filename}} → 文件名不含路径/.md）。 */
+  tidyChatPrompt: string;
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -316,4 +329,9 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   reviewDoneValue: '已审',
   reviewChatPrompt: '请读取输出文件夹中的笔记「{{filename}}」，与我沟通如何修改，然后按我的要求修改它。',
   sidebarRules: [],
+  tidyAttr: 'tidy',
+  tidyAfterDate: '',
+  tidyBasePath: '整理.base',
+  tidyChatPresetId: '',
+  tidyChatPrompt: '请查看「{{filename}}」并帮我整理，然后把它标记为完成。',
 };

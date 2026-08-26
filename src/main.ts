@@ -8,6 +8,7 @@ import { fetchModelList, fetchAnthropicMessages, AnthropicChatMessage } from './
 import { ANTHROPIC_TOOLS } from './utils/tools';
 import { migrateExtraProperties } from './utils/index';
 import { ensureReviewBase, registerReviewBasesView, unregisterReviewBasesView, regenerateReviewBaseFile } from './reviewView';
+import { ensureTidyBase, registerTidyBasesView, unregisterTidyBasesView, regenerateTidyBaseFile } from './tidyView';
 
 /**
  * obsidian-knowledge-system — 配置驱动的 AI 知识系统框架。
@@ -35,11 +36,15 @@ export default class KnowledgeSystemPlugin extends Plugin {
 
     // v0.8.6：审核页 = Bases 核心插件自定义视图（参考 TaskNotes 的 Bases 集成：
     // registerBasesView 公开 API；Bases 未启用/未加载时 5s 重试，最多 60s）。
-    if (!registerReviewBasesView(this)) {
+    // v0.9.2：整理面板（tidyView.ts）同机制——与审核合并到同一个重试定时器里，
+    // 两者都注册成功（或重试到上限）才停。
+    if (!registerReviewBasesView(this) || !registerTidyBasesView(this)) {
       let tries = 0;
       this.basesRetryTimer = window.setInterval(() => {
         tries++;
-        if (registerReviewBasesView(this) || tries >= 12) {
+        const reviewOk = registerReviewBasesView(this);
+        const tidyOk = registerTidyBasesView(this);
+        if ((reviewOk && tidyOk) || tries >= 12) {
           if (this.basesRetryTimer !== null) {
             window.clearInterval(this.basesRetryTimer);
             this.basesRetryTimer = null;
@@ -76,6 +81,21 @@ export default class KnowledgeSystemPlugin extends Plugin {
         void this.regenerateReviewBase();
       },
     });
+    // v0.9.2：整理面板（Bases 视图，与审核页同机制）。
+    this.addCommand({
+      id: 'open-tidy-view',
+      name: 'Open tidy view (打开整理面板)',
+      callback: () => {
+        void this.openTidyView();
+      },
+    });
+    this.addCommand({
+      id: 'regenerate-tidy-base',
+      name: 'Regenerate tidy panel (按设置重新生成整理面板)',
+      callback: () => {
+        void this.regenerateTidyBase();
+      },
+    });
     // v0.9.0：打开左侧边栏「提醒面板」。
     this.addCommand({
       id: 'open-sidebar-panel',
@@ -92,6 +112,7 @@ export default class KnowledgeSystemPlugin extends Plugin {
       this.basesRetryTimer = null;
     }
     unregisterReviewBasesView(this.app);
+    unregisterTidyBasesView(this.app);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
@@ -138,6 +159,29 @@ export default class KnowledgeSystemPlugin extends Plugin {
   async regenerateReviewBase(): Promise<void> {
     const baseFile = await regenerateReviewBaseFile(this);
     if (baseFile) new Notice('审核面板已按当前设置重新生成');
+  }
+
+  /**
+   * v0.9.2：打开「整理」Bases 视图——确保 settings.tidyBasePath 的 .base 存在
+   * （filters 跟随当前源文件夹），然后在 tab 里打开它（Bases 核心插件按
+   * views[].type 渲染整理视图）。由命令「Open tidy view」和设置页「整理」tab
+   * 的按钮调用。
+   */
+  async openTidyView(): Promise<void> {
+    const baseFile = await ensureTidyBase(this);
+    if (!baseFile) return;
+    const leaf = this.app.workspace.getLeaf('tab');
+    await leaf.openFile(baseFile);
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  /**
+   * v0.9.2：按当前设置重新生成整理面板（已存在则覆盖重建一次）。
+   * 由命令「Regenerate tidy panel」和设置页「整理」tab 的按钮调用。
+   */
+  async regenerateTidyBase(): Promise<void> {
+    const baseFile = await regenerateTidyBaseFile(this);
+    if (baseFile) new Notice('整理面板已按当前设置重新生成');
   }
 
   /**

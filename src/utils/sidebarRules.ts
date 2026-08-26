@@ -10,7 +10,7 @@
  */
 import type { App, TFile } from 'obsidian';
 import type { KnowledgeSystemSettings, SidebarCondition } from '../settings';
-import { isExcluded, isUnreviewed } from './review';
+import { isExcluded, isUnreviewed, parseAfterDate } from './review';
 
 /** 文件夹判定（duck-typing，避免 instanceof 需要 obsidian 运行时）。 */
 function isFolderLike(v: unknown): boolean {
@@ -60,29 +60,9 @@ function frontmatterOf(app: App, file: TFile): Record<string, unknown> {
 }
 
 /**
- * v0.9.0：解析 afterDate 日期文本（YYYY-MM-DD，如 '2026-08-01'）为该日期当天
- * 00:00 的 epoch 毫秒。解析失败返回 null（调用方忽略该过滤，不报错）；
- * 留空/未填也返回 null（= 不限）。
- */
-function parseAfterDate(text: string | undefined): number | null {
-  const s = (text || '').trim();
-  if (!s) return null;
-  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
-  if (!m) return null;
-  const year = parseInt(m[1], 10);
-  const month = parseInt(m[2], 10);
-  const day = parseInt(m[3], 10);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const d = new Date(year, month - 1, day, 0, 0, 0, 0);
-  // 校验日期真实存在（如 2026-02-30 → Invalid Date / 溢出则判为解析失败）。
-  if (Number.isNaN(d.getTime())) return null;
-  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
-  return d.getTime();
-}
-
-/**
  * 求值一条条件，返回匹配文件列表（`unreviewed` 返回未审核且未被排除的文件；
  * `missing_property` 返回缺属性/值不匹配的文件；afterDate 过滤后）。
+ * v0.9.2：afterDate 解析用 utils/review.ts 的 parseAfterDate（与整理面板共用）。
  */
 export function evaluateCondition(
   app: App,

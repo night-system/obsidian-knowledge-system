@@ -5761,12 +5761,16 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
   }
-  /** Open the standalone settings view in a new tab leaf. */
+  /**
+   * v0.9.7：打开本插件独立设置视图——在当前活跃 leaf 打开（替换当前标签页内容，
+   * 不新建标签页；侧边栏「设置」按钮经命令走这里）；无活跃 leaf 时回退新标签页。
+   */
   async activateView() {
+    var _a;
     if (typeof this.app.workspace.detachLeavesOfType === "function") {
       this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
     }
-    const leaf = this.app.workspace.getLeaf("tab");
+    const leaf = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
@@ -5781,12 +5785,14 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
   }
   /**
    * v0.8.6：打开「审核」Bases 视图——确保 vault 根「审核.base」存在（filters 跟随
-   * 当前输出文件夹），然后在 tab 里打开它（Bases 核心插件按 views[].type 渲染审核视图）。
+   * 当前输出文件夹），然后在当前活跃 leaf 打开它（v0.9.7：不新建标签页，替换当前
+   * 标签页内容；Bases 核心插件按 views[].type 渲染审核视图）。
    */
   async openReviewView() {
+    var _a;
     const baseFile = await ensureReviewBase(this);
     if (!baseFile) return;
-    const leaf = this.app.workspace.getLeaf("tab");
+    const leaf = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeaf("tab");
     await leaf.openFile(baseFile);
     this.app.workspace.revealLeaf(leaf);
   }
@@ -5800,14 +5806,15 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
   }
   /**
    * v0.9.2：打开「整理」Bases 视图——确保 settings.tidyBasePath 的 .base 存在
-   * （filters 跟随当前源文件夹），然后在 tab 里打开它（Bases 核心插件按
-   * views[].type 渲染整理视图）。由命令「Open tidy view」和设置页「整理」tab
-   * 的按钮调用。
+   * （filters 跟随当前源文件夹），然后在当前活跃 leaf 打开它（v0.9.7：不新建标签页；
+   * Bases 核心插件按 views[].type 渲染整理视图）。由命令「Open tidy view」和设置页
+   * 「整理」tab 的按钮调用。
    */
   async openTidyView() {
+    var _a;
     const baseFile = await ensureTidyBase(this);
     if (!baseFile) return;
-    const leaf = this.app.workspace.getLeaf("tab");
+    const leaf = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeaf("tab");
     await leaf.openFile(baseFile);
     this.app.workspace.revealLeaf(leaf);
   }
@@ -5826,11 +5833,13 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
   }
   /**
    * v0.9.3：打开用户自定义面板——panelId 缺省 = 第一个启用的面板。按 id 找面板
-   * 配置 → 确保其 .base 存在（filters 跟随面板扫描文件夹），然后在 tab 里打开
-   * （Bases 核心插件按 views[].type = ks-panel 渲染面板视图）。由命令
-   * 「Open panel」和设置页「面板」tab 的「打开面板」按钮调用。
+   * 配置 → 确保其 .base 存在（filters 跟随面板扫描文件夹），然后在当前活跃 leaf
+   * 打开（v0.9.7：不新建标签页，替换当前标签页内容；Bases 核心插件按
+   * views[].type = ks-panel 渲染面板视图）。由命令「Open panel」、设置页「面板」
+   * tab 的「打开面板」按钮和左侧边栏面板导航行调用。
    */
   async openPanel(panelId) {
+    var _a;
     const panels = this.settings.panels || [];
     const panel = panelId ? panels.find((p) => p && p.id === panelId) : this.firstEnabledPanel();
     if (!panel) {
@@ -5839,7 +5848,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
     }
     const baseFile = await ensurePanelBase(this, panel);
     if (!baseFile) return;
-    const leaf = this.app.workspace.getLeaf("tab");
+    const leaf = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeaf("tab");
     await leaf.openFile(baseFile);
     this.app.workspace.revealLeaf(leaf);
   }

@@ -5762,16 +5762,39 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
   }
   /**
-   * v0.9.7：打开本插件独立设置视图——在当前活跃 leaf 打开（替换当前标签页内容，
-   * 不新建标签页；侧边栏「设置」按钮经命令走这里）；无活跃 leaf 时回退新标签页。
+   * v0.9.8：打开本插件独立设置视图——**模拟点击内部链接跳转**：在当前标签页打开并
+   * 替换其内容。Obsidian 的 getLeaf(false) 在 active leaf 是笔记编辑器时返回 null
+   * （保守行为，防止替换编辑中的 leaf），所以这里兜底取「当前正显示笔记的 markdown
+   * leaf」直接 setViewState 替换（= 点链接跳转语义）。detachLeavesOfType 旧逻辑删除
+   * （它会关闭旧设置视图再新开，与「当前标签页跳转」冲突）；若目标 leaf 已是本插件
+   * 设置视图则直接 reveal，避免自我替换。
    */
   async activateView() {
+    var _a, _b;
+    const leaf = (_b = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeavesOfType("markdown")[0]) != null ? _b : this.app.workspace.getLeaf("tab");
+    if (!leaf) return;
+    if (leaf.view && leaf.view.getViewType() === VIEW_TYPE_KS) {
+      this.app.workspace.revealLeaf(leaf);
+      return;
+    }
+    await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
+    this.app.workspace.revealLeaf(leaf);
+  }
+  /**
+   * v0.9.8：打开 .base 文件——**模拟点击内部链接**（workspace.openLinkText）：
+   * 在当前标签页跳转并替换内容（即使 active leaf 是笔记编辑器——此时 getLeaf(false)
+   * 返回 null，所以 openLinkText 是正解）。openLinkText 不可用时回退
+   * getLeaf(false)（非 null 才用）/ getLeaf('tab')。
+   */
+  async openBaseFileLikeLink(baseFile) {
     var _a;
-    if (typeof this.app.workspace.detachLeavesOfType === "function") {
-      this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
+    const workspace = this.app.workspace;
+    if (workspace && typeof workspace.openLinkText === "function") {
+      await workspace.openLinkText(baseFile.path, "");
+      return;
     }
     const leaf = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeaf("tab");
-    await leaf.setViewState({ type: VIEW_TYPE_KS, active: true });
+    await leaf.openFile(baseFile);
     this.app.workspace.revealLeaf(leaf);
   }
   /** Open the chat view in a new tab leaf. */
@@ -5785,16 +5808,13 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
   }
   /**
    * v0.8.6：打开「审核」Bases 视图——确保 vault 根「审核.base」存在（filters 跟随
-   * 当前输出文件夹），然后在当前活跃 leaf 打开它（v0.9.7：不新建标签页，替换当前
-   * 标签页内容；Bases 核心插件按 views[].type 渲染审核视图）。
+   * 当前输出文件夹），然后在当前标签页打开它（v0.9.8：模拟点击内部链接 openLinkText，
+   * 替换当前 leaf 内容，即使正在编辑笔记；Bases 核心插件按 views[].type 渲染审核视图）。
    */
   async openReviewView() {
-    var _a;
     const baseFile = await ensureReviewBase(this);
     if (!baseFile) return;
-    const leaf = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeaf("tab");
-    await leaf.openFile(baseFile);
-    this.app.workspace.revealLeaf(leaf);
+    await this.openBaseFileLikeLink(baseFile);
   }
   /**
    * v0.8.7：按当前设置重新生成审核面板（已存在则覆盖重建一次）。
@@ -5806,17 +5826,14 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
   }
   /**
    * v0.9.2：打开「整理」Bases 视图——确保 settings.tidyBasePath 的 .base 存在
-   * （filters 跟随当前源文件夹），然后在当前活跃 leaf 打开它（v0.9.7：不新建标签页；
-   * Bases 核心插件按 views[].type 渲染整理视图）。由命令「Open tidy view」和设置页
-   * 「整理」tab 的按钮调用。
+   * （filters 跟随当前源文件夹），然后在当前标签页打开它（v0.9.8：模拟点击内部链接
+   * openLinkText，替换当前 leaf 内容；Bases 核心插件按 views[].type 渲染整理视图）。
+   * 由命令「Open tidy view」和设置页「整理」tab 的按钮调用。
    */
   async openTidyView() {
-    var _a;
     const baseFile = await ensureTidyBase(this);
     if (!baseFile) return;
-    const leaf = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeaf("tab");
-    await leaf.openFile(baseFile);
-    this.app.workspace.revealLeaf(leaf);
+    await this.openBaseFileLikeLink(baseFile);
   }
   /**
    * v0.9.2：按当前设置重新生成整理面板（已存在则覆盖重建一次）。
@@ -5833,13 +5850,12 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
   }
   /**
    * v0.9.3：打开用户自定义面板——panelId 缺省 = 第一个启用的面板。按 id 找面板
-   * 配置 → 确保其 .base 存在（filters 跟随面板扫描文件夹），然后在当前活跃 leaf
-   * 打开（v0.9.7：不新建标签页，替换当前标签页内容；Bases 核心插件按
-   * views[].type = ks-panel 渲染面板视图）。由命令「Open panel」、设置页「面板」
-   * tab 的「打开面板」按钮和左侧边栏面板导航行调用。
+   * 配置 → 确保其 .base 存在（filters 跟随面板扫描文件夹），然后在当前标签页打开
+   * （v0.9.8：模拟点击内部链接 openLinkText，替换当前 leaf 内容，即使正在编辑笔记；
+   * Bases 核心插件按 views[].type = ks-panel 渲染面板视图）。由命令「Open panel」、
+   * 设置页「面板」tab 的「打开面板」按钮和左侧边栏面板导航行调用。
    */
   async openPanel(panelId) {
-    var _a;
     const panels = this.settings.panels || [];
     const panel = panelId ? panels.find((p) => p && p.id === panelId) : this.firstEnabledPanel();
     if (!panel) {
@@ -5848,9 +5864,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
     }
     const baseFile = await ensurePanelBase(this, panel);
     if (!baseFile) return;
-    const leaf = (_a = this.app.workspace.getLeaf(false)) != null ? _a : this.app.workspace.getLeaf("tab");
-    await leaf.openFile(baseFile);
-    this.app.workspace.revealLeaf(leaf);
+    await this.openBaseFileLikeLink(baseFile);
   }
   /**
    * v0.9.3：按面板配置重新生成 .base（已存在则覆盖重建一次）。panelId 缺省 =

@@ -497,7 +497,7 @@ async function fetchAnthropicMessages(settings, messages, opts) {
   const base = (settings.baseUrl || "https://api.deepseek.com/anthropic").trim().replace(/\/+$/, "");
   const body = {
     model: settings.model,
-    max_tokens: 4096,
+    max_tokens: 1e6,
     ...(opts == null ? void 0 : opts.system) ? { system: opts.system } : {},
     messages,
     ...(opts == null ? void 0 : opts.tools) && opts.tools.length > 0 ? { tools: opts.tools } : {},
@@ -543,7 +543,7 @@ async function streamAnthropicMessages(settings, messages, opts) {
   const base = (settings.baseUrl || "https://api.deepseek.com/anthropic").trim().replace(/\/+$/, "");
   const body = {
     model: settings.model,
-    max_tokens: 4096,
+    max_tokens: 1e6,
     ...opts.system ? { system: opts.system } : {},
     messages,
     ...opts.tools && opts.tools.length > 0 ? { tools: opts.tools } : {},

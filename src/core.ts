@@ -304,7 +304,7 @@ export async function fetchAnthropicMessages(
   const base = (settings.baseUrl || 'https://api.deepseek.com/anthropic').trim().replace(/\/+$/, '');
   const body: Record<string, unknown> = {
     model: settings.model,
-    max_tokens: 4096,
+    max_tokens: 1000000,
     ...(opts?.system ? { system: opts.system } : {}),
     messages,
     ...(opts?.tools && opts.tools.length > 0 ? { tools: opts.tools } : {}),
@@ -391,7 +391,7 @@ export async function streamAnthropicMessages(
   const base = (settings.baseUrl || 'https://api.deepseek.com/anthropic').trim().replace(/\/+$/, '');
   const body: Record<string, unknown> = {
     model: settings.model,
-    max_tokens: 4096,
+    max_tokens: 1000000,
     ...(opts.system ? { system: opts.system } : {}),
     messages,
     ...(opts.tools && opts.tools.length > 0 ? { tools: opts.tools } : {}),

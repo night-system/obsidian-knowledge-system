@@ -435,7 +435,7 @@ class SettingsRenderer {
 
     const info = new Setting(containerEl)
       .setName('')
-      .setDesc('控制 AI 使用 modify_output_note / modify_output_note_versioned（覆盖修改输出文件夹内已有笔记：sections 只能改原文已有标题下的内容，禁止修改/新增标题、禁止 # 开头；yaml 受「AI 创建属性规则 / 限制仅已配置属性」约束，固定 yaml 默认值写回时自动补上）。read_output_note 读取输出文件夹内笔记全文。');
+      .setDesc('控制 AI 使用 modify_output_note / modify_output_note_versioned（覆盖修改输出文件夹内已有笔记：sections 只能改原文已有标题下的内容，禁止修改/新增标题、禁止 # 开头）。yaml 受下方「AI 修改属性规则」约束（与 create_note 的属性规则分开、结构相同）；开启「限制仅已配置属性」后 AI 只能使用规则内的键；「仅默认值」的键 AI 不可见、每次修改强制覆写为渲染后的默认值（如 created=当前时间；归档版先归档旧状态再写入新时间戳）。read_output_note 读取输出文件夹内笔记全文。');
     this.markSearchable(info, 'AI 修改输出工具 modify_output_note 说明 属性 归档 read_output_note');
 
     const suffix = new Setting(containerEl)
@@ -471,33 +471,52 @@ class SettingsRenderer {
       );
     this.markSearchable(aprop, 'AI 修改输出工具 归档标记属性 modifyArchiveProperty');
 
-    // v0.8.2：固定默认属性（AI 不可见、每次修改强制覆写；独立于 create_note 的 yamlRules）。
-    const fixedInfo = new Setting(containerEl)
-      .setName('固定默认属性（AI 不可见）')
-      .setDesc('每次修改时自动覆写的 frontmatter 属性（不暴露给 AI、AI 无法控制）；默认值支持 {{YYYY.MM.DD}} 等 moment 模板（如 created → {{YYYY-MM-DD HH:mm}} 记录本次修改时间）。归档版（modify_output_note_versioned）会先归档旧状态再写入新时间戳，不会污染历史版本。');
-    this.markSearchable(fixedInfo, 'AI 修改输出工具 固定默认属性 created 时间戳 modifyFixedYaml');
+    // v0.8.2：modify 工具独立的 yaml 属性规则（与 create 的「AI 创建属性规则」结构相同、内容分开）。
+    this.renderModifyYamlRules(containerEl);
+  }
 
-    const fixedList = this.plugin.settings.modifyFixedYaml || [];
-    const fixedEl = containerEl.createDiv({ cls: 'ks-extra-props' });
-    fixedList.forEach((entry, index) => {
+  /**
+   * Render the "AI 修改属性规则" block (v0.8.2): 与「AI 创建属性规则」结构完全一致
+   * （键名 + 解释 + 可选值 tag + 默认值 + 增删），但数据源为 `settings.modifyYamlRules`——
+   * 仅作用于 modify_output_note / modify_output_note_versioned，与 create_note 分开配置。
+   * 「仅默认值」的键（values 空 + default 非空）AI 不可见、每次修改强制覆写。
+   */
+  private renderModifyYamlRules(containerEl: HTMLElement): void {
+    const info = new Setting(containerEl)
+      .setName('AI 修改属性规则（modify 工具）')
+      .setDesc('控制 AI 使用 modify_output_note / modify_output_note_versioned 时的 frontmatter 键值对（与「AI 创建属性规则」结构相同、内容独立）：键名+解释+可选值（回车逐个添加）+默认值。可选值用于约束 AI 只能选这些值，留空=任意；默认值支持 {{YYYY.MM.DD}} 等 moment 模板。默认值不会暴露给 AI——每次修改文件时自动覆写（AI 不知情）；只配了默认值、无可选值约束的属性键也不对 AI 显示。');
+    this.markSearchable(info, 'AI 修改属性规则 modify 工具 键名 解释 可选值 默认值 moment 模板');
+
+    const list = this.plugin.settings.modifyYamlRules || [];
+    list.forEach((rule, index) => {
+      const hay = `AI 修改属性规则 ${rule.key} ${rule.desc} ${rule.values.join(' ')} ${rule.default}`;
       const row = new Setting(containerEl)
         .setName('')
         .setDesc('')
         .addText((text) =>
           text
             .setPlaceholder('属性名，如 created')
-            .setValue(entry.key)
+            .setValue(rule.key)
             .onChange((value) => {
-              entry.key = value;
+              rule.key = value;
               void this.plugin.saveSettings();
             })
         )
         .addText((text) =>
           text
-            .setPlaceholder('默认值，支持 {{moment}}，如 {{YYYY-MM-DD HH:mm}}')
-            .setValue(entry.default)
+            .setPlaceholder('解释该属性的含义（随工具描述传给 AI）')
+            .setValue(rule.desc)
             .onChange((value) => {
-              entry.default = value;
+              rule.desc = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addText((text) =>
+          text
+            .setPlaceholder('默认值（每次修改时强制覆写的值，支持 {{YYYY.MM.DD}}；留空=不覆写）')
+            .setValue(rule.default)
+            .onChange((value) => {
+              rule.default = value;
               void this.plugin.saveSettings();
             })
         )
@@ -506,27 +525,32 @@ class SettingsRenderer {
             .setIcon('trash-2')
             .setTooltip('删除')
             .onClick(() => {
-              const a = this.plugin.settings.modifyFixedYaml;
+              const a = this.plugin.settings.modifyYamlRules;
               a.splice(index, 1);
               void this.plugin.saveSettings();
-              this.renderModifyOutputTools(containerEl);
+              this.renderModifyYamlRules(containerEl);
             })
         );
-      row.settingEl.addClass('ks-extra-props-row');
-      this.markSearchable(row, `AI 修改输出工具 固定默认属性 ${entry.key} ${entry.default}`);
+      row.settingEl.addClass('ks-yaml-rule-row');
+      this.markSearchable(row, hay);
+
+      // 可选值 tag 输入区（与创建规则同款）。
+      const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
+      valuesEl.setAttribute('data-search', hay);
+      this.renderYamlValues(valuesEl, rule);
     });
 
-    const addFixedBtn = new Setting(containerEl)
+    const addBtn = new Setting(containerEl)
       .setName('')
       .setDesc('')
       .addButton((btn) =>
-        btn.setIcon('plus').setButtonText('添加固定属性').onClick(() => {
-          this.plugin.settings.modifyFixedYaml.push({ key: '', default: '' });
+        btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
+          this.plugin.settings.modifyYamlRules.push({ key: '', desc: '', values: [], default: '' });
           void this.plugin.saveSettings();
-          this.renderModifyOutputTools(containerEl);
+          this.renderModifyYamlRules(containerEl);
         })
       );
-    this.markSearchable(addFixedBtn, 'AI 修改输出工具 固定默认属性 添加 增加');
+    this.markSearchable(addBtn, 'AI 修改属性规则 添加规则 增加 添加');
   }
 
   /** Render each extra property as a row: key input, value input, delete button. */

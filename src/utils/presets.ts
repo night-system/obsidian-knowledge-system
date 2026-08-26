@@ -57,6 +57,7 @@ export function buildSystemPrompt(preset?: ToolPreset | null): string {
 export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedToolConfig {
   const preset = findActivePreset(settings);
   const yamlRules = Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
+  const modifyYamlRules = Array.isArray(settings.modifyYamlRules) ? settings.modifyYamlRules : [];
   const noteTemplate = Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
   const updateYamlRules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
   const createRestrictYaml = settings.createRestrictYaml === true;
@@ -96,9 +97,9 @@ export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedTo
         )
       );
     } else if (n === 'modify_output_note') {
-      tools.push(buildModifyOutputNoteTool(yamlRules, { createRestrictYaml }));
+      tools.push(buildModifyOutputNoteTool(modifyYamlRules, { createRestrictYaml }));
     } else if (n === 'modify_output_note_versioned') {
-      tools.push(buildModifyOutputNoteVersionedTool(yamlRules, { createRestrictYaml }));
+      tools.push(buildModifyOutputNoteVersionedTool(modifyYamlRules, { createRestrictYaml }));
     } else if (n === 'read_output_note') {
       tools.push(buildReadOutputNoteTool());
     }

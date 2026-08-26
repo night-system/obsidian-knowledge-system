@@ -153,11 +153,12 @@ export interface KnowledgeSystemSettings {
   /** modify_output_note_versioned 归档 bool 属性名（写 true）；空 = 未配置不工作。 */
   modifyArchiveProperty: string;
   /**
-   * modify_output_note / modify_output_note_versioned 的「固定默认」属性（v0.8.2）：
-   * AI 不可见，每次修改时强制覆写为渲染后的默认值（支持 {{moment}} 模板，如
-   * created=当前时间）。与 create_note 的 yamlRules 独立配置，不继承。
+   * modify_output_note / modify_output_note_versioned 的 yaml 属性规则（v0.8.2）：
+   * 与 create_note 的 `yamlRules` **结构完全一样但内容独立**（键名/解释/可选值/默认值）。
+   * 有可选值约束的键 → 暴露给 AI（enum）；「仅默认值」的键 → AI 不可见、每次修改
+   * 强制覆写为渲染后的默认值（如 created=当前时间）。
    */
-  modifyFixedYaml: { key: string; default: string }[];
+  modifyYamlRules: YamlRule[];
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -190,5 +191,5 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   modifyVersionSuffix: '',
   modifyVersionProperty: '',
   modifyArchiveProperty: '',
-  modifyFixedYaml: [],
+  modifyYamlRules: [],
 };

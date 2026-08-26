@@ -167,22 +167,24 @@ export function applyDefaults(
 }
 
 /**
- * 覆写「固定默认」属性（v0.8.2，modify 工具用）：把配置的固定属性（如
- * created=时间戳）**每次修改都强制覆写**为渲染后的默认值——与 `applyDefaults`
- * 的「AI 未填才补」不同。这些属性**不暴露给 AI**（不出现在工具 schema）。
- * `fixed` 来自 settings.modifyFixedYaml（独立于 create_note 的 yamlRules）。
+ * 覆写「固定默认」属性（v0.8.2，modify 工具用）：把 yamlRules 中「仅默认值」的键
+ * （`values` 空 + `default` 非空，即不暴露给 AI 的固定属性，如 created=时间戳）
+ * **每次修改都强制覆写**为渲染后的默认值——与 `applyDefaults` 的「AI 未填才补」
+ * 不同：modify 工具每次更新时都刷新这些属性（例如 created 记录本次修改时间）。
+ * create 与 modify 共用同一份 yamlRules 配置，只是语义不同。
  * 返回新对象（不动入参）。
  */
 export function applyFixedDefaults(
   obj: Record<string, unknown>,
-  fixed: { key: string; default: string }[],
+  rules: YamlRule[],
   opts: { moment: any; now?: number }
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...(obj ?? {}) };
-  for (const entry of fixed ?? []) {
-    if (!entry || !entry.key) continue;
-    if (String(entry.default ?? '').trim() === '') continue; // 无默认 → 跳过
-    out[entry.key] = renderDefaultValue(entry.default, opts.moment, opts.now);
+  for (const rule of rules ?? []) {
+    if (!rule || !rule.key) continue;
+    if (rule.values && rule.values.length > 0) continue; // 有可选值约束 = 暴露给 AI，不覆写
+    if (String(rule.default ?? '').trim() === '') continue; // 无默认 → 跳过
+    out[rule.key] = renderDefaultValue(rule.default, opts.moment, opts.now);
   }
   return out;
 }

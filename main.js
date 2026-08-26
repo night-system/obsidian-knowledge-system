@@ -2150,14 +2150,14 @@ function applySectionsToBody(body, sections) {
   }
   return { result: out.join("\n") };
 }
-function buildArchiveBlock(version, fm, body) {
-  const yamlStr = serializeYamlFromObj(fm);
-  const fmSection = yamlStr ? `---
-${yamlStr}
----` : "---\n---";
-  return `## \u7248\u672C ${version}
+function buildArchiveBlock(version, fm, body, versionProperty) {
+  const props = { ...fm != null ? fm : {} };
+  props[versionProperty] = version;
+  const yamlStr = serializeYamlFromObj(props);
+  return `# \u7248\u672C ${version}
 
-${fmSection}
+# \u5C5E\u6027
+${yamlStr}
 
 ${body}`;
 }
@@ -2165,14 +2165,10 @@ function latestVersionFromArchive(content) {
   const lines = (content || "").split("\n");
   let max = 0;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^## 版本[ \t]+(\d+)[ \t]*$/);
+    const m = lines[i].match(/^# 版本[ \t]+(\d+)[ \t]*$/);
     if (!m) continue;
-    let j = i + 1;
-    while (j < lines.length && lines[j].trim() === "") j++;
-    if (j < lines.length && lines[j].trim() === "---") {
-      const n = parseInt(m[1], 10);
-      if (!Number.isNaN(n) && n > max) max = n;
-    }
+    const n = parseInt(m[1], 10);
+    if (!Number.isNaN(n) && n > max) max = n;
   }
   return max;
 }
@@ -2524,10 +2520,10 @@ async function modifyOutputNoteVersionedTool(ctx, args) {
     existingArchiveRaw = await ctx.app.vault.read(archiveFile);
     nextVersion = latestVersionFromArchive(existingArchiveRaw) + 1;
   }
-  const archiveBlock = buildArchiveBlock(nextVersion, originalFM, body);
+  const archiveBlock = buildArchiveBlock(nextVersion, originalFM, body, versionProperty);
   if (archiveFile) {
-    const sep = existingArchiveRaw.trimEnd() ? "\n\n" : "";
-    await ctx.app.vault.adapter.write(archivePath, existingArchiveRaw + sep + archiveBlock);
+    const sep = existingArchiveRaw.trimStart() ? "\n\n" : "";
+    await ctx.app.vault.adapter.write(archivePath, archiveBlock + sep + existingArchiveRaw);
   } else {
     await ctx.app.vault.create(archivePath, archiveBlock);
   }

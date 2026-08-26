@@ -434,30 +434,34 @@ function applySectionsToBody(
   return { result: out.join('\n') };
 }
 
-/** 归档文件里一个版本块：`## 版本 <N>` 标题行 + frontmatter(yaml) + 正文。 */
-function buildArchiveBlock(version: number, fm: Record<string, unknown>, body: string): string {
-  const yamlStr = serializeYamlFromObj(fm);
-  const fmSection = yamlStr ? `---\n${yamlStr}\n---` : '---\n---';
-  return `## 版本 ${version}\n\n${fmSection}\n\n${body}`;
+/**
+ * 归档文件里一个版本块（v0.8.1 新格式）：
+ *   `# 版本 <N>`（一级标题）
+ *   `# 属性`（一级标题）+ 每行 `key: value`（yaml 属性，**强制含当前版本号**，
+ *   不再复制 `---` frontmatter 围栏）
+ *   + 该版本正文。
+ * `versionProperty` 为原文件版本属性名（用户配置）：块内强制写入 `version: N`，
+ * 使每个版本块自包含版本号（修复「块 N 记录的是修改前状态导致版本号错位」）。
+ */
+function buildArchiveBlock(version: number, fm: Record<string, unknown>, body: string, versionProperty: string): string {
+  const props: Record<string, unknown> = { ...(fm ?? {}) };
+  props[versionProperty] = version; // 强制写入当前版本号
+  const yamlStr = serializeYamlFromObj(props);
+  return `# 版本 ${version}\n\n# 属性\n${yamlStr}\n\n${body}`;
 }
 
 /**
- * 从归档文件内容解析「最新版本号」：统计所有 `## 版本 <N>`（后面紧跟 `---` frontmatter）
- * 的块，取最大 N；无有效版块 → 0。正文里若恰好出现形如 `## 版本 N` 的行，因其后非
- * `---` frontmatter 而不会误计。
+ * 从归档文件内容解析「最新版本号」：统计所有 `# 版本 <N>`（一级标题）的块，
+ * 取最大 N；无有效版本块 → 0。
  */
 function latestVersionFromArchive(content: string): number {
   const lines = (content || '').split('\n');
   let max = 0;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^## 版本[ \t]+(\d+)[ \t]*$/);
+    const m = lines[i].match(/^# 版本[ \t]+(\d+)[ \t]*$/);
     if (!m) continue;
-    let j = i + 1;
-    while (j < lines.length && lines[j].trim() === '') j++;
-    if (j < lines.length && lines[j].trim() === '---') {
-      const n = parseInt(m[1], 10);
-      if (!Number.isNaN(n) && n > max) max = n;
-    }
+    const n = parseInt(m[1], 10);
+    if (!Number.isNaN(n) && n > max) max = n;
   }
   return max;
 }
@@ -921,11 +925,13 @@ export async function modifyOutputNoteVersionedTool(
     nextVersion = latestVersionFromArchive(existingArchiveRaw) + 1;
   }
 
-  // 归档：把当前（修改前）原文 yaml 区全部属性 + 全部正文打包为一个版本块追加进归档文件。
-  const archiveBlock = buildArchiveBlock(nextVersion, originalFM, body);
+  // 归档：把当前（修改前）原文 yaml 区全部属性 + 全部正文打包为一个版本块；
+  // v0.8.1：新版本块插到归档文件【最上面】（最新版本在最上），块内 `# 属性`
+  // 强制含当前版本号（versionProperty: N）。
+  const archiveBlock = buildArchiveBlock(nextVersion, originalFM, body, versionProperty);
   if (archiveFile) {
-    const sep = existingArchiveRaw.trimEnd() ? '\n\n' : '';
-    await ctx.app.vault.adapter.write(archivePath, existingArchiveRaw + sep + archiveBlock);
+    const sep = existingArchiveRaw.trimStart() ? '\n\n' : '';
+    await ctx.app.vault.adapter.write(archivePath, archiveBlock + sep + existingArchiveRaw);
   } else {
     await ctx.app.vault.create(archivePath, archiveBlock);
   }

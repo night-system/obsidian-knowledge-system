@@ -1,5 +1,6 @@
 import { Notice, Plugin } from 'obsidian';
 import { DEFAULT_SETTINGS, KnowledgeSystemSettings, TOOL_NAMES } from './settings';
+import type { PanelConfig } from './settings';
 import { KnowledgeSystemSettingTab } from './settingsTab';
 import { KnowledgeSettingsView, VIEW_TYPE_KS } from './settingsView';
 import { KnowledgeChatView, VIEW_TYPE_CHAT } from './chatView';
@@ -9,6 +10,7 @@ import { ANTHROPIC_TOOLS } from './utils/tools';
 import { migrateExtraProperties } from './utils/index';
 import { ensureReviewBase, registerReviewBasesView, unregisterReviewBasesView, regenerateReviewBaseFile } from './reviewView';
 import { ensureTidyBase, registerTidyBasesView, unregisterTidyBasesView, regenerateTidyBaseFile } from './tidyView';
+import { ensurePanelBase, registerPanelBasesView, unregisterPanelBasesView, regeneratePanelBaseFile } from './panelView';
 
 /**
  * obsidian-knowledge-system — 配置驱动的 AI 知识系统框架。
@@ -38,13 +40,16 @@ export default class KnowledgeSystemPlugin extends Plugin {
     // registerBasesView 公开 API；Bases 未启用/未加载时 5s 重试，最多 60s）。
     // v0.9.2：整理面板（tidyView.ts）同机制——与审核合并到同一个重试定时器里，
     // 两者都注册成功（或重试到上限）才停。
-    if (!registerReviewBasesView(this) || !registerTidyBasesView(this)) {
+    // v0.9.3：用户自定义面板（panelView.ts）同机制——三者都注册成功才停。
+    // 旧面板兼容：ks-review / ks-tidy 注册保留，旧 .base 文件仍可打开；新面板用 ks-panel。
+    if (!registerReviewBasesView(this) || !registerTidyBasesView(this) || !registerPanelBasesView(this)) {
       let tries = 0;
       this.basesRetryTimer = window.setInterval(() => {
         tries++;
         const reviewOk = registerReviewBasesView(this);
         const tidyOk = registerTidyBasesView(this);
-        if ((reviewOk && tidyOk) || tries >= 12) {
+        const panelOk = registerPanelBasesView(this);
+        if ((reviewOk && tidyOk && panelOk) || tries >= 12) {
           if (this.basesRetryTimer !== null) {
             window.clearInterval(this.basesRetryTimer);
             this.basesRetryTimer = null;
@@ -96,6 +101,21 @@ export default class KnowledgeSystemPlugin extends Plugin {
         void this.regenerateTidyBase();
       },
     });
+    // v0.9.3：用户自定义面板——命令作用于第一个启用的面板（无面板时 Notice 提示）。
+    this.addCommand({
+      id: 'open-panel',
+      name: 'Open panel (打开面板)',
+      callback: () => {
+        void this.openPanel();
+      },
+    });
+    this.addCommand({
+      id: 'regenerate-panel',
+      name: 'Regenerate panel (重新生成面板)',
+      callback: () => {
+        void this.regeneratePanel();
+      },
+    });
     // v0.9.0：打开左侧边栏「提醒面板」。
     this.addCommand({
       id: 'open-sidebar-panel',
@@ -113,6 +133,7 @@ export default class KnowledgeSystemPlugin extends Plugin {
     }
     unregisterReviewBasesView(this.app);
     unregisterTidyBasesView(this.app);
+    unregisterPanelBasesView(this.app);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
@@ -182,6 +203,52 @@ export default class KnowledgeSystemPlugin extends Plugin {
   async regenerateTidyBase(): Promise<void> {
     const baseFile = await regenerateTidyBaseFile(this);
     if (baseFile) new Notice('整理面板已按当前设置重新生成');
+  }
+
+  /** v0.9.3：第一个启用的面板（命令默认目标）；无则 null。 */
+  private firstEnabledPanel(): PanelConfig | null {
+    const panels = this.settings.panels || [];
+    return panels.find((p) => p && p.enabled !== false) || null;
+  }
+
+  /**
+   * v0.9.3：打开用户自定义面板——panelId 缺省 = 第一个启用的面板。按 id 找面板
+   * 配置 → 确保其 .base 存在（filters 跟随面板扫描文件夹），然后在 tab 里打开
+   * （Bases 核心插件按 views[].type = ks-panel 渲染面板视图）。由命令
+   * 「Open panel」和设置页「面板」tab 的「打开面板」按钮调用。
+   */
+  async openPanel(panelId?: string): Promise<void> {
+    const panels = this.settings.panels || [];
+    const panel = panelId
+      ? panels.find((p) => p && p.id === panelId)
+      : this.firstEnabledPanel();
+    if (!panel) {
+      new Notice('未找到面板：请在设置 → 面板 创建并启用面板');
+      return;
+    }
+    const baseFile = await ensurePanelBase(this, panel);
+    if (!baseFile) return;
+    const leaf = this.app.workspace.getLeaf('tab');
+    await leaf.openFile(baseFile);
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  /**
+   * v0.9.3：按面板配置重新生成 .base（已存在则覆盖重建一次）。panelId 缺省 =
+   * 第一个启用的面板。由命令「Regenerate panel」和设置页「面板」tab 的
+   * 「生成面板」按钮调用。
+   */
+  async regeneratePanel(panelId?: string): Promise<void> {
+    const panels = this.settings.panels || [];
+    const panel = panelId
+      ? panels.find((p) => p && p.id === panelId)
+      : this.firstEnabledPanel();
+    if (!panel) {
+      new Notice('未找到面板：请在设置 → 面板 创建并启用面板');
+      return;
+    }
+    const baseFile = await regeneratePanelBaseFile(this, panel);
+    if (baseFile) new Notice(`面板「${panel.name || '未命名'}」已按当前设置重新生成`);
   }
 
   /**

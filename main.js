@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => KnowledgeSystemPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/settings.ts
 var TOOL_NAMES = ["list_recent_notes", "read_note", "create_note", "update_note_yaml", "search_output_notes", "modify_output_note", "modify_output_note_versioned", "read_output_note", "list_recent_output_notes"];
@@ -71,7 +71,8 @@ var DEFAULT_SETTINGS = {
   tidyAfterDate: "",
   tidyBasePath: "\u6574\u7406.base",
   tidyChatPresetId: "",
-  tidyChatPrompt: "\u8BF7\u67E5\u770B\u300C{{filename}}\u300D\u5E76\u5E2E\u6211\u6574\u7406\uFF0C\u7136\u540E\u628A\u5B83\u6807\u8BB0\u4E3A\u5B8C\u6210\u3002"
+  tidyChatPrompt: "\u8BF7\u67E5\u770B\u300C{{filename}}\u300D\u5E76\u5E2E\u6211\u6574\u7406\uFF0C\u7136\u540E\u628A\u5B83\u6807\u8BB0\u4E3A\u5B8C\u6210\u3002",
+  panels: []
 };
 
 // src/settingsTab.ts
@@ -1035,6 +1036,8 @@ var SettingsRenderer = class {
     this.toolExpanded = /* @__PURE__ */ new Set();
     /** v0.9.0：侧边栏规则卡片折叠状态（collapsed 的 rule id；缺省展开）。 */
     this.sidebarRuleCollapsed = /* @__PURE__ */ new Set();
+    /** v0.9.3：面板卡片折叠状态（collapsed 的 panel.id；缺省展开）。 */
+    this.panelCollapsed = /* @__PURE__ */ new Set();
     // -------------------------------------------------------------------------
     // UI 方案陈列（v0.8.1：移动端 UI 方案挑选——用户在安卓上对比可用性后决定聊天视图最终布局）
     // -------------------------------------------------------------------------
@@ -1156,8 +1159,7 @@ var SettingsRenderer = class {
       { id: "folder", label: "\u6587\u4EF6\u5939" },
       { id: "time", label: "\u65F6\u95F4" },
       { id: "output", label: "\u8F93\u51FA\u5C5E\u6027" },
-      { id: "review", label: "\u5BA1\u6838" },
-      { id: "tidy", label: "\u6574\u7406" },
+      { id: "panel", label: "\u9762\u677F" },
       { id: "test", label: "\u6D4B\u8BD5\u5DE5\u5177" },
       { id: "preset", label: "\u9884\u8BBE" },
       { id: "uiPreview", label: "UI \u65B9\u6848" },
@@ -1190,11 +1192,8 @@ var SettingsRenderer = class {
       case "output":
         this.renderOutputGroup(containerEl);
         break;
-      case "review":
-        this.renderReviewGroup(containerEl);
-        break;
-      case "tidy":
-        this.renderTidyGroup(containerEl);
+      case "panel":
+        this.renderPanelGroup(containerEl);
         break;
       case "test":
         this.renderTestGroup(containerEl);
@@ -1392,126 +1391,161 @@ var SettingsRenderer = class {
     this.markSearchable(addBtn, "\u8F93\u51FA\u5C5E\u6027 \u6DFB\u52A0\u5C5E\u6027 \u589E\u52A0 \u6DFB\u52A0");
   }
   // -------------------------------------------------------------------------
-  // review（v0.8.7：审核页配置——审核属性 / 排除规则 / 面板位置 / 生成面板）
+  // panel（v0.9.3：用户自定义面板配置——扫描文件夹 / bool 属性 / 日期 / 位置 /
+  // 聊天预设与 prompt；取代 v0.8.7 审核 / v0.9.2 整理两个固定 tab）
   // -------------------------------------------------------------------------
-  renderReviewGroup(containerEl) {
-    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u300C\u5BA1\u6838\u300D\u9875\uFF08Bases \u6838\u5FC3\u63D2\u4EF6\u81EA\u5B9A\u4E49\u89C6\u56FE\uFF0C\u53C2\u8003 TaskNotes \u96C6\u6210\uFF09\uFF1A\u5217\u51FA\u8F93\u51FA\u6587\u4EF6\u5939\u91CC\u672A\u5BA1\u6838\u7684\u6587\u4EF6\u3002\u5224\u5B9A\uFF1Afrontmatter \u7684\u300C\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u300D\u7F3A\u5931\u3001\u4E3A\u7A7A\u3001\u6216\u7B49\u4E8E\u300C\u672A\u5BA1\u6807\u8BB0\u503C\u300D\u2192 \u672A\u5BA1\u6838\uFF1B\u547D\u4E2D\u300C\u6392\u9664\u89C4\u5219\u300D\u7684\u6587\u4EF6\u4E0D\u663E\u793A\u3002\u6539\u5B8C\u8BBE\u7F6E\u540E\u70B9\u300C\u751F\u6210\u5BA1\u6838\u9762\u677F\u300D\u91CD\u5EFA\u9762\u677F\uFF08\u5DF2\u5B58\u5728\u5219\u6309\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210\u4E00\u6B21\uFF09\u3002\u9700\u8981 Obsidian 1.10.0+ \u5E76\u542F\u7528 Bases \u6838\u5FC3\u63D2\u4EF6\u3002");
-    this.markSearchable(info, "\u5BA1\u6838 \u8BF4\u660E Bases \u9762\u677F \u672A\u5BA1\u6838 \u672A\u5BA1");
-    const attr = new import_obsidian3.Setting(containerEl).setName("\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u540D").setDesc("frontmatter \u4E2D\u6807\u8BB0\u5BA1\u6838\u72B6\u6001\u7684\u5C5E\u6027\u540D\uFF08\u8F93\u51FA\u6587\u4EF6\u521B\u5EFA\u65F6\u5199\u5165\uFF1B\u5982 approved\uFF09\u3002").addText(
-      (text) => text.setPlaceholder("approved").setValue(this.plugin.settings.reviewAttr).onChange((value) => this.updateSetting("reviewAttr", value))
-    );
-    this.markSearchable(attr, "\u5BA1\u6838 \u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u540D reviewAttr approved");
-    const def = new import_obsidian3.Setting(containerEl).setName("\u672A\u5BA1\u6807\u8BB0\u503C").setDesc("frontmatter \u7684\u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u7B49\u4E8E\u8BE5\u503C = \u672A\u5BA1\u6838\uFF08\u8F93\u51FA\u6587\u4EF6\u521B\u5EFA\u65F6\u5199\u5165\u7684\u9ED8\u8BA4\u503C\uFF1B\u5982 \u672A\u5BA1\uFF09\u3002").addText(
-      (text) => text.setPlaceholder("\u672A\u5BA1").setValue(this.plugin.settings.reviewDefault).onChange((value) => this.updateSetting("reviewDefault", value))
-    );
-    this.markSearchable(def, "\u5BA1\u6838 \u672A\u5BA1\u6807\u8BB0\u503C reviewDefault");
-    const done = new import_obsidian3.Setting(containerEl).setName("\u5DF2\u5BA1\u6807\u8BB0\u503C").setDesc("\u5BA1\u6838\u9875\u6BCF\u884C\u5F00\u5173\u6253\u5F00\u65F6\uFF0C\u5199\u5165 frontmatter \u5BA1\u6838\u72B6\u6001\u5C5E\u6027\u7684\u503C\uFF08\u5982 \u5DF2\u5BA1\uFF09\u3002\u5F00\u5173\u6253\u5F00\u540E\u8BE5\u6587\u4EF6\u79FB\u51FA\u5BA1\u6838\u5217\u8868\u3002").addText(
-      (text) => text.setPlaceholder("\u5DF2\u5BA1").setValue(this.plugin.settings.reviewDoneValue).onChange((value) => this.updateSetting("reviewDoneValue", value))
-    );
-    this.markSearchable(done, "\u5BA1\u6838 \u5DF2\u5BA1\u6807\u8BB0\u503C reviewDoneValue \u5BA1\u6838\u5B8C\u6210 \u5F00\u5173");
-    const exHead = new import_obsidian3.Setting(containerEl).setName("\u6392\u9664\u89C4\u5219").setDesc("frontmatter \u5C5E\u6027\u7B49\u4E8E\u8BE5\u503C\u7684\u6587\u4EF6\u4E0D\u8FDB\u5165\u5BA1\u6838\u5217\u8868\uFF08\u5982 archived = true \u6392\u9664\u5F52\u6863\u6587\u4EF6\uFF09\u3002");
-    this.markSearchable(exHead, "\u5BA1\u6838 \u6392\u9664\u89C4\u5219 \u6392\u9664 \u5F52\u6863 archived");
-    const exListEl = containerEl.createDiv();
-    const renderExcludes = () => {
-      exListEl.empty();
-      const list = this.plugin.settings.reviewExcludes || [];
-      list.forEach((entry, index) => {
-        const row = new import_obsidian3.Setting(exListEl).setName("").setDesc("").addText(
-          (text) => text.setPlaceholder("\u5C5E\u6027\u540D\uFF0C\u5982 archived").setValue(entry.key).onChange((value) => {
-            entry.key = value;
-            void this.plugin.saveSettings();
-          })
-        ).addText(
-          (text) => text.setPlaceholder("\u6392\u9664\u7684\u503C\uFF0C\u5982 true").setValue(entry.value).onChange((value) => {
-            entry.value = value;
-            void this.plugin.saveSettings();
-          })
-        ).addButton(
-          (btn) => btn.setIcon("trash-2").setTooltip("\u5220\u9664").onClick(() => {
-            const a = this.plugin.settings.reviewExcludes || [];
-            a.splice(index, 1);
-            void this.plugin.saveSettings();
-            renderExcludes();
-          })
-        );
-        row.settingEl.addClass("ks-extra-props-row");
-        this.markSearchable(row, `\u5BA1\u6838 \u6392\u9664\u89C4\u5219 ${entry.key} ${entry.value}`);
-      });
-    };
-    renderExcludes();
-    const addEx = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
-      (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u6392\u9664\u89C4\u5219").onClick(() => {
-        if (!Array.isArray(this.plugin.settings.reviewExcludes)) this.plugin.settings.reviewExcludes = [];
-        this.plugin.settings.reviewExcludes.push({ key: "", value: "" });
+  renderPanelGroup(containerEl) {
+    containerEl.empty();
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u7528\u6237\u81EA\u5B9A\u4E49\u9762\u677F\uFF08Bases \u6838\u5FC3\u63D2\u4EF6\u81EA\u5B9A\u4E49\u89C6\u56FE\uFF09\uFF1A\u53EF\u521B\u5EFA\u4EFB\u610F\u591A\u4E2A\u9762\u677F\uFF0C\u6BCF\u4E2A\u9762\u677F\u626B\u63CF\u4E00\u4E2A\u6587\u4EF6\u5939\uFF08\u6E90\u6587\u4EF6\u5939/\u8F93\u51FA\u6587\u4EF6\u5939\u8DDF\u968F\u300C\u6587\u4EF6\u5939\u300Dtab \u7684\u5168\u5C40\u8BBE\u7F6E\uFF0C\u6216\u586B\u81EA\u5B9A\u4E49\u8DEF\u5F84\uFF09\uFF0C\u5217\u51FA bool \u5C5E\u6027\u7F3A\u5931\u6216\u4E0D\u662F true \u7684\u6587\u4EF6\uFF1B\u53EF\u8BBE\u6700\u65E9\u65E5\u671F\uFF08\u8BE5\u65E5\u671F\u4E4B\u540E\u4FEE\u6539/\u521B\u5EFA\u7684\u6587\u4EF6\u624D\u663E\u793A\uFF09\u3002\u70B9\u51FB\u6587\u4EF6\u540D\u6253\u5F00\u6587\u4EF6\u3001\u70B9\u51FB\u804A\u5929\u56FE\u6807\u7528\u9762\u677F\u81EA\u5DF1\u7684\u9884\u8BBE + prompt \u6A21\u677F\u8DF3\u804A\u5929\u3002\u6BCF\u4E2A\u9762\u677F\u53EF\u300C\u751F\u6210\u9762\u677F\u300D\uFF08\u6309\u914D\u7F6E\u91CD\u5EFA .base\uFF09\u4E0E\u300C\u6253\u5F00\u9762\u677F\u300D\u3002\u9700\u8981 Obsidian 1.10.0+ \u5E76\u542F\u7528 Bases \u6838\u5FC3\u63D2\u4EF6\u3002");
+    this.markSearchable(info, "\u9762\u677F \u8BF4\u660E Bases \u81EA\u5B9A\u4E49 \u591A\u9762\u677F \u626B\u63CF\u6587\u4EF6\u5939 \u751F\u6210\u9762\u677F \u6253\u5F00\u9762\u677F \u804A\u5929\u9884\u8BBE prompt");
+    const panels = this.plugin.settings.panels || (this.plugin.settings.panels = []);
+    panels.forEach((panel, index) => this.renderPanelCard(containerEl, panel, index));
+    const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setIcon("plus").setButtonText("\u65B0\u5EFA\u9762\u677F").onClick(() => {
+        if (!Array.isArray(this.plugin.settings.panels)) this.plugin.settings.panels = [];
+        const np = {
+          id: String(Date.now()),
+          name: "\u65B0\u9762\u677F",
+          enabled: true,
+          folder: "source",
+          attr: "tidy",
+          afterDate: "",
+          basePath: "\u65B0\u9762\u677F.base",
+          chatPresetId: "",
+          chatPrompt: "\u8BF7\u67E5\u770B\u300C{{filename}}\u300D\u5E76\u5E2E\u6211\u5904\u7406\u3002"
+        };
+        this.plugin.settings.panels.push(np);
         void this.plugin.saveSettings();
-        renderExcludes();
+        this.renderPanelGroup(containerEl);
       })
     );
-    this.markSearchable(addEx, "\u5BA1\u6838 \u6392\u9664\u89C4\u5219 \u6DFB\u52A0 \u589E\u52A0");
-    const path = new import_obsidian3.Setting(containerEl).setName("\u5BA1\u6838\u9762\u677F\u4F4D\u7F6E").setDesc("\u5BA1\u6838\u9762\u677F\uFF08.base \u6587\u4EF6\uFF09\u5728\u5E93\u4E2D\u7684\u8DEF\u5F84\uFF1B\u751F\u6210\u540E\u7531 Bases \u6838\u5FC3\u63D2\u4EF6\u6E32\u67D3\u3002").addText(
-      (text) => text.setPlaceholder("\u5BA1\u6838.base").setValue(this.plugin.settings.reviewBasePath).onChange((value) => this.updateSetting("reviewBasePath", value))
-    );
-    this.markSearchable(path, "\u5BA1\u6838 \u5BA1\u6838\u9762\u677F\u4F4D\u7F6E \u9762\u677F \u8DEF\u5F84 base");
-    const prompt = new import_obsidian3.Setting(containerEl).setName("AI \u4FEE\u6539\u63D0\u793A\u8BCD").setDesc("\u70B9\u51FB\u5BA1\u6838\u5217\u8868\u7684\u804A\u5929\u56FE\u6807\u65F6\uFF0C\u9884\u586B\u5230\u804A\u5929\u8F93\u5165\u6846\u7684\u63D0\u793A\u8BCD\u3002`{{filename}}` \u4F1A\u88AB\u66FF\u6362\u4E3A\u88AB\u4FEE\u6539\u7B14\u8BB0\u7684\u6587\u4EF6\u540D\uFF08\u4E0D\u542B\u8DEF\u5F84\uFF0C\u5DE5\u5177\u4EE5\u6587\u4EF6\u540D\u4F5C\u53C2\u6570\u5B9A\u4F4D\u6587\u4EF6\uFF09\u3002\u7559\u7A7A = \u4F7F\u7528\u9ED8\u8BA4\u63D0\u793A\u8BCD\uFF1B\u4E0D\u542B `{{filename}}` \u65F6\u539F\u6837\u4F7F\u7528\u3002").addTextArea(
-      (text) => text.setPlaceholder("\u8BF7\u8BFB\u53D6\u8F93\u51FA\u6587\u4EF6\u5939\u4E2D\u7684\u7B14\u8BB0\u300C{{filename}}\u300D\uFF0C\u4E0E\u6211\u6C9F\u901A\u5982\u4F55\u4FEE\u6539\uFF0C\u7136\u540E\u6309\u6211\u7684\u8981\u6C42\u4FEE\u6539\u5B83\u3002").setValue(this.plugin.settings.reviewChatPrompt || "").onChange((value) => this.updateSetting("reviewChatPrompt", value))
-    );
-    prompt.settingEl.addClass("ks-review-prompt-row");
-    this.markSearchable(prompt, "\u5BA1\u6838 AI \u4FEE\u6539\u63D0\u793A\u8BCD \u63D0\u793A\u8BCD \u6A21\u677F filename");
-    const ops = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
-      (btn) => btn.setIcon("refresh-cw").setButtonText("\u751F\u6210\u5BA1\u6838\u9762\u677F").onClick(() => {
-        void this.plugin.regenerateReviewBase();
-      })
-    ).addButton(
-      (btn) => btn.setIcon("external-link").setButtonText("\u6253\u5F00\u5BA1\u6838\u9762\u677F").onClick(() => {
-        void this.plugin.openReviewView();
-      })
-    );
-    this.markSearchable(ops, "\u5BA1\u6838 \u751F\u6210\u5BA1\u6838\u9762\u677F \u6253\u5F00\u5BA1\u6838\u9762\u677F \u91CD\u65B0\u751F\u6210");
+    this.markSearchable(addBtn, "\u9762\u677F \u65B0\u5EFA \u6DFB\u52A0 \u589E\u52A0 \u521B\u5EFA");
   }
-  // -------------------------------------------------------------------------
-  // tidy（v0.9.2：整理面板配置——bool 属性 / 日期 / 面板位置 / 聊天跳转）
-  // -------------------------------------------------------------------------
-  renderTidyGroup(containerEl) {
-    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u300C\u6574\u7406\u300D\u9875\uFF08Bases \u6838\u5FC3\u63D2\u4EF6\u81EA\u5B9A\u4E49\u89C6\u56FE\uFF0C\u4E0E\u5BA1\u6838\u9875\u540C\u673A\u5236\uFF09\uFF1A\u5217\u51FA\u6E90\u6587\u4EF6\u5939\u91CC\u3001\u6B64\u65E5\u671F\u4E4B\u540E\u4FEE\u6539/\u521B\u5EFA\u3001\u4E14 bool \u5C5E\u6027\u7F3A\u5931\u6216\u4E0D\u662F true \u7684\u6587\u4EF6\u3002\u7528\u6237\u5904\u7406\u540E\u628A\u8BE5\u5C5E\u6027\u8BBE\u4E3A true \u2192 \u6587\u4EF6\u4ECE\u9762\u677F\u6D88\u5931\u3002\u6539\u5B8C\u8BBE\u7F6E\u540E\u70B9\u300C\u751F\u6210\u6574\u7406\u9762\u677F\u300D\u91CD\u5EFA\u9762\u677F\uFF08\u5DF2\u5B58\u5728\u5219\u6309\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210\u4E00\u6B21\uFF09\u3002\u9700\u8981 Obsidian 1.10.0+ \u5E76\u542F\u7528 Bases \u6838\u5FC3\u63D2\u4EF6\u3002");
-    this.markSearchable(info, "\u6574\u7406 \u8BF4\u660E Bases \u9762\u677F bool \u5C5E\u6027 \u65E5\u671F \u672A\u6574\u7406");
-    const attr = new import_obsidian3.Setting(containerEl).setName("bool \u5C5E\u6027\u540D").setDesc("frontmatter \u4E2D\u6807\u8BB0\u300C\u5DF2\u6574\u7406\u300D\u7684 bool \u5C5E\u6027\u540D\uFF1B\u7F3A\u5931\u6216\u503C\u4E0D\u662F true \u7684\u6587\u4EF6\u663E\u793A\u5728\u9762\u677F\uFF0C\u8BBE\u4E3A true \u540E\u6D88\u5931\u3002").addText(
-      (text) => text.setPlaceholder("tidy").setValue(this.plugin.settings.tidyAttr).onChange((value) => this.updateSetting("tidyAttr", value))
+  /**
+   * v0.9.3：渲染一个面板配置卡片（可折叠）：头部 = chevron + 名称输入 + 启用开关 +
+   * 删除按钮；主体 = 扫描文件夹（下拉 + 自定义路径）+ bool 属性名 + 最早日期 +
+   * 面板位置 + 聊天预设下拉 + 聊天 prompt + 「生成面板」「打开面板」按钮。
+   * 折叠状态按 panel.id 记忆（缺省展开）。
+   */
+  renderPanelCard(containerEl, panel, index) {
+    const rerenderAll = () => this.renderPanelGroup(containerEl);
+    const collapsed = this.panelCollapsed.has(panel.id);
+    const card = containerEl.createDiv({ cls: "ks-panel-card" });
+    const head = card.createDiv({ cls: "ks-panel-card-head" });
+    const chev = head.createSpan({ cls: "ks-preset-item-chev" });
+    this.setIconSafe(chev, collapsed ? "chevron-right" : "chevron-down", collapsed ? "\u203A" : "\u2304");
+    chev.addEventListener("click", () => {
+      const isCollapsed = card.hasClass("ks-panel-card-collapsed");
+      if (isCollapsed) this.panelCollapsed.delete(panel.id);
+      else this.panelCollapsed.add(panel.id);
+      this.setIconSafe(chev, isCollapsed ? "chevron-down" : "chevron-right", isCollapsed ? "\u2304" : "\u203A");
+      card.toggleClass("ks-panel-card-collapsed", !isCollapsed);
+    });
+    const nameInput = head.createEl("input", { cls: "ks-preset-item-name ks-panel-card-name" });
+    nameInput.type = "text";
+    nameInput.value = panel.name || "";
+    nameInput.placeholder = "\u9762\u677F\u540D\uFF0C\u5982\u300C\u5BA1\u6838\u300D\u300C\u6574\u7406\u300D";
+    nameInput.addEventListener("input", () => {
+      panel.name = nameInput.value;
+      void this.plugin.saveSettings();
+    });
+    const toggleWrap = head.createSpan({ cls: "ks-sidebar-rule-toggle" });
+    toggleWrap.addEventListener("click", (ev) => ev.stopPropagation());
+    new import_obsidian3.ToggleComponent(toggleWrap).setValue(panel.enabled !== false).setTooltip("\u542F\u7528\u6B64\u9762\u677F").onChange((v) => {
+      panel.enabled = v;
+      void this.plugin.saveSettings();
+    });
+    const delBtn = head.createEl("button", { cls: "ks-preset-item-del" });
+    delBtn.setAttribute("aria-label", "\u5220\u9664\u6B64\u9762\u677F");
+    delBtn.setAttribute("title", "\u5220\u9664\u6B64\u9762\u677F");
+    this.setIconSafe(delBtn, "trash-2", "\xD7");
+    delBtn.addEventListener("click", () => {
+      const a = this.plugin.settings.panels || [];
+      a.splice(index, 1);
+      void this.plugin.saveSettings();
+      rerenderAll();
+    });
+    const body = card.createDiv({ cls: "ks-panel-card-body" });
+    if (collapsed) card.addClass("ks-panel-card-collapsed");
+    const folder = new import_obsidian3.Setting(body).setName("\u626B\u63CF\u6587\u4EF6\u5939").setDesc("\u9762\u677F\u5217\u51FA\u8BE5\u6587\u4EF6\u5939\u91CC\u7684 md \u6587\u4EF6\u3002\u6E90\u6587\u4EF6\u5939/\u8F93\u51FA\u6587\u4EF6\u5939\u8DDF\u968F\u300C\u6587\u4EF6\u5939\u300Dtab \u7684\u5168\u5C40\u8BBE\u7F6E\uFF1B\u9009\u62E9\u300C\u81EA\u5B9A\u4E49\u8DEF\u5F84\u300D\u540E\u586B\u5199 vault \u5185\u8DEF\u5F84\uFF08\u7559\u7A7A = \u5168\u5E93\uFF09\u3002").addDropdown((drop) => {
+      drop.addOption("source", "\u6E90\u6587\u4EF6\u5939");
+      drop.addOption("output", "\u8F93\u51FA\u6587\u4EF6\u5939");
+      drop.addOption("custom", "\u81EA\u5B9A\u4E49\u8DEF\u5F84");
+      const f = panel.folder || "source";
+      drop.setValue(f === "source" || f === "output" ? f : "custom");
+      drop.onChange((value) => {
+        if (value === "custom") {
+          if (panel.folder === "source" || panel.folder === "output") panel.folder = "";
+        } else {
+          panel.folder = value;
+        }
+        void this.plugin.saveSettings();
+        rerenderAll();
+      });
+    });
+    this.markSearchable(folder, "\u9762\u677F \u626B\u63CF\u6587\u4EF6\u5939 \u6E90\u6587\u4EF6\u5939 \u8F93\u51FA\u6587\u4EF6\u5939 \u81EA\u5B9A\u4E49\u8DEF\u5F84 folder");
+    if (panel.folder !== "source" && panel.folder !== "output") {
+      const folderPath = new import_obsidian3.Setting(body).setName("\u81EA\u5B9A\u4E49\u8DEF\u5F84").setDesc("\u81EA\u5B9A\u4E49\u6587\u4EF6\u5939\u8DEF\u5F84\uFF08vault \u5185\u8DEF\u5F84\uFF1B\u7559\u7A7A = \u659C\u6760 / \u5168\u5E93\uFF09\u3002").addText(
+        (text) => text.setPlaceholder("\u5982\uFF1AInbox").setValue(panel.folder || "").onChange((value) => {
+          panel.folder = value;
+          void this.plugin.saveSettings();
+        })
+      );
+      this.markSearchable(folderPath, "\u9762\u677F \u626B\u63CF\u6587\u4EF6\u5939 \u81EA\u5B9A\u4E49\u8DEF\u5F84 \u6587\u4EF6\u5939 \u8DEF\u5F84");
+    }
+    const attr = new import_obsidian3.Setting(body).setName("bool \u5C5E\u6027\u540D").setDesc("frontmatter \u4E2D\u6807\u8BB0\u300C\u5DF2\u5904\u7406\u300D\u7684 bool \u5C5E\u6027\u540D\uFF1B\u7F3A\u5931\u6216\u503C\u4E0D\u662F true \u7684\u6587\u4EF6\u663E\u793A\u5728\u9762\u677F\uFF0C\u8BBE\u4E3A true \u540E\u6D88\u5931\u3002").addText(
+      (text) => text.setPlaceholder("tidy").setValue(panel.attr || "").onChange((value) => {
+        panel.attr = value;
+        void this.plugin.saveSettings();
+      })
     );
-    this.markSearchable(attr, "\u6574\u7406 bool \u5C5E\u6027\u540D tidyAttr \u5C5E\u6027");
-    const afterDate = new import_obsidian3.Setting(containerEl).setName("\u6B64\u65E5\u671F\u4E4B\u540E").setDesc("\u53EA\u770B\u6B64\u65E5\u671F\u4E4B\u540E\uFF08\u542B\u5F53\u5929\uFF09\u4FEE\u6539/\u521B\u5EFA\u7684\u6587\u4EF6\uFF0C\u4E4B\u524D\u7684\u4E0D\u770B\uFF1B\u683C\u5F0F YYYY-MM-DD\uFF08\u5982 2026-08-01\uFF09\uFF1B\u7559\u7A7A = \u4E0D\u9650\u3002").addText(
-      (text) => text.setPlaceholder("\u5982\uFF1A2026-08-01").setValue(this.plugin.settings.tidyAfterDate || "").onChange((value) => this.updateSetting("tidyAfterDate", value))
+    this.markSearchable(attr, "\u9762\u677F bool \u5C5E\u6027\u540D attr \u5C5E\u6027 \u5DF2\u5904\u7406");
+    const afterDate = new import_obsidian3.Setting(body).setName("\u6700\u65E9\u65E5\u671F").setDesc("\u53EA\u770B\u8BE5\u65E5\u671F\u4E4B\u540E\uFF08\u542B\u5F53\u5929\uFF09\u4FEE\u6539/\u521B\u5EFA\u7684\u6587\u4EF6\uFF0C\u4E4B\u524D\u7684\u4E0D\u770B\uFF1B\u683C\u5F0F YYYY-MM-DD\uFF08\u5982 2026-08-01\uFF09\uFF1B\u7559\u7A7A = \u4E0D\u9650\u3002").addText(
+      (text) => text.setPlaceholder("\u5982\uFF1A2026-08-01").setValue(panel.afterDate || "").onChange((value) => {
+        panel.afterDate = value;
+        void this.plugin.saveSettings();
+      })
     );
-    this.markSearchable(afterDate, "\u6574\u7406 \u6B64\u65E5\u671F\u4E4B\u540E \u65E5\u671F \u65F6\u95F4 \u4FEE\u6539 \u521B\u5EFA afterDate");
-    const path = new import_obsidian3.Setting(containerEl).setName("\u6574\u7406\u9762\u677F\u4F4D\u7F6E").setDesc("\u6574\u7406\u9762\u677F\uFF08.base \u6587\u4EF6\uFF09\u5728\u5E93\u4E2D\u7684\u8DEF\u5F84\uFF1B\u751F\u6210\u540E\u7531 Bases \u6838\u5FC3\u63D2\u4EF6\u6E32\u67D3\u3002").addText(
-      (text) => text.setPlaceholder("\u6574\u7406.base").setValue(this.plugin.settings.tidyBasePath).onChange((value) => this.updateSetting("tidyBasePath", value))
+    this.markSearchable(afterDate, "\u9762\u677F \u6700\u65E9\u65E5\u671F \u65E5\u671F \u65F6\u95F4 \u4FEE\u6539 \u521B\u5EFA afterDate");
+    const path = new import_obsidian3.Setting(body).setName("\u9762\u677F\u4F4D\u7F6E").setDesc("\u9762\u677F\uFF08.base \u6587\u4EF6\uFF09\u5728\u5E93\u4E2D\u7684\u8DEF\u5F84\uFF1B\u751F\u6210\u540E\u7531 Bases \u6838\u5FC3\u63D2\u4EF6\u6E32\u67D3\u3002\u7559\u7A7A = \u7528\u9762\u677F\u540D\uFF08\u5982 \u65B0\u9762\u677F.base\uFF09\u3002").addText(
+      (text) => text.setPlaceholder(`${panel.name || "\u9762\u677F"}.base`).setValue(panel.basePath || "").onChange((value) => {
+        panel.basePath = value;
+        void this.plugin.saveSettings();
+      })
     );
-    this.markSearchable(path, "\u6574\u7406 \u6574\u7406\u9762\u677F\u4F4D\u7F6E \u9762\u677F \u8DEF\u5F84 base");
-    const preset = new import_obsidian3.Setting(containerEl).setName("\u804A\u5929\u9884\u8BBE").setDesc("\u70B9\u51FB\u9762\u677F\u6761\u76EE\u53F3\u4FA7\u804A\u5929\u56FE\u6807\u65F6\u4F7F\u7528\u7684\u9884\u8BBE\uFF1B\u300C\u9ED8\u8BA4\uFF08\u5168\u90E8\u5DE5\u5177\uFF09\u300D= \u4E0D\u5207\u6362\u9884\u8BBE\u3002").addDropdown((drop) => {
+    this.markSearchable(path, "\u9762\u677F \u9762\u677F\u4F4D\u7F6E \u9762\u677F \u8DEF\u5F84 base");
+    const preset = new import_obsidian3.Setting(body).setName("\u804A\u5929\u9884\u8BBE").setDesc("\u70B9\u51FB\u9762\u677F\u6761\u76EE\u53F3\u4FA7\u804A\u5929\u56FE\u6807\u65F6\u4F7F\u7528\u7684\u9884\u8BBE\uFF1B\u300C\u9ED8\u8BA4\uFF08\u5168\u90E8\u5DE5\u5177\uFF09\u300D= \u4E0D\u5207\u6362\u9884\u8BBE\u3002").addDropdown((drop) => {
       drop.addOption("", "\u9ED8\u8BA4\uFF08\u5168\u90E8\u5DE5\u5177\uFF09");
       const presets = this.plugin.settings.toolPresets || [];
       for (const p of presets) {
         if (!p || !p.id) continue;
         drop.addOption(p.id, p.name || p.id);
       }
-      drop.setValue(this.plugin.settings.tidyChatPresetId || "");
-      drop.onChange((value) => this.updateSetting("tidyChatPresetId", value));
+      drop.setValue(panel.chatPresetId || "");
+      drop.onChange((value) => {
+        panel.chatPresetId = value;
+        void this.plugin.saveSettings();
+      });
     });
-    this.markSearchable(preset, "\u6574\u7406 \u804A\u5929\u9884\u8BBE \u9884\u8BBE \u4E0B\u62C9 dropdown");
-    const prompt = new import_obsidian3.Setting(containerEl).setName("\u804A\u5929 prompt \u6A21\u677F").setDesc("\u70B9\u51FB\u9762\u677F\u6761\u76EE\u53F3\u4FA7\u804A\u5929\u56FE\u6807\u65F6\uFF0C\u9884\u586B\u5230\u804A\u5929\u8F93\u5165\u6846\u7684\u63D0\u793A\u8BCD\u6A21\u677F\u3002`{{filename}}` \u4F1A\u88AB\u66FF\u6362\u4E3A\u6587\u4EF6\u540D\uFF08\u4E0D\u542B\u8DEF\u5F84\uFF09\uFF1B\u6A21\u677F\u4E0D\u542B `{{filename}}` \u65F6\u539F\u6837\u4F7F\u7528\u3002").addTextArea(
-      (text) => text.setPlaceholder("\u8BF7\u67E5\u770B\u300C{{filename}}\u300D\u5E76\u5E2E\u6211\u6574\u7406\uFF0C\u7136\u540E\u628A\u5B83\u6807\u8BB0\u4E3A\u5B8C\u6210\u3002").setValue(this.plugin.settings.tidyChatPrompt || "").onChange((value) => this.updateSetting("tidyChatPrompt", value))
+    this.markSearchable(preset, "\u9762\u677F \u804A\u5929\u9884\u8BBE \u9884\u8BBE \u4E0B\u62C9 dropdown");
+    const prompt = new import_obsidian3.Setting(body).setName("\u804A\u5929 prompt \u6A21\u677F").setDesc("\u70B9\u51FB\u9762\u677F\u6761\u76EE\u53F3\u4FA7\u804A\u5929\u56FE\u6807\u65F6\uFF0C\u9884\u586B\u5230\u804A\u5929\u8F93\u5165\u6846\u7684\u63D0\u793A\u8BCD\u6A21\u677F\u3002`{{filename}}` \u4F1A\u88AB\u66FF\u6362\u4E3A\u6587\u4EF6\u540D\uFF08\u4E0D\u542B\u8DEF\u5F84\uFF09\uFF1B\u6A21\u677F\u4E0D\u542B `{{filename}}` \u65F6\u539F\u6837\u4F7F\u7528\u3002").addTextArea(
+      (text) => text.setPlaceholder("\u8BF7\u67E5\u770B\u300C{{filename}}\u300D\u5E76\u5E2E\u6211\u5904\u7406\u3002").setValue(panel.chatPrompt || "").onChange((value) => {
+        panel.chatPrompt = value;
+        void this.plugin.saveSettings();
+      })
     );
-    prompt.settingEl.addClass("ks-tidy-prompt-row");
-    this.markSearchable(prompt, "\u6574\u7406 \u804A\u5929 prompt \u6A21\u677F \u63D0\u793A\u8BCD filename \u5360\u4F4D\u7B26");
-    const ops = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
-      (btn) => btn.setIcon("refresh-cw").setButtonText("\u751F\u6210\u6574\u7406\u9762\u677F").onClick(() => {
-        void this.plugin.regenerateTidyBase();
+    prompt.settingEl.addClass("ks-panel-prompt-row");
+    this.markSearchable(prompt, "\u9762\u677F \u804A\u5929 prompt \u6A21\u677F \u63D0\u793A\u8BCD filename \u5360\u4F4D\u7B26");
+    const ops = new import_obsidian3.Setting(body).setName("").setDesc("").addButton(
+      (btn) => btn.setIcon("refresh-cw").setButtonText("\u751F\u6210\u9762\u677F").onClick(() => {
+        void this.plugin.regeneratePanel(panel.id);
       })
     ).addButton(
-      (btn) => btn.setIcon("external-link").setButtonText("\u6253\u5F00\u6574\u7406\u9762\u677F").onClick(() => {
-        void this.plugin.openTidyView();
+      (btn) => btn.setIcon("external-link").setButtonText("\u6253\u5F00\u9762\u677F").onClick(() => {
+        void this.plugin.openPanel(panel.id);
       })
     );
-    this.markSearchable(ops, "\u6574\u7406 \u751F\u6210\u6574\u7406\u9762\u677F \u6253\u5F00\u6574\u7406\u9762\u677F \u91CD\u65B0\u751F\u6210");
+    this.markSearchable(ops, "\u9762\u677F \u751F\u6210\u9762\u677F \u6253\u5F00\u9762\u677F \u91CD\u65B0\u751F\u6210");
   }
   // -------------------------------------------------------------------------
   // sidebar（v0.9.0：侧边栏「提醒面板」规则——条件 + 动作；仿预设折叠卡片模式）
@@ -5652,8 +5686,181 @@ function unregisterTidyBasesView(app) {
   }
 }
 
+// src/panelView.ts
+var import_obsidian9 = require("obsidian");
+var PANEL_VIEW_TYPE = "ks-panel";
+function resolvePanelFolder(plugin, folder) {
+  if (folder === "source") return plugin.settings.sourceFolder || "/";
+  if (folder === "output") return plugin.settings.outputFolder || "/";
+  return folder || "/";
+}
+function buildPanelBaseYaml(folder, attr, name) {
+  const f = (folder || "/").replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const conditions = [];
+  if (f !== "/") conditions.push(`file.inFolder("${f}")`);
+  const lines = [];
+  if (conditions.length > 0) {
+    lines.push("filters:");
+    lines.push("  and:");
+    for (const c of conditions) lines.push(`    - ${c}`);
+  }
+  lines.push("views:");
+  lines.push(`  - type: ${PANEL_VIEW_TYPE}`);
+  lines.push(`    name: ${name || "\u9762\u677F"}`);
+  lines.push("    order:");
+  lines.push("      - file.name");
+  lines.push(`      - note["${attr}"]`);
+  return lines.join("\n") + "\n";
+}
+function panelBasePathOf(panel) {
+  const p = (panel.basePath || `${panel.name || "\u9762\u677F"}.base`).replace(/\\/g, "/").trim();
+  return p || `${panel.name || "\u9762\u677F"}.base`;
+}
+async function ensurePanelBase(plugin, panel) {
+  const vault = plugin.app.vault;
+  const path = panelBasePathOf(panel);
+  const yaml = buildPanelBaseYaml(resolvePanelFolder(plugin, panel.folder), panel.attr, panel.name);
+  const existing = vault.getAbstractFileByPath(path);
+  if (existing instanceof import_obsidian9.TFile) {
+    try {
+      const cur = await vault.read(existing);
+      if (cur !== yaml) await vault.modify(existing, yaml);
+    } catch (e) {
+    }
+    return existing;
+  }
+  try {
+    const created = await vault.create(path, yaml);
+    return created instanceof import_obsidian9.TFile ? created : null;
+  } catch (e) {
+    new import_obsidian9.Notice(`\u521B\u5EFA\u9762\u677F\u300C${panel.name || "\u672A\u547D\u540D"}\u300D\u5931\u8D25\uFF1A${String(e)}`);
+    return null;
+  }
+}
+async function regeneratePanelBaseFile(plugin, panel) {
+  const vault = plugin.app.vault;
+  const path = panelBasePathOf(panel);
+  const yaml = buildPanelBaseYaml(resolvePanelFolder(plugin, panel.folder), panel.attr, panel.name);
+  try {
+    const existing = vault.getAbstractFileByPath(path);
+    if (existing instanceof import_obsidian9.TFile) {
+      await vault.modify(existing, yaml);
+      return existing;
+    }
+    const created = await vault.create(path, yaml);
+    return created instanceof import_obsidian9.TFile ? created : null;
+  } catch (e) {
+    new import_obsidian9.Notice(`\u91CD\u65B0\u751F\u6210\u9762\u677F\u300C${panel.name || "\u672A\u547D\u540D"}\u300D\u5931\u8D25\uFF1A${String(e)}`);
+    return null;
+  }
+}
+var PanelBasesView = class extends import_obsidian9.Component {
+  constructor(controller, containerEl, plugin) {
+    super();
+    this.type = PANEL_VIEW_TYPE;
+    this.allProperties = [];
+    this.data = null;
+    this.containerEl = containerEl;
+    this.plugin = plugin;
+    this.app = plugin.app;
+  }
+  onload() {
+    this.containerEl.addClass("ks-panel-view");
+    this.render();
+  }
+  /** Bases 查询结果变化（vault 文件/frontmatter 变化）时自动重渲染。 */
+  onDataUpdated() {
+    this.render();
+  }
+  /** 从 .base 的 views[].name（this.config.name）找到同名面板配置；找不到返回 null。 */
+  findPanel() {
+    var _a;
+    const name = (_a = this.config) == null ? void 0 : _a.name;
+    if (!name) return null;
+    const panels = this.plugin.settings.panels || [];
+    return panels.find((p) => p && p.name === name) || null;
+  }
+  render() {
+    var _a, _b, _c;
+    this.containerEl.empty();
+    const panel = this.findPanel();
+    if (!panel) {
+      this.containerEl.createDiv({ cls: "ks-panel-empty", text: "\u672A\u627E\u5230\u9762\u677F\u914D\u7F6E\uFF0C\u8BF7\u5728\u8BBE\u7F6E \u2192 \u9762\u677F \u68C0\u67E5\u3002" });
+      return;
+    }
+    const head = this.containerEl.createDiv({ cls: "ks-panel-head" });
+    head.createSpan({ cls: "ks-panel-title", text: panel.name || "\u9762\u677F" });
+    const refreshBtn = head.createEl("button", { cls: "clickable-icon ks-panel-refresh", attr: { "aria-label": "\u5237\u65B0", "title": "\u5237\u65B0" } });
+    (0, import_obsidian9.setIcon)(refreshBtn, "refresh-cw");
+    refreshBtn.addEventListener("click", () => this.render());
+    head.createSpan({ cls: "ks-panel-hint", text: "\u70B9\u51FB\u7B14\u8BB0\u6807\u9898\u6253\u5F00\u6587\u4EF6\uFF1B\u70B9\u51FB\u804A\u5929\u56FE\u6807\u7528\u9762\u677F\u914D\u7F6E\u7684\u9884\u8BBE\u8FDB\u5165\u804A\u5929\u5E76\u5F15\u7528\u6B64\u6587\u4EF6\u3002\u628A\u300Cbool \u5C5E\u6027\u300D\u8BBE\u4E3A true \u540E\u6587\u4EF6\u4F1A\u4ECE\u8FD9\u91CC\u6D88\u5931\u3002" });
+    const attr = (panel.attr || "").trim();
+    const afterMs = parseAfterDate(panel.afterDate);
+    const list = this.containerEl.createDiv({ cls: "ks-panel-list" });
+    const entries = (_b = (_a = this.data) == null ? void 0 : _a.data) != null ? _b : [];
+    let count = 0;
+    for (const entry of entries) {
+      const file = entry.file;
+      if (!file) continue;
+      if (afterMs !== null) {
+        const mtime = file.stat && file.stat.mtime || file.stat.ctime || 0;
+        if (mtime < afterMs) continue;
+      }
+      const fm = (_c = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _c.frontmatter;
+      if (attr) {
+        const raw = fm == null ? void 0 : fm[attr];
+        const isDone = raw !== void 0 && raw !== null && raw !== "" && String(raw).toLowerCase() === "true";
+        if (isDone) continue;
+      }
+      count++;
+      const row = list.createDiv({ cls: "ks-panel-item" });
+      const info = row.createDiv({ cls: "ks-panel-item-info" });
+      const nameEl = info.createDiv({ cls: "ks-panel-item-name", text: file.basename });
+      nameEl.addEventListener("click", () => {
+        void this.app.workspace.getLeaf("tab").openFile(file);
+      });
+      const ops = row.createDiv({ cls: "ks-panel-item-ops" });
+      const chatBtn = ops.createEl("button", { cls: "clickable-icon ks-panel-chat", attr: { "aria-label": "\u804A\u5929", "title": "\u804A\u5929" } });
+      (0, import_obsidian9.setIcon)(chatBtn, "messages-square");
+      chatBtn.addEventListener("click", () => {
+        const template = (panel.chatPrompt || "").trim() || "\u8BF7\u67E5\u770B\u300C{{filename}}\u300D\u5E76\u5E2E\u6211\u5904\u7406\u3002";
+        const prompt = renderPromptTemplate(template, file.basename);
+        void this.plugin.openChatWith(prompt, panel.chatPresetId || void 0);
+      });
+    }
+    if (count === 0) {
+      list.createDiv({ cls: "ks-panel-empty", text: "\u8BE5\u6587\u4EF6\u5939\u91CC\u6CA1\u6709\u9700\u8981\u5904\u7406\u7684\u6587\u4EF6" });
+    } else {
+      list.createDiv({ cls: "ks-panel-count", text: `\u5171 ${count} \u4E2A\u9700\u8981\u5904\u7406\u7684\u6587\u4EF6` });
+    }
+  }
+};
+function registerPanelBasesView(plugin) {
+  if (typeof plugin.registerBasesView !== "function") return false;
+  try {
+    const factory = (controller, containerEl) => new PanelBasesView(controller, containerEl, plugin);
+    return plugin.registerBasesView(PANEL_VIEW_TYPE, {
+      name: "\u81EA\u5B9A\u4E49\u9762\u677F",
+      icon: "list-todo",
+      factory
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("already exists")) return true;
+    return false;
+  }
+}
+function unregisterPanelBasesView(app) {
+  var _a;
+  try {
+    const internal = app.internalPlugins;
+    const bases = (_a = internal == null ? void 0 : internal.getEnabledPluginById) == null ? void 0 : _a.call(internal, "bases");
+    if (bases == null ? void 0 : bases.registrations) delete bases.registrations[PANEL_VIEW_TYPE];
+  } catch (e) {
+  }
+}
+
 // src/main.ts
-var KnowledgeSystemPlugin = class extends import_obsidian9.Plugin {
+var KnowledgeSystemPlugin = class extends import_obsidian10.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -5668,13 +5875,14 @@ var KnowledgeSystemPlugin = class extends import_obsidian9.Plugin {
     this.registerView(VIEW_TYPE_KS, (leaf) => new KnowledgeSettingsView(this, leaf));
     this.registerView(VIEW_TYPE_CHAT, (leaf) => new KnowledgeChatView(this, leaf));
     this.registerView(VIEW_TYPE_SIDEBAR, (leaf) => new SidebarView(this, leaf));
-    if (!registerReviewBasesView(this) || !registerTidyBasesView(this)) {
+    if (!registerReviewBasesView(this) || !registerTidyBasesView(this) || !registerPanelBasesView(this)) {
       let tries = 0;
       this.basesRetryTimer = window.setInterval(() => {
         tries++;
         const reviewOk = registerReviewBasesView(this);
         const tidyOk = registerTidyBasesView(this);
-        if (reviewOk && tidyOk || tries >= 12) {
+        const panelOk = registerPanelBasesView(this);
+        if (reviewOk && tidyOk && panelOk || tries >= 12) {
           if (this.basesRetryTimer !== null) {
             window.clearInterval(this.basesRetryTimer);
             this.basesRetryTimer = null;
@@ -5725,6 +5933,20 @@ var KnowledgeSystemPlugin = class extends import_obsidian9.Plugin {
       }
     });
     this.addCommand({
+      id: "open-panel",
+      name: "Open panel (\u6253\u5F00\u9762\u677F)",
+      callback: () => {
+        void this.openPanel();
+      }
+    });
+    this.addCommand({
+      id: "regenerate-panel",
+      name: "Regenerate panel (\u91CD\u65B0\u751F\u6210\u9762\u677F)",
+      callback: () => {
+        void this.regeneratePanel();
+      }
+    });
+    this.addCommand({
       id: "open-sidebar-panel",
       name: "Open sidebar panel (\u6253\u5F00\u5DE6\u4FA7\u8FB9\u680F\u9762\u677F)",
       callback: () => {
@@ -5739,6 +5961,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian9.Plugin {
     }
     unregisterReviewBasesView(this.app);
     unregisterTidyBasesView(this.app);
+    unregisterPanelBasesView(this.app);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_KS);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
@@ -5778,7 +6001,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian9.Plugin {
    */
   async regenerateReviewBase() {
     const baseFile = await regenerateReviewBaseFile(this);
-    if (baseFile) new import_obsidian9.Notice("\u5BA1\u6838\u9762\u677F\u5DF2\u6309\u5F53\u524D\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210");
+    if (baseFile) new import_obsidian10.Notice("\u5BA1\u6838\u9762\u677F\u5DF2\u6309\u5F53\u524D\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210");
   }
   /**
    * v0.9.2：打开「整理」Bases 视图——确保 settings.tidyBasePath 的 .base 存在
@@ -5799,7 +6022,46 @@ var KnowledgeSystemPlugin = class extends import_obsidian9.Plugin {
    */
   async regenerateTidyBase() {
     const baseFile = await regenerateTidyBaseFile(this);
-    if (baseFile) new import_obsidian9.Notice("\u6574\u7406\u9762\u677F\u5DF2\u6309\u5F53\u524D\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210");
+    if (baseFile) new import_obsidian10.Notice("\u6574\u7406\u9762\u677F\u5DF2\u6309\u5F53\u524D\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210");
+  }
+  /** v0.9.3：第一个启用的面板（命令默认目标）；无则 null。 */
+  firstEnabledPanel() {
+    const panels = this.settings.panels || [];
+    return panels.find((p) => p && p.enabled !== false) || null;
+  }
+  /**
+   * v0.9.3：打开用户自定义面板——panelId 缺省 = 第一个启用的面板。按 id 找面板
+   * 配置 → 确保其 .base 存在（filters 跟随面板扫描文件夹），然后在 tab 里打开
+   * （Bases 核心插件按 views[].type = ks-panel 渲染面板视图）。由命令
+   * 「Open panel」和设置页「面板」tab 的「打开面板」按钮调用。
+   */
+  async openPanel(panelId) {
+    const panels = this.settings.panels || [];
+    const panel = panelId ? panels.find((p) => p && p.id === panelId) : this.firstEnabledPanel();
+    if (!panel) {
+      new import_obsidian10.Notice("\u672A\u627E\u5230\u9762\u677F\uFF1A\u8BF7\u5728\u8BBE\u7F6E \u2192 \u9762\u677F \u521B\u5EFA\u5E76\u542F\u7528\u9762\u677F");
+      return;
+    }
+    const baseFile = await ensurePanelBase(this, panel);
+    if (!baseFile) return;
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.openFile(baseFile);
+    this.app.workspace.revealLeaf(leaf);
+  }
+  /**
+   * v0.9.3：按面板配置重新生成 .base（已存在则覆盖重建一次）。panelId 缺省 =
+   * 第一个启用的面板。由命令「Regenerate panel」和设置页「面板」tab 的
+   * 「生成面板」按钮调用。
+   */
+  async regeneratePanel(panelId) {
+    const panels = this.settings.panels || [];
+    const panel = panelId ? panels.find((p) => p && p.id === panelId) : this.firstEnabledPanel();
+    if (!panel) {
+      new import_obsidian10.Notice("\u672A\u627E\u5230\u9762\u677F\uFF1A\u8BF7\u5728\u8BBE\u7F6E \u2192 \u9762\u677F \u521B\u5EFA\u5E76\u542F\u7528\u9762\u677F");
+      return;
+    }
+    const baseFile = await regeneratePanelBaseFile(this, panel);
+    if (baseFile) new import_obsidian10.Notice(`\u9762\u677F\u300C${panel.name || "\u672A\u547D\u540D"}\u300D\u5DF2\u6309\u5F53\u524D\u8BBE\u7F6E\u91CD\u65B0\u751F\u6210`);
   }
   /**
    * v0.9.0：打开左侧边栏「提醒面板」——已存在该视图时复用第一个 leaf 并
@@ -5811,7 +6073,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian9.Plugin {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_SIDEBAR);
     if (existing.length > 0 && existing[0].view) {
       this.app.workspace.revealLeaf(existing[0]);
-      new import_obsidian9.Notice("\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F");
+      new import_obsidian10.Notice("\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F");
       return;
     }
     let leaf = this.app.workspace.getLeftLeaf(false);
@@ -5819,7 +6081,7 @@ var KnowledgeSystemPlugin = class extends import_obsidian9.Plugin {
     if (!leaf) leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: VIEW_TYPE_SIDEBAR, active: true });
     this.app.workspace.revealLeaf(leaf);
-    new import_obsidian9.Notice(inSidebar ? "\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F\uFF08\u5DE6\u4FA7\u8FB9\u680F\uFF09" : "\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F\uFF08\u6807\u7B7E\u9875\uFF09");
+    new import_obsidian10.Notice(inSidebar ? "\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F\uFF08\u5DE6\u4FA7\u8FB9\u680F\uFF09" : "\u5DF2\u6253\u5F00\u63D0\u9192\u9762\u677F\uFF08\u6807\u7B7E\u9875\uFF09");
   }
   /**
    * v0.8.6：打开聊天视图并注入上下文（审核页「AI 修改」按钮用）：

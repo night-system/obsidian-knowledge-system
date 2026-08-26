@@ -1,13 +1,14 @@
 import { App, DropdownComponent, Notice, PluginSettingTab, Setting, ToggleComponent, setIcon } from 'obsidian';
-import { KnowledgeSystemSettings, TOOL_NAMES, ToolPreset, UpdateYamlRule, NoteTemplateEntry, YamlRule, SidebarRule } from './settings';
+import { KnowledgeSystemSettings, TOOL_NAMES, ToolPreset, UpdateYamlRule, NoteTemplateEntry, YamlRule, SidebarRule, PanelConfig } from './settings';
 import { FolderSuggest } from './folderSuggest';
 import { countRecentFiles, outputLatestContent } from './core';
 import { evaluateCondition } from './utils/sidebarRules';
 import type KnowledgeSystemPlugin from './main';
 
 /** The settings tabs; `test` is the 5th (test tools), `preset` the 6th (v0.5.0),
- *  `sidebar` the 9th (v0.9.0 侧边栏提醒面板规则), `tidy` the 10th (v0.9.2 整理面板). */
-export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'review' | 'tidy' | 'test' | 'preset' | 'uiPreview' | 'sidebar';
+ *  `sidebar` the 9th (v0.9.0 侧边栏提醒面板规则), `panel` the 5th (v0.9.3 用户自定义面板；
+ *  取代 v0.8.7 审核 / v0.9.2 整理两个固定 tab——旧面板配置字段保留但无 UI)。 */
+export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'panel' | 'test' | 'preset' | 'uiPreview' | 'sidebar';
 
 // v0.8.8：TOOL_NAMES 移到 src/settings.ts 导出（main.ts 迁移 / utils/presets.ts 共用）。
 
@@ -384,6 +385,8 @@ class SettingsRenderer {
   private toolExpanded = new Set<string>();
   /** v0.9.0：侧边栏规则卡片折叠状态（collapsed 的 rule id；缺省展开）。 */
   private sidebarRuleCollapsed = new Set<string>();
+  /** v0.9.3：面板卡片折叠状态（collapsed 的 panel.id；缺省展开）。 */
+  private panelCollapsed = new Set<string>();
 
   constructor(app: App, plugin: KnowledgeSystemPlugin) {
     this.app = app;
@@ -415,8 +418,7 @@ class SettingsRenderer {
       { id: 'folder', label: '文件夹' },
       { id: 'time', label: '时间' },
       { id: 'output', label: '输出属性' },
-      { id: 'review', label: '审核' },
-      { id: 'tidy', label: '整理' },
+      { id: 'panel', label: '面板' },
       { id: 'test', label: '测试工具' },
       { id: 'preset', label: '预设' },
       { id: 'uiPreview', label: 'UI 方案' },
@@ -451,11 +453,8 @@ class SettingsRenderer {
       case 'output':
         this.renderOutputGroup(containerEl);
         break;
-      case 'review':
-        this.renderReviewGroup(containerEl);
-        break;
-      case 'tidy':
-        this.renderTidyGroup(containerEl);
+      case 'panel':
+        this.renderPanelGroup(containerEl);
         break;
       case 'test':
         this.renderTestGroup(containerEl);
@@ -783,191 +782,179 @@ class SettingsRenderer {
   }
 
   // -------------------------------------------------------------------------
-  // review（v0.8.7：审核页配置——审核属性 / 排除规则 / 面板位置 / 生成面板）
+  // panel（v0.9.3：用户自定义面板配置——扫描文件夹 / bool 属性 / 日期 / 位置 /
+  // 聊天预设与 prompt；取代 v0.8.7 审核 / v0.9.2 整理两个固定 tab）
   // -------------------------------------------------------------------------
 
-  private renderReviewGroup(containerEl: HTMLElement): void {
+  private renderPanelGroup(containerEl: HTMLElement): void {
+    containerEl.empty();
+
     const info = new Setting(containerEl)
       .setName('')
-      .setDesc('配置「审核」页（Bases 核心插件自定义视图，参考 TaskNotes 集成）：列出输出文件夹里未审核的文件。判定：frontmatter 的「审核状态属性」缺失、为空、或等于「未审标记值」→ 未审核；命中「排除规则」的文件不显示。改完设置后点「生成审核面板」重建面板（已存在则按设置重新生成一次）。需要 Obsidian 1.10.0+ 并启用 Bases 核心插件。');
-    this.markSearchable(info, '审核 说明 Bases 面板 未审核 未审');
+      .setDesc('配置用户自定义面板（Bases 核心插件自定义视图）：可创建任意多个面板，每个面板扫描一个文件夹（源文件夹/输出文件夹跟随「文件夹」tab 的全局设置，或填自定义路径），列出 bool 属性缺失或不是 true 的文件；可设最早日期（该日期之后修改/创建的文件才显示）。点击文件名打开文件、点击聊天图标用面板自己的预设 + prompt 模板跳聊天。每个面板可「生成面板」（按配置重建 .base）与「打开面板」。需要 Obsidian 1.10.0+ 并启用 Bases 核心插件。');
+    this.markSearchable(info, '面板 说明 Bases 自定义 多面板 扫描文件夹 生成面板 打开面板 聊天预设 prompt');
 
-    const attr = new Setting(containerEl)
-      .setName('审核状态属性名')
-      .setDesc('frontmatter 中标记审核状态的属性名（输出文件创建时写入；如 approved）。')
-      .addText((text) =>
-        text
-          .setPlaceholder('approved')
-          .setValue(this.plugin.settings.reviewAttr)
-          .onChange((value) => this.updateSetting('reviewAttr', value))
-      );
-    this.markSearchable(attr, '审核 审核状态属性名 reviewAttr approved');
+    const panels = this.plugin.settings.panels || (this.plugin.settings.panels = []);
+    panels.forEach((panel, index) => this.renderPanelCard(containerEl, panel, index));
 
-    const def = new Setting(containerEl)
-      .setName('未审标记值')
-      .setDesc('frontmatter 的审核状态属性等于该值 = 未审核（输出文件创建时写入的默认值；如 未审）。')
-      .addText((text) =>
-        text
-          .setPlaceholder('未审')
-          .setValue(this.plugin.settings.reviewDefault)
-          .onChange((value) => this.updateSetting('reviewDefault', value))
-      );
-    this.markSearchable(def, '审核 未审标记值 reviewDefault');
-
-    const done = new Setting(containerEl)
-      .setName('已审标记值')
-      .setDesc('审核页每行开关打开时，写入 frontmatter 审核状态属性的值（如 已审）。开关打开后该文件移出审核列表。')
-      .addText((text) =>
-        text
-          .setPlaceholder('已审')
-          .setValue(this.plugin.settings.reviewDoneValue)
-          .onChange((value) => this.updateSetting('reviewDoneValue', value))
-      );
-    this.markSearchable(done, '审核 已审标记值 reviewDoneValue 审核完成 开关');
-
-    const exHead = new Setting(containerEl)
-      .setName('排除规则')
-      .setDesc('frontmatter 属性等于该值的文件不进入审核列表（如 archived = true 排除归档文件）。');
-    this.markSearchable(exHead, '审核 排除规则 排除 归档 archived');
-
-    const exListEl = containerEl.createDiv();
-    const renderExcludes = () => {
-      exListEl.empty();
-      const list = this.plugin.settings.reviewExcludes || [];
-      list.forEach((entry, index) => {
-        const row = new Setting(exListEl)
-          .setName('')
-          .setDesc('')
-          .addText((text) =>
-            text
-              .setPlaceholder('属性名，如 archived')
-              .setValue(entry.key)
-              .onChange((value) => {
-                entry.key = value;
-                void this.plugin.saveSettings();
-              })
-          )
-          .addText((text) =>
-            text
-              .setPlaceholder('排除的值，如 true')
-              .setValue(entry.value)
-              .onChange((value) => {
-                entry.value = value;
-                void this.plugin.saveSettings();
-              })
-          )
-          .addButton((btn) =>
-            btn
-              .setIcon('trash-2')
-              .setTooltip('删除')
-              .onClick(() => {
-                const a = this.plugin.settings.reviewExcludes || [];
-                a.splice(index, 1);
-                void this.plugin.saveSettings();
-                renderExcludes();
-              })
-          );
-        row.settingEl.addClass('ks-extra-props-row');
-        this.markSearchable(row, `审核 排除规则 ${entry.key} ${entry.value}`);
-      });
-    };
-    renderExcludes();
-    const addEx = new Setting(containerEl)
+    const addBtn = new Setting(containerEl)
       .setName('')
       .setDesc('')
       .addButton((btn) =>
-        btn.setIcon('plus').setButtonText('添加排除规则').onClick(() => {
-          if (!Array.isArray(this.plugin.settings.reviewExcludes)) this.plugin.settings.reviewExcludes = [];
-          this.plugin.settings.reviewExcludes.push({ key: '', value: '' });
+        btn.setIcon('plus').setButtonText('新建面板').onClick(() => {
+          if (!Array.isArray(this.plugin.settings.panels)) this.plugin.settings.panels = [];
+          const np: PanelConfig = {
+            id: String(Date.now()),
+            name: '新面板',
+            enabled: true,
+            folder: 'source',
+            attr: 'tidy',
+            afterDate: '',
+            basePath: '新面板.base',
+            chatPresetId: '',
+            chatPrompt: '请查看「{{filename}}」并帮我处理。',
+          };
+          this.plugin.settings.panels.push(np);
           void this.plugin.saveSettings();
-          renderExcludes();
+          this.renderPanelGroup(containerEl);
         })
       );
-    this.markSearchable(addEx, '审核 排除规则 添加 增加');
-
-    const path = new Setting(containerEl)
-      .setName('审核面板位置')
-      .setDesc('审核面板（.base 文件）在库中的路径；生成后由 Bases 核心插件渲染。')
-      .addText((text) =>
-        text
-          .setPlaceholder('审核.base')
-          .setValue(this.plugin.settings.reviewBasePath)
-          .onChange((value) => this.updateSetting('reviewBasePath', value))
-      );
-    this.markSearchable(path, '审核 审核面板位置 面板 路径 base');
-
-    const prompt = new Setting(containerEl)
-      .setName('AI 修改提示词')
-      .setDesc('点击审核列表的聊天图标时，预填到聊天输入框的提示词。`{{filename}}` 会被替换为被修改笔记的文件名（不含路径，工具以文件名作参数定位文件）。留空 = 使用默认提示词；不含 `{{filename}}` 时原样使用。')
-      .addTextArea((text) =>
-        text
-          .setPlaceholder('请读取输出文件夹中的笔记「{{filename}}」，与我沟通如何修改，然后按我的要求修改它。')
-          .setValue(this.plugin.settings.reviewChatPrompt || '')
-          .onChange((value) => this.updateSetting('reviewChatPrompt', value))
-      );
-    prompt.settingEl.addClass('ks-review-prompt-row');
-    this.markSearchable(prompt, '审核 AI 修改提示词 提示词 模板 filename');
-
-    const ops = new Setting(containerEl)
-      .setName('')
-      .setDesc('')
-      .addButton((btn) =>
-        btn.setIcon('refresh-cw').setButtonText('生成审核面板').onClick(() => {
-          void this.plugin.regenerateReviewBase();
-        })
-      )
-      .addButton((btn) =>
-        btn.setIcon('external-link').setButtonText('打开审核面板').onClick(() => {
-          void this.plugin.openReviewView();
-        })
-      );
-    this.markSearchable(ops, '审核 生成审核面板 打开审核面板 重新生成');
+    this.markSearchable(addBtn, '面板 新建 添加 增加 创建');
   }
 
-  // -------------------------------------------------------------------------
-  // tidy（v0.9.2：整理面板配置——bool 属性 / 日期 / 面板位置 / 聊天跳转）
-  // -------------------------------------------------------------------------
+  /**
+   * v0.9.3：渲染一个面板配置卡片（可折叠）：头部 = chevron + 名称输入 + 启用开关 +
+   * 删除按钮；主体 = 扫描文件夹（下拉 + 自定义路径）+ bool 属性名 + 最早日期 +
+   * 面板位置 + 聊天预设下拉 + 聊天 prompt + 「生成面板」「打开面板」按钮。
+   * 折叠状态按 panel.id 记忆（缺省展开）。
+   */
+  private renderPanelCard(containerEl: HTMLElement, panel: PanelConfig, index: number): void {
+    const rerenderAll = () => this.renderPanelGroup(containerEl);
+    const collapsed = this.panelCollapsed.has(panel.id);
 
-  private renderTidyGroup(containerEl: HTMLElement): void {
-    const info = new Setting(containerEl)
-      .setName('')
-      .setDesc('配置「整理」页（Bases 核心插件自定义视图，与审核页同机制）：列出源文件夹里、此日期之后修改/创建、且 bool 属性缺失或不是 true 的文件。用户处理后把该属性设为 true → 文件从面板消失。改完设置后点「生成整理面板」重建面板（已存在则按设置重新生成一次）。需要 Obsidian 1.10.0+ 并启用 Bases 核心插件。');
-    this.markSearchable(info, '整理 说明 Bases 面板 bool 属性 日期 未整理');
+    const card = containerEl.createDiv({ cls: 'ks-panel-card' });
+    const head = card.createDiv({ cls: 'ks-panel-card-head' });
+    const chev = head.createSpan({ cls: 'ks-preset-item-chev' });
+    this.setIconSafe(chev, collapsed ? 'chevron-right' : 'chevron-down', collapsed ? '\u203A' : '\u2304');
+    chev.addEventListener('click', () => {
+      const isCollapsed = card.hasClass('ks-panel-card-collapsed');
+      if (isCollapsed) this.panelCollapsed.delete(panel.id);
+      else this.panelCollapsed.add(panel.id);
+      this.setIconSafe(chev, isCollapsed ? 'chevron-down' : 'chevron-right', isCollapsed ? '\u2304' : '\u203A');
+      card.toggleClass('ks-panel-card-collapsed', !isCollapsed);
+    });
+    const nameInput = head.createEl('input', { cls: 'ks-preset-item-name ks-panel-card-name' });
+    nameInput.type = 'text';
+    nameInput.value = panel.name || '';
+    nameInput.placeholder = '面板名，如「审核」「整理」';
+    nameInput.addEventListener('input', () => {
+      panel.name = nameInput.value;
+      void this.plugin.saveSettings();
+    });
+    // 启用开关（stopPropagation 防止冒泡——头部无折叠监听，这里仅为稳妥）。
+    const toggleWrap = head.createSpan({ cls: 'ks-sidebar-rule-toggle' });
+    toggleWrap.addEventListener('click', (ev) => ev.stopPropagation());
+    new ToggleComponent(toggleWrap)
+      .setValue(panel.enabled !== false)
+      .setTooltip('启用此面板')
+      .onChange((v) => {
+        panel.enabled = v;
+        void this.plugin.saveSettings();
+      });
+    const delBtn = head.createEl('button', { cls: 'ks-preset-item-del' });
+    delBtn.setAttribute('aria-label', '删除此面板');
+    delBtn.setAttribute('title', '删除此面板');
+    this.setIconSafe(delBtn, 'trash-2', '\u00d7');
+    delBtn.addEventListener('click', () => {
+      const a = this.plugin.settings.panels || [];
+      a.splice(index, 1);
+      void this.plugin.saveSettings();
+      rerenderAll();
+    });
 
-    const attr = new Setting(containerEl)
+    const body = card.createDiv({ cls: 'ks-panel-card-body' });
+    if (collapsed) card.addClass('ks-panel-card-collapsed');
+
+    // 扫描文件夹：source/output 映射全局设置，custom = 自定义路径（追加输入框）。
+    const folder = new Setting(body)
+      .setName('扫描文件夹')
+      .setDesc('面板列出该文件夹里的 md 文件。源文件夹/输出文件夹跟随「文件夹」tab 的全局设置；选择「自定义路径」后填写 vault 内路径（留空 = 全库）。')
+      .addDropdown((drop) => {
+        drop.addOption('source', '源文件夹');
+        drop.addOption('output', '输出文件夹');
+        drop.addOption('custom', '自定义路径');
+        const f = panel.folder || 'source';
+        drop.setValue(f === 'source' || f === 'output' ? f : 'custom');
+        drop.onChange((value) => {
+          if (value === 'custom') {
+            if (panel.folder === 'source' || panel.folder === 'output') panel.folder = '';
+          } else {
+            panel.folder = value as 'source' | 'output';
+          }
+          void this.plugin.saveSettings();
+          rerenderAll();
+        });
+      });
+    this.markSearchable(folder, '面板 扫描文件夹 源文件夹 输出文件夹 自定义路径 folder');
+    if (panel.folder !== 'source' && panel.folder !== 'output') {
+      const folderPath = new Setting(body)
+        .setName('自定义路径')
+        .setDesc('自定义文件夹路径（vault 内路径；留空 = 斜杠 / 全库）。')
+        .addText((text) =>
+          text
+            .setPlaceholder('如：Inbox')
+            .setValue(panel.folder || '')
+            .onChange((value) => {
+              panel.folder = value;
+              void this.plugin.saveSettings();
+            })
+        );
+      this.markSearchable(folderPath, '面板 扫描文件夹 自定义路径 文件夹 路径');
+    }
+
+    const attr = new Setting(body)
       .setName('bool 属性名')
-      .setDesc('frontmatter 中标记「已整理」的 bool 属性名；缺失或值不是 true 的文件显示在面板，设为 true 后消失。')
+      .setDesc('frontmatter 中标记「已处理」的 bool 属性名；缺失或值不是 true 的文件显示在面板，设为 true 后消失。')
       .addText((text) =>
         text
           .setPlaceholder('tidy')
-          .setValue(this.plugin.settings.tidyAttr)
-          .onChange((value) => this.updateSetting('tidyAttr', value))
+          .setValue(panel.attr || '')
+          .onChange((value) => {
+            panel.attr = value;
+            void this.plugin.saveSettings();
+          })
       );
-    this.markSearchable(attr, '整理 bool 属性名 tidyAttr 属性');
+    this.markSearchable(attr, '面板 bool 属性名 attr 属性 已处理');
 
-    const afterDate = new Setting(containerEl)
-      .setName('此日期之后')
-      .setDesc('只看此日期之后（含当天）修改/创建的文件，之前的不看；格式 YYYY-MM-DD（如 2026-08-01）；留空 = 不限。')
+    const afterDate = new Setting(body)
+      .setName('最早日期')
+      .setDesc('只看该日期之后（含当天）修改/创建的文件，之前的不看；格式 YYYY-MM-DD（如 2026-08-01）；留空 = 不限。')
       .addText((text) =>
         text
           .setPlaceholder('如：2026-08-01')
-          .setValue(this.plugin.settings.tidyAfterDate || '')
-          .onChange((value) => this.updateSetting('tidyAfterDate', value))
+          .setValue(panel.afterDate || '')
+          .onChange((value) => {
+            panel.afterDate = value;
+            void this.plugin.saveSettings();
+          })
       );
-    this.markSearchable(afterDate, '整理 此日期之后 日期 时间 修改 创建 afterDate');
+    this.markSearchable(afterDate, '面板 最早日期 日期 时间 修改 创建 afterDate');
 
-    const path = new Setting(containerEl)
-      .setName('整理面板位置')
-      .setDesc('整理面板（.base 文件）在库中的路径；生成后由 Bases 核心插件渲染。')
+    const path = new Setting(body)
+      .setName('面板位置')
+      .setDesc('面板（.base 文件）在库中的路径；生成后由 Bases 核心插件渲染。留空 = 用面板名（如 新面板.base）。')
       .addText((text) =>
         text
-          .setPlaceholder('整理.base')
-          .setValue(this.plugin.settings.tidyBasePath)
-          .onChange((value) => this.updateSetting('tidyBasePath', value))
+          .setPlaceholder(`${panel.name || '面板'}.base`)
+          .setValue(panel.basePath || '')
+          .onChange((value) => {
+            panel.basePath = value;
+            void this.plugin.saveSettings();
+          })
       );
-    this.markSearchable(path, '整理 整理面板位置 面板 路径 base');
+    this.markSearchable(path, '面板 面板位置 面板 路径 base');
 
-    const preset = new Setting(containerEl)
+    const preset = new Setting(body)
       .setName('聊天预设')
       .setDesc('点击面板条目右侧聊天图标时使用的预设；「默认（全部工具）」= 不切换预设。')
       .addDropdown((drop) => {
@@ -977,37 +964,43 @@ class SettingsRenderer {
           if (!p || !p.id) continue;
           drop.addOption(p.id, p.name || p.id);
         }
-        drop.setValue(this.plugin.settings.tidyChatPresetId || '');
-        drop.onChange((value) => this.updateSetting('tidyChatPresetId', value));
+        drop.setValue(panel.chatPresetId || '');
+        drop.onChange((value) => {
+          panel.chatPresetId = value;
+          void this.plugin.saveSettings();
+        });
       });
-    this.markSearchable(preset, '整理 聊天预设 预设 下拉 dropdown');
+    this.markSearchable(preset, '面板 聊天预设 预设 下拉 dropdown');
 
-    const prompt = new Setting(containerEl)
+    const prompt = new Setting(body)
       .setName('聊天 prompt 模板')
       .setDesc('点击面板条目右侧聊天图标时，预填到聊天输入框的提示词模板。`{{filename}}` 会被替换为文件名（不含路径）；模板不含 `{{filename}}` 时原样使用。')
       .addTextArea((text) =>
         text
-          .setPlaceholder('请查看「{{filename}}」并帮我整理，然后把它标记为完成。')
-          .setValue(this.plugin.settings.tidyChatPrompt || '')
-          .onChange((value) => this.updateSetting('tidyChatPrompt', value))
+          .setPlaceholder('请查看「{{filename}}」并帮我处理。')
+          .setValue(panel.chatPrompt || '')
+          .onChange((value) => {
+            panel.chatPrompt = value;
+            void this.plugin.saveSettings();
+          })
       );
-    prompt.settingEl.addClass('ks-tidy-prompt-row');
-    this.markSearchable(prompt, '整理 聊天 prompt 模板 提示词 filename 占位符');
+    prompt.settingEl.addClass('ks-panel-prompt-row');
+    this.markSearchable(prompt, '面板 聊天 prompt 模板 提示词 filename 占位符');
 
-    const ops = new Setting(containerEl)
+    const ops = new Setting(body)
       .setName('')
       .setDesc('')
       .addButton((btn) =>
-        btn.setIcon('refresh-cw').setButtonText('生成整理面板').onClick(() => {
-          void this.plugin.regenerateTidyBase();
+        btn.setIcon('refresh-cw').setButtonText('生成面板').onClick(() => {
+          void this.plugin.regeneratePanel(panel.id);
         })
       )
       .addButton((btn) =>
-        btn.setIcon('external-link').setButtonText('打开整理面板').onClick(() => {
-          void this.plugin.openTidyView();
+        btn.setIcon('external-link').setButtonText('打开面板').onClick(() => {
+          void this.plugin.openPanel(panel.id);
         })
       );
-    this.markSearchable(ops, '整理 生成整理面板 打开整理面板 重新生成');
+    this.markSearchable(ops, '面板 生成面板 打开面板 重新生成');
   }
 
   // -------------------------------------------------------------------------

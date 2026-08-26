@@ -139,6 +139,35 @@ export interface ToolPreset {
 }
 
 /**
+ * v0.9.3：用户自定义面板（Bases 自定义视图，泛化自 v0.9.2 的整理面板）。
+ * - 每个面板扫描一个文件夹（'source'/'output' 映射全局设置 sourceFolder/outputFolder，
+ *   其他值 = vault 内自定义路径），列出 bool 属性缺失或 String(值).toLowerCase()
+ *   !== 'true' 的文件；afterDate 之后（含当天）修改/创建的文件才显示（留空 = 不限）。
+ * - basePath = .base 文件路径（默认 `${name}.base`）；chatPresetId = 跳聊天预设
+ *   （空 = 默认全部工具）；chatPrompt = prompt 模板（{{filename}} → basename 不含路径/.md）。
+ */
+export interface PanelConfig {
+  /** 唯一 id（创建时 String(Date.now())）。 */
+  id: string;
+  /** 面板名（.base 的 views[].name 用它；Bases 视图按 name 匹配本配置）。 */
+  name: string;
+  /** 面板开关（关 = 命令「打开面板」跳过它；旧 .base 仍可打开）。 */
+  enabled: boolean;
+  /** 扫描文件夹：'source' | 'output' 映射全局设置，其他值 = 自定义路径。 */
+  folder: 'source' | 'output' | string;
+  /** bool 属性名（缺失或值（忽略大小写）非 'true' → 显示）。 */
+  attr: string;
+  /** 最早日期 YYYY-MM-DD；留空 = 不限（parseAfterDate 语义）。 */
+  afterDate?: string;
+  /** .base 文件路径（默认 `${name}.base`，中文名没问题）。 */
+  basePath: string;
+  /** 跳聊天预设 id（空 = 默认全部工具）。 */
+  chatPresetId: string;
+  /** prompt 模板（{{filename}} → basename 不含路径/.md）。 */
+  chatPrompt: string;
+}
+
+/**
  * v0.9.0：侧边栏「提醒面板」的一条规则 = 条件 + 动作。
  * - 面板按规则显示条目；条件匹配 0 条时该规则不显示任何条目。
  * - `open_review` 动作 = 单条（描述 = 规则名（N 个匹配））；`open_chat` 动作 =
@@ -291,6 +320,8 @@ export interface KnowledgeSystemSettings {
   tidyChatPresetId: string;
   /** 整理面板跳聊天用的 prompt 模板（{{filename}} → 文件名不含路径/.md）。 */
   tidyChatPrompt: string;
+  /** v0.9.3：用户自定义面板列表（默认空 = 无面板；每个面板见 PanelConfig）。 */
+  panels: PanelConfig[];
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -334,4 +365,5 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   tidyBasePath: '整理.base',
   tidyChatPresetId: '',
   tidyChatPrompt: '请查看「{{filename}}」并帮我整理，然后把它标记为完成。',
+  panels: [],
 };

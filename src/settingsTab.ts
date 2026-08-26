@@ -10,6 +10,265 @@ export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'test' | 'pres
 /** Stable tool order for the preset tool-config editors (v0.7.0 B.2). */
 const TOOL_NAMES = ['list_recent_notes', 'read_note', 'create_note', 'update_note_yaml', 'search_output_notes', 'modify_output_note', 'modify_output_note_versioned', 'read_output_note'];
 
+// ---------------------------------------------------------------------------
+// v0.8.3：每个工具折叠组的配置复制/导入（JSON 剪贴板）。导入前严格校验格式：
+// 未知字段或字段类型不符 → 整体拒绝（「保证格式正确才允许导入」）。
+// ---------------------------------------------------------------------------
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+function isStr(v: unknown): v is string {
+  return typeof v === 'string';
+}
+function isBool(v: unknown): v is boolean {
+  return typeof v === 'boolean';
+}
+function isStrArr(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every(isStr);
+}
+function isYamlRule(v: unknown): v is YamlRule {
+  return (
+    isPlainObject(v) &&
+    isStr(v.key) &&
+    isStr(v.desc) &&
+    isStrArr(v.values) &&
+    isStr(v.default) &&
+    (v.expose === undefined || isBool(v.expose)) &&
+    (v.overwrite === undefined || isBool(v.overwrite))
+  );
+}
+function isYamlRules(v: unknown): v is YamlRule[] {
+  return Array.isArray(v) && v.every(isYamlRule);
+}
+function isTmplEntry(v: unknown): v is NoteTemplateEntry {
+  return (
+    isPlainObject(v) &&
+    isStr(v.title) &&
+    typeof v.level === 'number' &&
+    Number.isInteger(v.level) &&
+    v.level >= 1 &&
+    v.level <= 6 &&
+    isBool(v.allowAi) &&
+    isStr(v.desc)
+  );
+}
+function isRestriction(v: unknown): v is { key: string; values: string[] } {
+  return isPlainObject(v) && isStr(v.key) && isStrArr(v.values);
+}
+/** 字段名白名单：出现未知字段即拒绝（格式不正确的导入不允许）。 */
+function rejectUnknownFields(cfg: Record<string, unknown>, allowed: string[]): string | null {
+  for (const k of Object.keys(cfg)) {
+    if (!allowed.includes(k)) return `未知字段「${k}」`;
+  }
+  return null;
+}
+
+interface ToolConfigIO {
+  /** 工具名（按钮/提示用）。 */
+  label: string;
+  /** 从预设导出该工具的配置子集（JSON 序列化后复制到剪贴板）。 */
+  exportFromPreset(p: ToolPreset): Record<string, unknown>;
+  /** 从全局设置导出同结构配置（默认预设「全局设置」的工具组用）。 */
+  exportFromGlobal(s: KnowledgeSystemSettings): Record<string, unknown>;
+  /** 校验剪贴板 JSON；通过才允许导入。 */
+  validate(raw: unknown): { ok: true; cfg: Record<string, unknown> } | { ok: false; error: string };
+  /** 导入到预设（替换该工具的既有配置，不碰其他工具）。调用前必须已通过 validate；
+   *  cfg 用 any 便于把已校验字段写回（字段类型已在 validate 保证）。 */
+  applyToPreset(p: ToolPreset, cfg: Record<string, any>): void;
+  /** 导入到全局设置。调用前必须已通过 validate。 */
+  applyToGlobal(s: KnowledgeSystemSettings, cfg: Record<string, any>): void;
+}
+
+const listRecentIo: ToolConfigIO = {
+  label: 'list_recent_notes',
+  exportFromPreset(p) {
+    const cfg: Record<string, unknown> = {};
+    if (p.toolOverrides.listRecentDays !== undefined) cfg.listRecentDays = p.toolOverrides.listRecentDays;
+    return cfg;
+  },
+  exportFromGlobal(s) {
+    return { listRecentDays: s.recentDays };
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: '必须是 JSON 对象' };
+    const bad = rejectUnknownFields(raw, ['listRecentDays']);
+    if (bad) return { ok: false, error: bad };
+    if (raw.listRecentDays !== undefined && !(typeof raw.listRecentDays === 'number' && Number.isFinite(raw.listRecentDays))) {
+      return { ok: false, error: 'listRecentDays 必须是数字' };
+    }
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    p.toolOverrides.listRecentDays = cfg.listRecentDays as number | undefined;
+  },
+  applyToGlobal(s, cfg) {
+    if (typeof cfg.listRecentDays === 'number') s.recentDays = cfg.listRecentDays;
+  },
+};
+
+const searchIo: ToolConfigIO = {
+  label: 'search_output_notes',
+  exportFromPreset(p) {
+    const cfg: Record<string, unknown> = {};
+    if (p.toolOverrides.searchMode !== undefined) cfg.searchMode = p.toolOverrides.searchMode;
+    if (p.toolOverrides.searchRestrictions !== undefined && p.toolOverrides.searchRestrictions.length > 0) {
+      cfg.searchRestrictions = p.toolOverrides.searchRestrictions;
+    }
+    return cfg;
+  },
+  exportFromGlobal() {
+    return {};
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: '必须是 JSON 对象' };
+    const bad = rejectUnknownFields(raw, ['searchMode', 'searchRestrictions']);
+    if (bad) return { ok: false, error: bad };
+    if (raw.searchMode !== undefined && raw.searchMode !== 'full' && raw.searchMode !== 'restricted') {
+      return { ok: false, error: 'searchMode 只能是 full 或 restricted' };
+    }
+    if (raw.searchRestrictions !== undefined && !Array.isArray(raw.searchRestrictions)) {
+      return { ok: false, error: 'searchRestrictions 必须是数组' };
+    }
+    if (raw.searchRestrictions !== undefined && !raw.searchRestrictions.every(isRestriction)) {
+      return { ok: false, error: 'searchRestrictions 每项必须是 {key, values[]}' };
+    }
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    p.toolOverrides.searchMode = cfg.searchMode as 'full' | 'restricted' | undefined;
+    p.toolOverrides.searchRestrictions = cfg.searchRestrictions as { key: string; values: string[] }[] | undefined;
+  },
+  applyToGlobal() {
+    // search 模式无全局配置（只在预设内）。
+  },
+};
+
+const createIo: ToolConfigIO = {
+  label: 'create_note',
+  exportFromPreset(p) {
+    const oc = p.outputConfig ?? {};
+    const cfg: Record<string, unknown> = {};
+    if (oc.yamlRulesEnabled !== undefined) cfg.yamlRulesEnabled = oc.yamlRulesEnabled;
+    if (oc.yamlRules !== undefined) cfg.yamlRules = oc.yamlRules;
+    if (oc.noteTemplateEnabled !== undefined) cfg.noteTemplateEnabled = oc.noteTemplateEnabled;
+    if (oc.noteTemplate !== undefined) cfg.noteTemplate = oc.noteTemplate;
+    if (oc.createRestrictYamlEnabled !== undefined) cfg.createRestrictYamlEnabled = oc.createRestrictYamlEnabled;
+    if (oc.createRestrictYaml !== undefined) cfg.createRestrictYaml = oc.createRestrictYaml;
+    return cfg;
+  },
+  exportFromGlobal(s) {
+    return {
+      yamlRulesEnabled: true,
+      yamlRules: s.yamlRules,
+      noteTemplateEnabled: true,
+      noteTemplate: s.noteTemplate,
+      createRestrictYamlEnabled: true,
+      createRestrictYaml: s.createRestrictYaml,
+    };
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: '必须是 JSON 对象' };
+    const bad = rejectUnknownFields(raw, ['yamlRulesEnabled', 'yamlRules', 'noteTemplateEnabled', 'noteTemplate', 'createRestrictYamlEnabled', 'createRestrictYaml']);
+    if (bad) return { ok: false, error: bad };
+    if (raw.yamlRulesEnabled !== undefined && !isBool(raw.yamlRulesEnabled)) return { ok: false, error: 'yamlRulesEnabled 必须是布尔值' };
+    if (raw.yamlRules !== undefined && !isYamlRules(raw.yamlRules)) return { ok: false, error: 'yamlRules 每项必须是 {key, desc, values[], default, expose?, overwrite?}' };
+    if (raw.noteTemplateEnabled !== undefined && !isBool(raw.noteTemplateEnabled)) return { ok: false, error: 'noteTemplateEnabled 必须是布尔值' };
+    if (raw.noteTemplate !== undefined && !Array.isArray(raw.noteTemplate)) return { ok: false, error: 'noteTemplate 必须是数组' };
+    if (raw.noteTemplate !== undefined && !raw.noteTemplate.every(isTmplEntry)) return { ok: false, error: 'noteTemplate 每项必须是 {title, level(1-6), allowAi, desc}' };
+    if (raw.createRestrictYamlEnabled !== undefined && !isBool(raw.createRestrictYamlEnabled)) return { ok: false, error: 'createRestrictYamlEnabled 必须是布尔值' };
+    if (raw.createRestrictYaml !== undefined && !isBool(raw.createRestrictYaml)) return { ok: false, error: 'createRestrictYaml 必须是布尔值' };
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    const oc = (p.outputConfig = p.outputConfig ?? {});
+    if (cfg.yamlRulesEnabled !== undefined) oc.yamlRulesEnabled = cfg.yamlRulesEnabled;
+    if (cfg.yamlRules !== undefined) oc.yamlRules = cfg.yamlRules;
+    if (cfg.noteTemplateEnabled !== undefined) oc.noteTemplateEnabled = cfg.noteTemplateEnabled;
+    if (cfg.noteTemplate !== undefined) oc.noteTemplate = cfg.noteTemplate;
+    if (cfg.createRestrictYamlEnabled !== undefined) oc.createRestrictYamlEnabled = cfg.createRestrictYamlEnabled;
+    if (cfg.createRestrictYaml !== undefined) oc.createRestrictYaml = cfg.createRestrictYaml;
+  },
+  applyToGlobal(s, cfg) {
+    if (cfg.yamlRules !== undefined) s.yamlRules = cfg.yamlRules;
+    if (cfg.noteTemplate !== undefined) s.noteTemplate = cfg.noteTemplate;
+    if (cfg.createRestrictYaml !== undefined) s.createRestrictYaml = cfg.createRestrictYaml;
+  },
+};
+
+const modifyIo: ToolConfigIO = {
+  label: 'modify_output_note',
+  exportFromPreset(p) {
+    const oc = p.outputConfig ?? {};
+    const cfg: Record<string, unknown> = {};
+    if (oc.modifyYamlRulesEnabled !== undefined) cfg.modifyYamlRulesEnabled = oc.modifyYamlRulesEnabled;
+    if (oc.modifyYamlRules !== undefined) cfg.modifyYamlRules = oc.modifyYamlRules;
+    return cfg;
+  },
+  exportFromGlobal(s) {
+    return { modifyYamlRulesEnabled: true, modifyYamlRules: s.modifyYamlRules };
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: '必须是 JSON 对象' };
+    const bad = rejectUnknownFields(raw, ['modifyYamlRulesEnabled', 'modifyYamlRules']);
+    if (bad) return { ok: false, error: bad };
+    if (raw.modifyYamlRulesEnabled !== undefined && !isBool(raw.modifyYamlRulesEnabled)) return { ok: false, error: 'modifyYamlRulesEnabled 必须是布尔值' };
+    if (raw.modifyYamlRules !== undefined && !isYamlRules(raw.modifyYamlRules)) return { ok: false, error: 'modifyYamlRules 每项必须是 {key, desc, values[], default, expose?, overwrite?}' };
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    const oc = (p.outputConfig = p.outputConfig ?? {});
+    if (cfg.modifyYamlRulesEnabled !== undefined) oc.modifyYamlRulesEnabled = cfg.modifyYamlRulesEnabled;
+    if (cfg.modifyYamlRules !== undefined) oc.modifyYamlRules = cfg.modifyYamlRules;
+  },
+  applyToGlobal(s, cfg) {
+    if (cfg.modifyYamlRules !== undefined) s.modifyYamlRules = cfg.modifyYamlRules;
+  },
+};
+
+const archiveIo: ToolConfigIO = {
+  label: 'modify_output_note_versioned',
+  exportFromPreset(p) {
+    const oc = p.outputConfig ?? {};
+    const cfg: Record<string, unknown> = {};
+    if (oc.archiveEnabled !== undefined) cfg.archiveEnabled = oc.archiveEnabled;
+    if (oc.modifyVersionSuffix !== undefined) cfg.modifyVersionSuffix = oc.modifyVersionSuffix;
+    if (oc.modifyVersionProperty !== undefined) cfg.modifyVersionProperty = oc.modifyVersionProperty;
+    if (oc.modifyArchiveProperty !== undefined) cfg.modifyArchiveProperty = oc.modifyArchiveProperty;
+    return cfg;
+  },
+  exportFromGlobal(s) {
+    return {
+      archiveEnabled: true,
+      modifyVersionSuffix: s.modifyVersionSuffix,
+      modifyVersionProperty: s.modifyVersionProperty,
+      modifyArchiveProperty: s.modifyArchiveProperty,
+    };
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: '必须是 JSON 对象' };
+    const bad = rejectUnknownFields(raw, ['archiveEnabled', 'modifyVersionSuffix', 'modifyVersionProperty', 'modifyArchiveProperty']);
+    if (bad) return { ok: false, error: bad };
+    if (raw.archiveEnabled !== undefined && !isBool(raw.archiveEnabled)) return { ok: false, error: 'archiveEnabled 必须是布尔值' };
+    for (const k of ['modifyVersionSuffix', 'modifyVersionProperty', 'modifyArchiveProperty'] as const) {
+      if (raw[k] !== undefined && !isStr(raw[k])) return { ok: false, error: `${k} 必须是字符串` };
+    }
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    const oc = (p.outputConfig = p.outputConfig ?? {});
+    if (cfg.archiveEnabled !== undefined) oc.archiveEnabled = cfg.archiveEnabled;
+    if (cfg.modifyVersionSuffix !== undefined) oc.modifyVersionSuffix = cfg.modifyVersionSuffix;
+    if (cfg.modifyVersionProperty !== undefined) oc.modifyVersionProperty = cfg.modifyVersionProperty;
+    if (cfg.modifyArchiveProperty !== undefined) oc.modifyArchiveProperty = cfg.modifyArchiveProperty;
+  },
+  applyToGlobal(s, cfg) {
+    if (cfg.modifyVersionSuffix !== undefined) s.modifyVersionSuffix = cfg.modifyVersionSuffix;
+    if (cfg.modifyVersionProperty !== undefined) s.modifyVersionProperty = cfg.modifyVersionProperty;
+    if (cfg.modifyArchiveProperty !== undefined) s.modifyArchiveProperty = cfg.modifyArchiveProperty;
+  },
+};
+
 /**
  * Render the full settings UI (tab bar + search + active tab) into
  * `containerEl`. Shared by the plugin settings tab (Obsidian settings) and the
@@ -1165,7 +1424,7 @@ class SettingsRenderer {
    * 一致（可折叠项 + 每工具折叠组），编辑的是全局 settings（yamlRules / noteTemplate /
    * modifyYamlRules / 归档三配置 / createRestrictYaml）。
    */
-  private renderDefaultPresetRow(containerEl: HTMLElement): void {
+  private renderDefaultPresetRow(containerEl: HTMLElement, rerender: () => void): void {
     const itemEl = containerEl.createDiv({ cls: 'ks-preset-item' });
     const expanded = this.presetExpanded.has('__default__');
     if (!expanded) itemEl.addClass('ks-preset-item-collapsed');
@@ -1184,7 +1443,8 @@ class SettingsRenderer {
     const renderGlobalGroup = (
       name: string,
       explanation: string,
-      renderBody: (bodyEl: HTMLElement) => void
+      renderBody: (bodyEl: HTMLElement) => void,
+      io?: ToolConfigIO
     ): void => {
       const key = `__default__:${name}`;
       const groupEl = toolArea.createDiv({ cls: 'ks-group ks-tool-config' });
@@ -1203,6 +1463,8 @@ class SettingsRenderer {
         if (collapsed) this.toolExpanded.add(key);
         else this.toolExpanded.delete(key);
       });
+      // v0.8.3：全局（默认预设）工具组同样支持配置复制/导入（preset=null → global 模式）。
+      if (io) this.renderToolIoBar(b, io, null, rerender);
       renderBody(b);
     };
 
@@ -1216,12 +1478,12 @@ class SettingsRenderer {
       this.markSearchable(tmplHeading, '默认预设 创建模板 noteTemplate 标题');
       const tmplBody = tmplWrap.createDiv();
       this.renderNoteTemplate(tmplBody);
-    });
+    }, createIo);
 
     renderGlobalGroup('modify_output_note（属性规则）', '默认预设的修改属性规则（AI 修改属性规则）。', (b) => {
       const modBody = b.createDiv();
       this.renderModifyYamlRules(modBody);
-    });
+    }, modifyIo);
 
     renderGlobalGroup('modify_output_note_versioned（归档配置）', '默认预设的归档配置（版本后缀 / 版本号属性 / 归档标记属性）。', (b) => {
       const suffix = new Setting(b)
@@ -1288,7 +1550,8 @@ class SettingsRenderer {
     const presets = this.plugin.settings.toolPresets || [];
 
     // v0.8.2：默认预设（全局设置）——其他预设未配置的项继承这里。
-    this.renderDefaultPresetRow(listBody);
+    // rerender 回调：默认预设工具组导入配置后重渲染整个预设组。
+    this.renderDefaultPresetRow(listBody, () => this.renderPresetGroup(containerEl));
 
     presets.forEach((preset, index) => this.renderPresetRow(listBody, preset, index, containerEl));
 
@@ -1398,7 +1661,7 @@ class SettingsRenderer {
             });
           });
         this.markSearchable(daysSetting, '预设 listRecentDays 天数 覆写 回看天数');
-      });
+      }, listRecentIo, rerenderAll);
 
     this.renderToolConfigGroup(toolArea, preset, 'read_note',
       '读取源文件夹笔记正文（无参数）', (body) => {
@@ -1477,7 +1740,7 @@ class SettingsRenderer {
             })
           );
         this.markSearchable(restrictOv, '预设 create_note 限制 已配置属性 createRestrictYaml 覆盖');
-      });
+      }, createIo, rerenderAll);
 
     this.renderToolConfigGroup(toolArea, preset, 'update_note_yaml',
       '修改源文件 frontmatter 属性（需全局开关暴露）', (body) => {
@@ -1503,7 +1766,7 @@ class SettingsRenderer {
         this.markSearchable(searchSetting, '预设 searchMode search_output_notes 模式 完整 阉割');
         const restrEl = body.createDiv({ cls: 'ks-preset-restrictions' });
         this.renderSearchRestrictions(restrEl, preset);
-      });
+      }, searchIo, rerenderAll);
 
     // v0.8.0：三个新的输出库工具（modify×2 + read_output_note）进入每预设工具配置区。
     this.renderToolConfigGroup(toolArea, preset, 'modify_output_note',
@@ -1538,7 +1801,7 @@ class SettingsRenderer {
         // v0.8.x：列表容器在开关之后创建，规则列表随开关展开显示在开关下方。
         const modYamlRulesWrap = body.createDiv();
         renderModifyRules();
-      });
+      }, modifyIo, rerenderAll);
 
     this.renderToolConfigGroup(toolArea, preset, 'modify_output_note_versioned',
       '覆盖修改输出文件夹笔记并自动归档（参数：name / sections / yaml）', (body) => {
@@ -1606,7 +1869,7 @@ class SettingsRenderer {
             );
           this.markSearchable(ap, '预设 modify_output_note_versioned 归档 归档标记属性');
         }
-      });
+      }, archiveIo, rerenderAll);
 
     this.renderToolConfigGroup(toolArea, preset, 'read_output_note',
       '读取输出文件夹笔记全文（参数：name）', (body) => {
@@ -1808,7 +2071,9 @@ class SettingsRenderer {
     preset: ToolPreset,
     name: string,
     explanation: string,
-    renderBody: (bodyEl: HTMLElement) => void
+    renderBody: (bodyEl: HTMLElement) => void,
+    io?: ToolConfigIO,
+    rerenderAll?: () => void
   ): void {
     const key = `${preset.id}:${name}`;
     const groupEl = parentEl.createDiv({ cls: 'ks-group ks-tool-config' });
@@ -1829,7 +2094,55 @@ class SettingsRenderer {
       if (isCollapsed) this.toolExpanded.add(key);
       else this.toolExpanded.delete(key);
     });
+    // v0.8.3：有配置的工具组顶部加「复制配置 / 粘贴配置」（导入严格校验格式）。
+    if (io && rerenderAll) this.renderToolIoBar(bodyEl, io, preset, rerenderAll);
     renderBody(bodyEl);
+  }
+
+  /** 工具折叠组的配置复制/导入条（v0.8.3）。复制 = 该工具配置 JSON 到剪贴板；
+   *  粘贴 = 读剪贴板 → JSON 解析 → 严格校验（未知字段/类型不符整体拒绝）→ 应用并重渲染。 */
+  private renderToolIoBar(bodyEl: HTMLElement, io: ToolConfigIO, preset: ToolPreset | null, rerender: () => void): void {
+    const bar = bodyEl.createDiv({ cls: 'ks-tool-io' });
+    bar.createSpan({ cls: 'ks-tool-io-label', text: '配置' });
+    const copyBtn = bar.createEl('button', { cls: 'ks-tool-io-btn' });
+    this.setIconSafe(copyBtn, 'copy', '');
+    copyBtn.createSpan({ text: '复制配置' });
+    copyBtn.addEventListener('click', () => {
+      const cfg = preset ? io.exportFromPreset(preset) : io.exportFromGlobal(this.plugin.settings);
+      this.writeClipboard(JSON.stringify(cfg, null, 2), `已复制 ${io.label} 配置（JSON）`);
+    });
+    const pasteBtn = bar.createEl('button', { cls: 'ks-tool-io-btn' });
+    this.setIconSafe(pasteBtn, 'clipboard', '');
+    pasteBtn.createSpan({ text: '粘贴配置' });
+    pasteBtn.addEventListener('click', async () => {
+      let text = '';
+      try {
+        text = await navigator.clipboard.readText();
+      } catch {
+        text = '';
+      }
+      if (!text.trim()) {
+        new Notice('剪贴板为空或无法读取');
+        return;
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        new Notice(`导入失败：不是合法的 JSON`);
+        return;
+      }
+      const r = io.validate(raw);
+      if (!r.ok) {
+        new Notice(`导入失败：${r.error}`);
+        return;
+      }
+      if (preset) io.applyToPreset(preset, r.cfg);
+      else io.applyToGlobal(this.plugin.settings, r.cfg);
+      void this.plugin.saveSettings();
+      new Notice(`已导入 ${io.label} 配置`);
+      rerender();
+    });
   }
 
   /** 折叠头部右侧的「启用该工具」开关（v0.8.0，折叠区外）。映射到 preset

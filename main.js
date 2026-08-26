@@ -605,6 +605,225 @@ async function extractResponseText(res) {
 
 // src/settingsTab.ts
 var TOOL_NAMES = ["list_recent_notes", "read_note", "create_note", "update_note_yaml", "search_output_notes", "modify_output_note", "modify_output_note_versioned", "read_output_note"];
+function isPlainObject(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function isStr(v) {
+  return typeof v === "string";
+}
+function isBool(v) {
+  return typeof v === "boolean";
+}
+function isStrArr(v) {
+  return Array.isArray(v) && v.every(isStr);
+}
+function isYamlRule(v) {
+  return isPlainObject(v) && isStr(v.key) && isStr(v.desc) && isStrArr(v.values) && isStr(v.default) && (v.expose === void 0 || isBool(v.expose)) && (v.overwrite === void 0 || isBool(v.overwrite));
+}
+function isYamlRules(v) {
+  return Array.isArray(v) && v.every(isYamlRule);
+}
+function isTmplEntry(v) {
+  return isPlainObject(v) && isStr(v.title) && typeof v.level === "number" && Number.isInteger(v.level) && v.level >= 1 && v.level <= 6 && isBool(v.allowAi) && isStr(v.desc);
+}
+function isRestriction(v) {
+  return isPlainObject(v) && isStr(v.key) && isStrArr(v.values);
+}
+function rejectUnknownFields(cfg, allowed) {
+  for (const k of Object.keys(cfg)) {
+    if (!allowed.includes(k)) return `\u672A\u77E5\u5B57\u6BB5\u300C${k}\u300D`;
+  }
+  return null;
+}
+var listRecentIo = {
+  label: "list_recent_notes",
+  exportFromPreset(p) {
+    const cfg = {};
+    if (p.toolOverrides.listRecentDays !== void 0) cfg.listRecentDays = p.toolOverrides.listRecentDays;
+    return cfg;
+  },
+  exportFromGlobal(s) {
+    return { listRecentDays: s.recentDays };
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: "\u5FC5\u987B\u662F JSON \u5BF9\u8C61" };
+    const bad = rejectUnknownFields(raw, ["listRecentDays"]);
+    if (bad) return { ok: false, error: bad };
+    if (raw.listRecentDays !== void 0 && !(typeof raw.listRecentDays === "number" && Number.isFinite(raw.listRecentDays))) {
+      return { ok: false, error: "listRecentDays \u5FC5\u987B\u662F\u6570\u5B57" };
+    }
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    p.toolOverrides.listRecentDays = cfg.listRecentDays;
+  },
+  applyToGlobal(s, cfg) {
+    if (typeof cfg.listRecentDays === "number") s.recentDays = cfg.listRecentDays;
+  }
+};
+var searchIo = {
+  label: "search_output_notes",
+  exportFromPreset(p) {
+    const cfg = {};
+    if (p.toolOverrides.searchMode !== void 0) cfg.searchMode = p.toolOverrides.searchMode;
+    if (p.toolOverrides.searchRestrictions !== void 0 && p.toolOverrides.searchRestrictions.length > 0) {
+      cfg.searchRestrictions = p.toolOverrides.searchRestrictions;
+    }
+    return cfg;
+  },
+  exportFromGlobal() {
+    return {};
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: "\u5FC5\u987B\u662F JSON \u5BF9\u8C61" };
+    const bad = rejectUnknownFields(raw, ["searchMode", "searchRestrictions"]);
+    if (bad) return { ok: false, error: bad };
+    if (raw.searchMode !== void 0 && raw.searchMode !== "full" && raw.searchMode !== "restricted") {
+      return { ok: false, error: "searchMode \u53EA\u80FD\u662F full \u6216 restricted" };
+    }
+    if (raw.searchRestrictions !== void 0 && !Array.isArray(raw.searchRestrictions)) {
+      return { ok: false, error: "searchRestrictions \u5FC5\u987B\u662F\u6570\u7EC4" };
+    }
+    if (raw.searchRestrictions !== void 0 && !raw.searchRestrictions.every(isRestriction)) {
+      return { ok: false, error: "searchRestrictions \u6BCF\u9879\u5FC5\u987B\u662F {key, values[]}" };
+    }
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    p.toolOverrides.searchMode = cfg.searchMode;
+    p.toolOverrides.searchRestrictions = cfg.searchRestrictions;
+  },
+  applyToGlobal() {
+  }
+};
+var createIo = {
+  label: "create_note",
+  exportFromPreset(p) {
+    var _a;
+    const oc = (_a = p.outputConfig) != null ? _a : {};
+    const cfg = {};
+    if (oc.yamlRulesEnabled !== void 0) cfg.yamlRulesEnabled = oc.yamlRulesEnabled;
+    if (oc.yamlRules !== void 0) cfg.yamlRules = oc.yamlRules;
+    if (oc.noteTemplateEnabled !== void 0) cfg.noteTemplateEnabled = oc.noteTemplateEnabled;
+    if (oc.noteTemplate !== void 0) cfg.noteTemplate = oc.noteTemplate;
+    if (oc.createRestrictYamlEnabled !== void 0) cfg.createRestrictYamlEnabled = oc.createRestrictYamlEnabled;
+    if (oc.createRestrictYaml !== void 0) cfg.createRestrictYaml = oc.createRestrictYaml;
+    return cfg;
+  },
+  exportFromGlobal(s) {
+    return {
+      yamlRulesEnabled: true,
+      yamlRules: s.yamlRules,
+      noteTemplateEnabled: true,
+      noteTemplate: s.noteTemplate,
+      createRestrictYamlEnabled: true,
+      createRestrictYaml: s.createRestrictYaml
+    };
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: "\u5FC5\u987B\u662F JSON \u5BF9\u8C61" };
+    const bad = rejectUnknownFields(raw, ["yamlRulesEnabled", "yamlRules", "noteTemplateEnabled", "noteTemplate", "createRestrictYamlEnabled", "createRestrictYaml"]);
+    if (bad) return { ok: false, error: bad };
+    if (raw.yamlRulesEnabled !== void 0 && !isBool(raw.yamlRulesEnabled)) return { ok: false, error: "yamlRulesEnabled \u5FC5\u987B\u662F\u5E03\u5C14\u503C" };
+    if (raw.yamlRules !== void 0 && !isYamlRules(raw.yamlRules)) return { ok: false, error: "yamlRules \u6BCF\u9879\u5FC5\u987B\u662F {key, desc, values[], default, expose?, overwrite?}" };
+    if (raw.noteTemplateEnabled !== void 0 && !isBool(raw.noteTemplateEnabled)) return { ok: false, error: "noteTemplateEnabled \u5FC5\u987B\u662F\u5E03\u5C14\u503C" };
+    if (raw.noteTemplate !== void 0 && !Array.isArray(raw.noteTemplate)) return { ok: false, error: "noteTemplate \u5FC5\u987B\u662F\u6570\u7EC4" };
+    if (raw.noteTemplate !== void 0 && !raw.noteTemplate.every(isTmplEntry)) return { ok: false, error: "noteTemplate \u6BCF\u9879\u5FC5\u987B\u662F {title, level(1-6), allowAi, desc}" };
+    if (raw.createRestrictYamlEnabled !== void 0 && !isBool(raw.createRestrictYamlEnabled)) return { ok: false, error: "createRestrictYamlEnabled \u5FC5\u987B\u662F\u5E03\u5C14\u503C" };
+    if (raw.createRestrictYaml !== void 0 && !isBool(raw.createRestrictYaml)) return { ok: false, error: "createRestrictYaml \u5FC5\u987B\u662F\u5E03\u5C14\u503C" };
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    var _a;
+    const oc = p.outputConfig = (_a = p.outputConfig) != null ? _a : {};
+    if (cfg.yamlRulesEnabled !== void 0) oc.yamlRulesEnabled = cfg.yamlRulesEnabled;
+    if (cfg.yamlRules !== void 0) oc.yamlRules = cfg.yamlRules;
+    if (cfg.noteTemplateEnabled !== void 0) oc.noteTemplateEnabled = cfg.noteTemplateEnabled;
+    if (cfg.noteTemplate !== void 0) oc.noteTemplate = cfg.noteTemplate;
+    if (cfg.createRestrictYamlEnabled !== void 0) oc.createRestrictYamlEnabled = cfg.createRestrictYamlEnabled;
+    if (cfg.createRestrictYaml !== void 0) oc.createRestrictYaml = cfg.createRestrictYaml;
+  },
+  applyToGlobal(s, cfg) {
+    if (cfg.yamlRules !== void 0) s.yamlRules = cfg.yamlRules;
+    if (cfg.noteTemplate !== void 0) s.noteTemplate = cfg.noteTemplate;
+    if (cfg.createRestrictYaml !== void 0) s.createRestrictYaml = cfg.createRestrictYaml;
+  }
+};
+var modifyIo = {
+  label: "modify_output_note",
+  exportFromPreset(p) {
+    var _a;
+    const oc = (_a = p.outputConfig) != null ? _a : {};
+    const cfg = {};
+    if (oc.modifyYamlRulesEnabled !== void 0) cfg.modifyYamlRulesEnabled = oc.modifyYamlRulesEnabled;
+    if (oc.modifyYamlRules !== void 0) cfg.modifyYamlRules = oc.modifyYamlRules;
+    return cfg;
+  },
+  exportFromGlobal(s) {
+    return { modifyYamlRulesEnabled: true, modifyYamlRules: s.modifyYamlRules };
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: "\u5FC5\u987B\u662F JSON \u5BF9\u8C61" };
+    const bad = rejectUnknownFields(raw, ["modifyYamlRulesEnabled", "modifyYamlRules"]);
+    if (bad) return { ok: false, error: bad };
+    if (raw.modifyYamlRulesEnabled !== void 0 && !isBool(raw.modifyYamlRulesEnabled)) return { ok: false, error: "modifyYamlRulesEnabled \u5FC5\u987B\u662F\u5E03\u5C14\u503C" };
+    if (raw.modifyYamlRules !== void 0 && !isYamlRules(raw.modifyYamlRules)) return { ok: false, error: "modifyYamlRules \u6BCF\u9879\u5FC5\u987B\u662F {key, desc, values[], default, expose?, overwrite?}" };
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    var _a;
+    const oc = p.outputConfig = (_a = p.outputConfig) != null ? _a : {};
+    if (cfg.modifyYamlRulesEnabled !== void 0) oc.modifyYamlRulesEnabled = cfg.modifyYamlRulesEnabled;
+    if (cfg.modifyYamlRules !== void 0) oc.modifyYamlRules = cfg.modifyYamlRules;
+  },
+  applyToGlobal(s, cfg) {
+    if (cfg.modifyYamlRules !== void 0) s.modifyYamlRules = cfg.modifyYamlRules;
+  }
+};
+var archiveIo = {
+  label: "modify_output_note_versioned",
+  exportFromPreset(p) {
+    var _a;
+    const oc = (_a = p.outputConfig) != null ? _a : {};
+    const cfg = {};
+    if (oc.archiveEnabled !== void 0) cfg.archiveEnabled = oc.archiveEnabled;
+    if (oc.modifyVersionSuffix !== void 0) cfg.modifyVersionSuffix = oc.modifyVersionSuffix;
+    if (oc.modifyVersionProperty !== void 0) cfg.modifyVersionProperty = oc.modifyVersionProperty;
+    if (oc.modifyArchiveProperty !== void 0) cfg.modifyArchiveProperty = oc.modifyArchiveProperty;
+    return cfg;
+  },
+  exportFromGlobal(s) {
+    return {
+      archiveEnabled: true,
+      modifyVersionSuffix: s.modifyVersionSuffix,
+      modifyVersionProperty: s.modifyVersionProperty,
+      modifyArchiveProperty: s.modifyArchiveProperty
+    };
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: "\u5FC5\u987B\u662F JSON \u5BF9\u8C61" };
+    const bad = rejectUnknownFields(raw, ["archiveEnabled", "modifyVersionSuffix", "modifyVersionProperty", "modifyArchiveProperty"]);
+    if (bad) return { ok: false, error: bad };
+    if (raw.archiveEnabled !== void 0 && !isBool(raw.archiveEnabled)) return { ok: false, error: "archiveEnabled \u5FC5\u987B\u662F\u5E03\u5C14\u503C" };
+    for (const k of ["modifyVersionSuffix", "modifyVersionProperty", "modifyArchiveProperty"]) {
+      if (raw[k] !== void 0 && !isStr(raw[k])) return { ok: false, error: `${k} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32` };
+    }
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    var _a;
+    const oc = p.outputConfig = (_a = p.outputConfig) != null ? _a : {};
+    if (cfg.archiveEnabled !== void 0) oc.archiveEnabled = cfg.archiveEnabled;
+    if (cfg.modifyVersionSuffix !== void 0) oc.modifyVersionSuffix = cfg.modifyVersionSuffix;
+    if (cfg.modifyVersionProperty !== void 0) oc.modifyVersionProperty = cfg.modifyVersionProperty;
+    if (cfg.modifyArchiveProperty !== void 0) oc.modifyArchiveProperty = cfg.modifyArchiveProperty;
+  },
+  applyToGlobal(s, cfg) {
+    if (cfg.modifyVersionSuffix !== void 0) s.modifyVersionSuffix = cfg.modifyVersionSuffix;
+    if (cfg.modifyVersionProperty !== void 0) s.modifyVersionProperty = cfg.modifyVersionProperty;
+    if (cfg.modifyArchiveProperty !== void 0) s.modifyArchiveProperty = cfg.modifyArchiveProperty;
+  }
+};
 function renderSettings(app, plugin, containerEl) {
   new SettingsRenderer(app, plugin).render(containerEl);
 }
@@ -1492,7 +1711,7 @@ var SettingsRenderer = class {
    * 一致（可折叠项 + 每工具折叠组），编辑的是全局 settings（yamlRules / noteTemplate /
    * modifyYamlRules / 归档三配置 / createRestrictYaml）。
    */
-  renderDefaultPresetRow(containerEl) {
+  renderDefaultPresetRow(containerEl, rerender) {
     const itemEl = containerEl.createDiv({ cls: "ks-preset-item" });
     const expanded = this.presetExpanded.has("__default__");
     if (!expanded) itemEl.addClass("ks-preset-item-collapsed");
@@ -1504,7 +1723,7 @@ var SettingsRenderer = class {
     headEl.createSpan({ cls: "ks-tool-config-desc", text: "\u5176\u4ED6\u9884\u8BBE\u672A\u542F\u7528\u8986\u76D6\u7684\u9879\u7EE7\u627F\u8FD9\u91CC\u7684\u914D\u7F6E\uFF1B\u7B49\u540C\u4E8E\u8BBE\u7F6E\u9875\u300C\u8F93\u51FA\u5C5E\u6027\u300Dtab\u3002" });
     const bodyEl = itemEl.createDiv({ cls: "ks-preset-item-body" });
     const toolArea = bodyEl.createDiv({ cls: "ks-preset-tools" });
-    const renderGlobalGroup = (name, explanation, renderBody) => {
+    const renderGlobalGroup = (name, explanation, renderBody, io) => {
       const key = `__default__:${name}`;
       const groupEl = toolArea.createDiv({ cls: "ks-group ks-tool-config" });
       const head = groupEl.createDiv({ cls: "ks-tool-config-head" });
@@ -1522,6 +1741,7 @@ var SettingsRenderer = class {
         if (collapsed) this.toolExpanded.add(key);
         else this.toolExpanded.delete(key);
       });
+      if (io) this.renderToolIoBar(b, io, null, rerender);
       renderBody(b);
     };
     renderGlobalGroup("create_note\uFF08\u5C5E\u6027\u89C4\u5219 / \u6A21\u677F\uFF09", "\u9ED8\u8BA4\u9884\u8BBE\u7684\u521B\u5EFA\u89C4\u5219\u4E0E\u6B63\u6587\u6A21\u677F\uFF08AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 / AI \u521B\u5EFA\u6A21\u677F\uFF09\u3002", (b) => {
@@ -1532,11 +1752,11 @@ var SettingsRenderer = class {
       this.markSearchable(tmplHeading, "\u9ED8\u8BA4\u9884\u8BBE \u521B\u5EFA\u6A21\u677F noteTemplate \u6807\u9898");
       const tmplBody = tmplWrap.createDiv();
       this.renderNoteTemplate(tmplBody);
-    });
+    }, createIo);
     renderGlobalGroup("modify_output_note\uFF08\u5C5E\u6027\u89C4\u5219\uFF09", "\u9ED8\u8BA4\u9884\u8BBE\u7684\u4FEE\u6539\u5C5E\u6027\u89C4\u5219\uFF08AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219\uFF09\u3002", (b) => {
       const modBody = b.createDiv();
       this.renderModifyYamlRules(modBody);
-    });
+    }, modifyIo);
     renderGlobalGroup("modify_output_note_versioned\uFF08\u5F52\u6863\u914D\u7F6E\uFF09", "\u9ED8\u8BA4\u9884\u8BBE\u7684\u5F52\u6863\u914D\u7F6E\uFF08\u7248\u672C\u540E\u7F00 / \u7248\u672C\u53F7\u5C5E\u6027 / \u5F52\u6863\u6807\u8BB0\u5C5E\u6027\uFF09\u3002", (b) => {
       const suffix = new import_obsidian3.Setting(b).setName("\u7248\u672C\u540E\u7F00").setDesc("\u5F52\u6863\u6587\u4EF6\u540E\u7F00\uFF08\u5982\u300C-\u5F52\u6863\u300D\u2192 \u539F\u6587\u540D-\u5F52\u6863.md\uFF09\u3002").addText(
         (text) => text.setPlaceholder("\u5982\uFF1A-\u5F52\u6863").setValue(this.plugin.settings.modifyVersionSuffix).onChange((v) => this.updateSetting("modifyVersionSuffix", v))
@@ -1570,7 +1790,7 @@ var SettingsRenderer = class {
     this.markSearchable(yamlEnabled, "\u9884\u8BBE update_note_yaml \u5168\u5C40 \u5F00\u5173 \u66B4\u9732");
     const listBody = this.createGroup(containerEl, "\u5DE5\u5177\u9884\u8BBE", false);
     const presets = this.plugin.settings.toolPresets || [];
-    this.renderDefaultPresetRow(listBody);
+    this.renderDefaultPresetRow(listBody, () => this.renderPresetGroup(containerEl));
     presets.forEach((preset, index) => this.renderPresetRow(listBody, preset, index, containerEl));
     const addBtn = new import_obsidian3.Setting(listBody).setName("").setDesc("").addButton(
       (btn) => btn.setIcon("plus").setButtonText("\u65B0\u5EFA\u9884\u8BBE").onClick(() => {
@@ -1652,7 +1872,9 @@ var SettingsRenderer = class {
           });
         });
         this.markSearchable(daysSetting, "\u9884\u8BBE listRecentDays \u5929\u6570 \u8986\u5199 \u56DE\u770B\u5929\u6570");
-      }
+      },
+      listRecentIo,
+      rerenderAll
     );
     this.renderToolConfigGroup(
       toolArea,
@@ -1722,7 +1944,9 @@ var SettingsRenderer = class {
           })
         );
         this.markSearchable(restrictOv, "\u9884\u8BBE create_note \u9650\u5236 \u5DF2\u914D\u7F6E\u5C5E\u6027 createRestrictYaml \u8986\u76D6");
-      }
+      },
+      createIo,
+      rerenderAll
     );
     this.renderToolConfigGroup(
       toolArea,
@@ -1752,7 +1976,9 @@ var SettingsRenderer = class {
         this.markSearchable(searchSetting, "\u9884\u8BBE searchMode search_output_notes \u6A21\u5F0F \u5B8C\u6574 \u9609\u5272");
         const restrEl = body.createDiv({ cls: "ks-preset-restrictions" });
         this.renderSearchRestrictions(restrEl, preset);
-      }
+      },
+      searchIo,
+      rerenderAll
     );
     this.renderToolConfigGroup(
       toolArea,
@@ -1787,7 +2013,9 @@ var SettingsRenderer = class {
         this.markSearchable(modYamlOv, "\u9884\u8BBE modify_output_note AI\u4FEE\u6539\u5C5E\u6027\u89C4\u5219 \u8986\u76D6 modifyYamlRules");
         const modYamlRulesWrap = body.createDiv();
         renderModifyRules();
-      }
+      },
+      modifyIo,
+      rerenderAll
     );
     this.renderToolConfigGroup(
       toolArea,
@@ -1844,7 +2072,9 @@ var SettingsRenderer = class {
           );
           this.markSearchable(ap, "\u9884\u8BBE modify_output_note_versioned \u5F52\u6863 \u5F52\u6863\u6807\u8BB0\u5C5E\u6027");
         }
-      }
+      },
+      archiveIo,
+      rerenderAll
     );
     this.renderToolConfigGroup(
       toolArea,
@@ -1978,7 +2208,7 @@ var SettingsRenderer = class {
    *  name + 「启用」toggle (right, outside the collapsible body so it can be
    *  toggled without expanding); body = the tool's config (collapsed by default,
    *  restored across re-renders via `toolExpanded`). */
-  renderToolConfigGroup(parentEl, preset, name, explanation, renderBody) {
+  renderToolConfigGroup(parentEl, preset, name, explanation, renderBody, io, rerenderAll) {
     const key = `${preset.id}:${name}`;
     const groupEl = parentEl.createDiv({ cls: "ks-group ks-tool-config" });
     const headEl = groupEl.createDiv({ cls: "ks-tool-config-head" });
@@ -1997,7 +2227,53 @@ var SettingsRenderer = class {
       if (isCollapsed) this.toolExpanded.add(key);
       else this.toolExpanded.delete(key);
     });
+    if (io && rerenderAll) this.renderToolIoBar(bodyEl, io, preset, rerenderAll);
     renderBody(bodyEl);
+  }
+  /** 工具折叠组的配置复制/导入条（v0.8.3）。复制 = 该工具配置 JSON 到剪贴板；
+   *  粘贴 = 读剪贴板 → JSON 解析 → 严格校验（未知字段/类型不符整体拒绝）→ 应用并重渲染。 */
+  renderToolIoBar(bodyEl, io, preset, rerender) {
+    const bar = bodyEl.createDiv({ cls: "ks-tool-io" });
+    bar.createSpan({ cls: "ks-tool-io-label", text: "\u914D\u7F6E" });
+    const copyBtn = bar.createEl("button", { cls: "ks-tool-io-btn" });
+    this.setIconSafe(copyBtn, "copy", "");
+    copyBtn.createSpan({ text: "\u590D\u5236\u914D\u7F6E" });
+    copyBtn.addEventListener("click", () => {
+      const cfg = preset ? io.exportFromPreset(preset) : io.exportFromGlobal(this.plugin.settings);
+      this.writeClipboard(JSON.stringify(cfg, null, 2), `\u5DF2\u590D\u5236 ${io.label} \u914D\u7F6E\uFF08JSON\uFF09`);
+    });
+    const pasteBtn = bar.createEl("button", { cls: "ks-tool-io-btn" });
+    this.setIconSafe(pasteBtn, "clipboard", "");
+    pasteBtn.createSpan({ text: "\u7C98\u8D34\u914D\u7F6E" });
+    pasteBtn.addEventListener("click", async () => {
+      let text = "";
+      try {
+        text = await navigator.clipboard.readText();
+      } catch (e) {
+        text = "";
+      }
+      if (!text.trim()) {
+        new import_obsidian3.Notice("\u526A\u8D34\u677F\u4E3A\u7A7A\u6216\u65E0\u6CD5\u8BFB\u53D6");
+        return;
+      }
+      let raw;
+      try {
+        raw = JSON.parse(text);
+      } catch (e) {
+        new import_obsidian3.Notice(`\u5BFC\u5165\u5931\u8D25\uFF1A\u4E0D\u662F\u5408\u6CD5\u7684 JSON`);
+        return;
+      }
+      const r = io.validate(raw);
+      if (!r.ok) {
+        new import_obsidian3.Notice(`\u5BFC\u5165\u5931\u8D25\uFF1A${r.error}`);
+        return;
+      }
+      if (preset) io.applyToPreset(preset, r.cfg);
+      else io.applyToGlobal(this.plugin.settings, r.cfg);
+      void this.plugin.saveSettings();
+      new import_obsidian3.Notice(`\u5DF2\u5BFC\u5165 ${io.label} \u914D\u7F6E`);
+      rerender();
+    });
   }
   /** 折叠头部右侧的「启用该工具」开关（v0.8.0，折叠区外）。映射到 preset
    *  `enabledTools` 白名单；语义与 v0.5.0 完全一致（空 = 全部启用）。 */

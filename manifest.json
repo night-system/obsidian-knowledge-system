@@ -1,9 +1,9 @@
 {
 	"id": "obsidian-knowledge-system",
 	"name": "Knowledge System",
-	"version": "0.8.3",
+	"version": "0.8.4",
 	"minAppVersion": "1.5.0",
-	"description": "配置驱动的 AI 知识系统框架。v0.8.3：设置 UI 修复（可选值输入与属性名/解释/默认值同一行、预设覆盖列表随开关展开在开关下方、模板条目按钮加文字与开关含义解释、添加规则在底部）。v0.8.0：聊天/设置界面图标彻底修复（lucide 图标名实测全部可用 + setIcon 可见性兜底 color 非透明，任何主题任何版本可见）+ 预设 UI 布局调整（工具启用开关移到折叠头部右侧、不展开也能开关，展开 chevron 移左、删除键移右分离，移动端防误触）。v0.7.0：预设可折叠 + 每工具独立折叠配置 + update_note_yaml 阉割版 + create_note 标题模板 + 聊天 icon 可见性修复。v0.6.0：聊天 UI 一比一复刻 dsh + 修复渲染两份 + 日志复制按钮 + 渲染单份闭环检查。v0.5.0：流式期间直接渲染 markdown（180ms 节流）+ 首 token（TTFT）检测点 + 聊天 UI 认真照抄 dsh + 工具预设系统/新工具/yaml 可选值 tag 输入；v0.4.0 真正逐字流式渲染 + 聊天 UI 美化 + create_note 属性规则；v0.3.2 起 Base URL 端点自动探测（/anthropic 前缀 + 404 自动纠偏回写 + 一键复制诊断错误）；v0.3.0 起 Anthropic 兼容协议（x-api-key / v1/messages）、内置工具集、AI 流式聊天视图、测试按钮、独立设置视图。",
+	"description": "配置驱动的 AI 知识系统框架。v0.8.4：每个工具折叠组的配置可复制到剪贴板/从剪贴板导入（严格校验格式，未知字段或类型不符拒绝导入；普通预设与默认预设格式互通）+ iPad 设置页输入框选择/剪切修复。v0.8.3：设置 UI 修复（可选值输入与属性名/解释/默认值同一行、预设覆盖列表随开关展开在开关下方、模板条目按钮加文字与开关含义解释、添加规则在底部）。v0.8.0：聊天/设置界面图标彻底修复（lucide 图标名实测全部可用 + setIcon 可见性兜底 color 非透明，任何主题任何版本可见）+ 预设 UI 布局调整（工具启用开关移到折叠头部右侧、不展开也能开关，展开 chevron 移左、删除键移右分离，移动端防误触）。v0.7.0：预设可折叠 + 每工具独立折叠配置 + update_note_yaml 阉割版 + create_note 标题模板 + 聊天 icon 可见性修复。v0.6.0：聊天 UI 一比一复刻 dsh + 修复渲染两份 + 日志复制按钮 + 渲染单份闭环检查。v0.5.0：流式期间直接渲染 markdown（180ms 节流）+ 首 token（TTFT）检测点 + 聊天 UI 认真照抄 dsh + 工具预设系统/新工具/yaml 可选值 tag 输入；v0.4.0 真正逐字流式渲染 + 聊天 UI 美化 + create_note 属性规则；v0.3.2 起 Base URL 端点自动探测（/anthropic 前缀 + 404 自动纠偏回写 + 一键复制诊断错误）；v0.3.0 起 Anthropic 兼容协议（x-api-key / v1/messages）、内置工具集、AI 流式聊天视图、测试按钮、独立设置视图。",
 	"author": "night-system",
 	"authorUrl": "https://github.com/night-system",
 	"isDesktopOnly": false

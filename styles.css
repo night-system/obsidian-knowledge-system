@@ -38,6 +38,17 @@
   padding-top: var(--size-2-1);
 }
 
+/* v0.8.3：iPad/触屏长按选择与剪切修复——显式允许 input/textarea 内文本选择。
+   Obsidian 移动端可能禁用 touch-callout/选择，导致只能粘贴、不能选择/剪切。 */
+.ks-tab-content input,
+.ks-tab-content textarea,
+.ks-view input,
+.ks-view textarea {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-touch-callout: default !important;
+}
+
 .ks-search {
   display: flex;
   align-items: center;
@@ -763,6 +774,45 @@
 .ks-tag-x svg {
   width: 12px;
   height: 12px;
+}
+
+/* v0.8.3：工具折叠组配置复制/导入条（每个工具组顶部，触屏可见的文字按钮）。 */
+.ks-tool-io {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  margin: 0 0 var(--size-2-2);
+  flex-wrap: wrap;
+}
+
+.ks-tool-io-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  flex: 0 0 auto;
+}
+
+.ks-tool-io-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+}
+
+.ks-tool-io-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ks-tool-io-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
 }
 
 /* ------------------------------------------------------------------ */

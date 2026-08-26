@@ -208,20 +208,22 @@
 }
 
 /* 裸图标按钮（v0.8.1：与 UI 方案陈列一致——无包裹、无底色、无圆底，
-   仅图标 + 主题色；hover 仅变色）。 */
+   仅图标 + 主题色；hover 仅变色）。`!important` 兜底 Obsidian 全局 button 样式。 */
 .ks-chat-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 4px;
-  border: none;
-  background: transparent;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
   color: var(--text-muted, var(--text-normal, #888));
   cursor: pointer;
 }
 
 .ks-chat-action:hover {
-  background: transparent;
+  background: transparent !important;
   color: var(--text-normal, #222);
 }
 
@@ -350,35 +352,34 @@
   margin-left: auto; /* 发送钮钉在右侧（dsh .trailing margin-left:auto） */
 }
 
-/* 发送按钮（v0.8.1 裸图标：无底色/无圆形包裹，与 UI 方案陈列一致）。
-   icon 必须可见：显式 `color` + `stroke: currentColor`，svg 描边继承按钮前景色。 */
+/* 发送按钮（v0.8.1 裸图标：无底色/无圆形包裹/无边框，与 UI 方案陈列一致）。
+   `!important` 兜底：Obsidian 全局 button 样式（灰底/边框）在部分主题下特异性更高，
+   必须显式覆盖。icon 可见性由 `color` 决定（lucide svg 自带 stroke=currentColor）。 */
 .ks-chat-send {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 6px;
-  border: none;
-  background: transparent;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
   color: var(--text-normal);
   cursor: pointer;
   flex: 0 0 auto;
 }
 
 .ks-chat-send:hover {
-  background: transparent;
+  background: transparent !important;
   color: var(--interactive-accent);
 }
 
 .ks-chat-send:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  background: transparent;
+  background: transparent !important;
 }
 
-/* 统一所有聊天 icon：显式 `color`（带主题回退）+ `stroke: currentColor` +
-   `fill: none`（lucide 默认），避免任何主题下不可见。Obsidian 基础 `.svg-icon`
-   只设 size/stroke-width，不设 stroke/fill；lucide svg 自带
-   `stroke="currentColor"`，因此 `color` 才是决定 icon 可见性的真正开关。 */
 .ks-chat-send svg {
   width: 20px;
   height: 20px;
@@ -389,7 +390,7 @@
 
 /* Busy → square stop button（裸图标，无包裹）。 */
 .ks-chat-send-stop {
-  border-radius: 0;
+  border-radius: 0 !important;
 }
 
 .ks-chat-send-stop svg {
@@ -612,17 +613,18 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: transparent;
+  background: transparent !important;
   color: var(--text-muted);
-  border: none;
-  border-radius: 0;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
   padding: var(--size-2-1) var(--size-2-1);
   cursor: pointer;
   font-size: var(--font-ui-small);
 }
 
 .ks-chat-copy:hover {
-  background: transparent;
+  background: transparent !important;
   color: var(--text-normal);
 }
 
@@ -672,8 +674,7 @@
     border-radius: var(--radius-m);
   }
   .ks-chat-send {
-    width: 40px;
-    height: 40px;
+    padding: 10px; /* 移动端增大触控区（裸图标，无固定盒） */
   }
   .ks-chat-send svg {
     width: 20px;
@@ -851,40 +852,54 @@
 
 .ks-preset-item-chev {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
   padding: var(--size-2-1);
-  border-radius: var(--radius-s);
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .ks-preset-item-chev:hover {
-  background: var(--background-modifier-hover);
+  background: transparent !important;
+  color: var(--text-normal);
+}
+
+.ks-preset-item-chev svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
 }
 
 .ks-preset-item-del {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
   padding: 4px;
-  border: none;
-  border-radius: var(--radius-s);
-  background: transparent;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .ks-preset-item-del:hover {
-  background: var(--background-modifier-hover);
+  background: transparent !important;
   color: var(--text-error);
 }
 
 .ks-preset-item-del svg {
   width: 14px;
   height: 14px;
+  stroke: currentColor;
+  fill: none;
 }
 
 .ks-preset-item-body {
@@ -1048,24 +1063,25 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
   padding: 4px;
-  border: none;
-  border-radius: var(--radius-s);
-  background: transparent;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
   color: var(--text-muted);
   cursor: pointer;
 }
 
 .ks-template-op:hover {
-  background: var(--background-modifier-hover);
+  background: transparent !important;
   color: var(--text-normal);
 }
 
 .ks-template-op svg {
   width: 14px;
   height: 14px;
+  stroke: currentColor;
+  fill: none;
 }
 
 .ks-template-preview {

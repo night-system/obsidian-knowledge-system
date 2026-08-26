@@ -356,10 +356,23 @@ function hasHeadingStart(text: string): boolean {
 
 /**
  * 校验 AI 提供的 yaml 键值对：`restrictYaml` 开启时，键必须在 `yamlRules` 键集内
- * （规则外键 → 错误，不落盘）；随后再按 `validateYamlRules` 校验每个规则键的值
- * （可选值空 = 任意）。返回 `null` 表示通过，否则返回给 AI 看的 `ERROR:` 中文消息。
+ * （规则外键 → 错误，不落盘）；`hiddenKeys`（v0.8.2 modify 隐藏属性）中的键无论
+ * 是否开启 restrictYaml 都禁止 AI 写入（AI 不可见、不可修改）；随后再按
+ * `validateYamlRules` 校验每个规则键的值（可选值空 = 任意）。
+ * 返回 `null` 表示通过，否则返回给 AI 看的 `ERROR:` 中文消息。
  */
-function validateAiYaml(obj: Record<string, unknown>, rules: YamlRule[], restrictYaml: boolean): string | null {
+function validateAiYaml(
+  obj: Record<string, unknown>,
+  rules: YamlRule[],
+  restrictYaml: boolean,
+  hiddenKeys?: string[]
+): string | null {
+  const hidden = new Set(hiddenKeys ?? []);
+  for (const k of Object.keys(obj)) {
+    if (hidden.has(k)) {
+      return `ERROR: 属性"${k}"为隐藏属性，不允许修改`;
+    }
+  }
   if (restrictYaml) {
     const ruleKeys = (rules || []).filter((r) => r && r.key).map((r) => r.key);
     const allowed = new Set(ruleKeys);
@@ -864,10 +877,14 @@ export async function modifyOutputNoteTool(
   const body = stripFrontmatter(raw);
 
   // yaml 白名单/规则校验（modify 用独立的 modifyYamlRules，与 create 的 yamlRules 分开）。
+  // v0.8.2 隐藏属性：可选值与默认值都留空的键 = AI 不可见、不可修改（原样保留）。
   const rules = settings.modifyYamlRules ?? [];
   const restrictYaml = settings.createRestrictYaml === true;
+  const hiddenKeys = (rules || [])
+    .filter((r) => r && r.key && (!r.values || r.values.length === 0) && String(r.default ?? '').trim() === '')
+    .map((r) => r.key);
   const aiYaml = parseYamlObject(args?.yaml);
-  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml);
+  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml, hiddenKeys);
   if (yamlErr) return { error: yamlErr };
 
   // sections 校验（标题必须已存在、禁 # 标题），全部通过才写盘。
@@ -913,10 +930,14 @@ export async function modifyOutputNoteVersionedTool(
   const body = stripFrontmatter(raw);
 
   // yaml + sections 校验（modify 用独立的 modifyYamlRules，与 create 的 yamlRules 分开）。
+  // v0.8.2 隐藏属性：可选值与默认值都留空的键 = AI 不可见、不可修改（原样保留）。
   const rules = settings.modifyYamlRules ?? [];
   const restrictYaml = settings.createRestrictYaml === true;
+  const hiddenKeys = (rules || [])
+    .filter((r) => r && r.key && (!r.values || r.values.length === 0) && String(r.default ?? '').trim() === '')
+    .map((r) => r.key);
   const aiYaml = parseYamlObject(args?.yaml);
-  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml);
+  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml, hiddenKeys);
   if (yamlErr) return { error: yamlErr };
   const bodyResult = applySectionsToBody(body, (args?.sections ?? {}) as Record<string, string>);
   if ('error' in bodyResult) return { error: bodyResult.error };

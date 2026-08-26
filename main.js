@@ -989,7 +989,7 @@ var SettingsRenderer = class {
    * 「仅默认值」的键（values 空 + default 非空）AI 不可见、每次修改强制覆写。
    */
   renderModifyYamlRules(containerEl) {
-    const info = new import_obsidian3.Setting(containerEl).setName("AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219\uFF08modify \u5DE5\u5177\uFF09").setDesc("\u63A7\u5236 AI \u4F7F\u7528 modify_output_note / modify_output_note_versioned \u65F6\u7684 frontmatter \u952E\u503C\u5BF9\uFF08\u4E0E\u300CAI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219\u300D\u7ED3\u6784\u76F8\u540C\u3001\u5185\u5BB9\u72EC\u7ACB\uFF09\uFF1A\u952E\u540D+\u89E3\u91CA+\u53EF\u9009\u503C\uFF08\u56DE\u8F66\u9010\u4E2A\u6DFB\u52A0\uFF09+\u9ED8\u8BA4\u503C\u3002\u53EF\u9009\u503C\u7528\u4E8E\u7EA6\u675F AI \u53EA\u80FD\u9009\u8FD9\u4E9B\u503C\uFF0C\u7559\u7A7A=\u4EFB\u610F\uFF1B\u9ED8\u8BA4\u503C\u652F\u6301 {{YYYY.MM.DD}} \u7B49 moment \u6A21\u677F\u3002\u9ED8\u8BA4\u503C\u4E0D\u4F1A\u66B4\u9732\u7ED9 AI\u2014\u2014\u6BCF\u6B21\u4FEE\u6539\u6587\u4EF6\u65F6\u81EA\u52A8\u8986\u5199\uFF08AI \u4E0D\u77E5\u60C5\uFF09\uFF1B\u53EA\u914D\u4E86\u9ED8\u8BA4\u503C\u3001\u65E0\u53EF\u9009\u503C\u7EA6\u675F\u7684\u5C5E\u6027\u952E\u4E5F\u4E0D\u5BF9 AI \u663E\u793A\u3002");
+    const info = new import_obsidian3.Setting(containerEl).setName("AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219\uFF08modify \u5DE5\u5177\uFF09").setDesc("\u63A7\u5236 AI \u4F7F\u7528 modify_output_note / modify_output_note_versioned \u65F6\u7684 frontmatter \u952E\u503C\u5BF9\uFF08\u4E0E\u300CAI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219\u300D\u7ED3\u6784\u76F8\u540C\u3001\u5185\u5BB9\u72EC\u7ACB\uFF09\uFF1A\u952E\u540D+\u89E3\u91CA+\u53EF\u9009\u503C\uFF08\u56DE\u8F66\u9010\u4E2A\u6DFB\u52A0\uFF09+\u9ED8\u8BA4\u503C\u3002\u53EF\u9009\u503C\u7528\u4E8E\u7EA6\u675F AI \u53EA\u80FD\u9009\u8FD9\u4E9B\u503C\uFF0C\u7559\u7A7A=\u4EFB\u610F\uFF1B\u9ED8\u8BA4\u503C\u652F\u6301 {{YYYY.MM.DD}} \u7B49 moment \u6A21\u677F\u3002\u9ED8\u8BA4\u503C\u4E0D\u4F1A\u66B4\u9732\u7ED9 AI\u2014\u2014\u6BCF\u6B21\u4FEE\u6539\u6587\u4EF6\u65F6\u81EA\u52A8\u8986\u5199\uFF08AI \u4E0D\u77E5\u60C5\uFF09\uFF1B\u53EA\u914D\u4E86\u9ED8\u8BA4\u503C\u3001\u65E0\u53EF\u9009\u503C\u7EA6\u675F\u7684\u5C5E\u6027\u952E\u4E5F\u4E0D\u5BF9 AI \u663E\u793A\u3002\u53EF\u9009\u503C\u4E0E\u9ED8\u8BA4\u503C\u90FD\u7559\u7A7A\u7684\u952E = \u9690\u85CF\u5C5E\u6027\uFF1AAI \u4E0D\u53EF\u89C1\u3001\u4E0D\u53EF\u4FEE\u6539\uFF0Cmodify \u4E5F\u4E0D\u6539\u52A8\u5B83\u7684\u503C\uFF08\u539F\u6837\u4FDD\u7559\uFF0C\u5982 approve\uFF09\u3002");
     this.markSearchable(info, "AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219 modify \u5DE5\u5177 \u952E\u540D \u89E3\u91CA \u53EF\u9009\u503C \u9ED8\u8BA4\u503C moment \u6A21\u677F");
     const list = this.plugin.settings.modifyYamlRules || [];
     list.forEach((rule, index) => {
@@ -2164,7 +2164,13 @@ async function readNoteTool(ctx, args) {
 function hasHeadingStart(text) {
   return /^#\s/m.test(text || "");
 }
-function validateAiYaml(obj, rules, restrictYaml) {
+function validateAiYaml(obj, rules, restrictYaml, hiddenKeys) {
+  const hidden = new Set(hiddenKeys != null ? hiddenKeys : []);
+  for (const k of Object.keys(obj)) {
+    if (hidden.has(k)) {
+      return `ERROR: \u5C5E\u6027"${k}"\u4E3A\u9690\u85CF\u5C5E\u6027\uFF0C\u4E0D\u5141\u8BB8\u4FEE\u6539`;
+    }
+  }
   if (restrictYaml) {
     const ruleKeys = (rules || []).filter((r) => r && r.key).map((r) => r.key);
     const allowed = new Set(ruleKeys);
@@ -2556,8 +2562,12 @@ async function modifyOutputNoteTool(ctx, args) {
   const body = stripFrontmatter(raw);
   const rules = (_a = settings.modifyYamlRules) != null ? _a : [];
   const restrictYaml = settings.createRestrictYaml === true;
+  const hiddenKeys = (rules || []).filter((r) => {
+    var _a2;
+    return r && r.key && (!r.values || r.values.length === 0) && String((_a2 = r.default) != null ? _a2 : "").trim() === "";
+  }).map((r) => r.key);
   const aiYaml = parseYamlObject(args == null ? void 0 : args.yaml);
-  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml);
+  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml, hiddenKeys);
   if (yamlErr) return { error: yamlErr };
   const bodyResult = applySectionsToBody(body, (_b = args == null ? void 0 : args.sections) != null ? _b : {});
   if ("error" in bodyResult) return { error: bodyResult.error };
@@ -2588,8 +2598,12 @@ async function modifyOutputNoteVersionedTool(ctx, args) {
   const body = stripFrontmatter(raw);
   const rules = (_a = settings.modifyYamlRules) != null ? _a : [];
   const restrictYaml = settings.createRestrictYaml === true;
+  const hiddenKeys = (rules || []).filter((r) => {
+    var _a2;
+    return r && r.key && (!r.values || r.values.length === 0) && String((_a2 = r.default) != null ? _a2 : "").trim() === "";
+  }).map((r) => r.key);
   const aiYaml = parseYamlObject(args == null ? void 0 : args.yaml);
-  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml);
+  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml, hiddenKeys);
   if (yamlErr) return { error: yamlErr };
   const bodyResult = applySectionsToBody(body, (_b = args == null ? void 0 : args.sections) != null ? _b : {});
   if ("error" in bodyResult) return { error: bodyResult.error };

@@ -484,7 +484,7 @@ class SettingsRenderer {
   private renderModifyYamlRules(containerEl: HTMLElement): void {
     const info = new Setting(containerEl)
       .setName('AI 修改属性规则（modify 工具）')
-      .setDesc('控制 AI 使用 modify_output_note / modify_output_note_versioned 时的 frontmatter 键值对（与「AI 创建属性规则」结构相同、内容独立）：键名+解释+可选值（回车逐个添加）+默认值。可选值用于约束 AI 只能选这些值，留空=任意；默认值支持 {{YYYY.MM.DD}} 等 moment 模板。默认值不会暴露给 AI——每次修改文件时自动覆写（AI 不知情）；只配了默认值、无可选值约束的属性键也不对 AI 显示。');
+      .setDesc('控制 AI 使用 modify_output_note / modify_output_note_versioned 时的 frontmatter 键值对（与「AI 创建属性规则」结构相同、内容独立）：键名+解释+可选值（回车逐个添加）+默认值。可选值用于约束 AI 只能选这些值，留空=任意；默认值支持 {{YYYY.MM.DD}} 等 moment 模板。默认值不会暴露给 AI——每次修改文件时自动覆写（AI 不知情）；只配了默认值、无可选值约束的属性键也不对 AI 显示。可选值与默认值都留空的键 = 隐藏属性：AI 不可见、不可修改，modify 也不改动它的值（原样保留，如 approve）。');
     this.markSearchable(info, 'AI 修改属性规则 modify 工具 键名 解释 可选值 默认值 moment 模板');
 
     const list = this.plugin.settings.modifyYamlRules || [];

@@ -96,6 +96,21 @@ export interface ToolPreset {
     /** Whitelisted keys for the restricted search mode. */
     searchRestrictions?: { key: string; values: string[] }[];
   };
+  /**
+   * v0.8.2：预设级「输出属性」覆盖（可选；undefined = 全部用全局设置）。
+   * 每项 undefined = 该项用全局；定义了则本预设内用预设值。
+   * yamlRules（create 属性规则）/ noteTemplate（创建模板）/ modifyYamlRules（modify 属性规则）
+   * / 归档三配置 / createRestrictYaml。
+   */
+  outputConfig?: {
+    yamlRules?: YamlRule[];
+    noteTemplate?: NoteTemplateEntry[];
+    modifyYamlRules?: YamlRule[];
+    modifyVersionSuffix?: string;
+    modifyVersionProperty?: string;
+    modifyArchiveProperty?: string;
+    createRestrictYaml?: boolean;
+  };
 }
 
 export interface KnowledgeSystemSettings {

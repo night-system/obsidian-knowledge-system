@@ -718,9 +718,21 @@ export class KnowledgeChatView extends ItemView {
     this.resolvePending();
     if (stopReason === 'tool_use') {
       const cfg = this.resolvedConfig;
+      // v0.8.2：工具执行用「生效配置」——预设 outputConfig 覆盖后的 yamlRules/
+      // modifyYamlRules/归档三配置/restrict 合并进 settings（未覆盖的用全局）。
+      const effSettings: ToolCtx['settings'] = {
+        ...this.plugin.settings,
+        yamlRules: cfg?.yamlRules,
+        modifyYamlRules: cfg?.modifyYamlRules,
+        noteTemplate: cfg?.noteTemplate,
+        modifyVersionSuffix: cfg?.modifyVersionSuffix,
+        modifyVersionProperty: cfg?.modifyVersionProperty,
+        modifyArchiveProperty: cfg?.modifyArchiveProperty,
+        createRestrictYaml: cfg?.createRestrictYaml,
+      };
       const ctx: ToolCtx = {
         app: this.plugin.app,
-        settings: this.plugin.settings,
+        settings: effSettings,
         moment: window.moment,
         searchMode: cfg?.searchMode,
         searchRestrictions: cfg?.searchRestrictions,

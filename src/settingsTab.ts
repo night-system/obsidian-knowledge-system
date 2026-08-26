@@ -1,5 +1,5 @@
 import { App, DropdownComponent, Notice, PluginSettingTab, Setting, ToggleComponent, setIcon } from 'obsidian';
-import { KnowledgeSystemSettings, ToolPreset, UpdateYamlRule, NoteTemplateEntry } from './settings';
+import { KnowledgeSystemSettings, ToolPreset, UpdateYamlRule, NoteTemplateEntry, YamlRule } from './settings';
 import { FolderSuggest } from './folderSuggest';
 import { countRecentFiles, outputLatestContent } from './core';
 import type KnowledgeSystemPlugin from './main';
@@ -1343,6 +1343,345 @@ class SettingsRenderer {
         this.markSearchable(info, '预设 read_output_note 说明 读取 输出 全文');
       });
     void toolArea;
+
+    // v0.8.2：预设级「输出属性」覆盖（把设置页「输出属性」tab 的关键配置搬进预设，
+    // 每个预设可独立自定义；未开启的项用全局设置）。
+    const outputGroup = bodyEl.createDiv({ cls: 'ks-group ks-tool-config' });
+    const outputHead = outputGroup.createDiv({ cls: 'ks-tool-config-head' });
+    const outputChev = outputHead.createSpan({ cls: 'ks-group-icon' });
+    const outputKey = `${preset.id}:__outputConfig__`;
+    const outputExpanded = this.toolExpanded.has(outputKey);
+    this.setIconSafe(outputChev, outputExpanded ? 'chevron-down' : 'chevron-right', outputExpanded ? '\u2304' : '\u203A');
+    outputHead.createSpan({ cls: 'ks-preset-tool-label', text: '输出属性（预设覆盖）' });
+    outputHead.createSpan({ cls: 'ks-tool-config-desc', text: '把「输出属性」tab 的关键配置搬进本预设（yaml 规则 / 创建模板 / modify 规则与归档配置）；未启用「预设覆盖」的项使用全局设置。' });
+    const outputBody = outputGroup.createDiv({ cls: 'ks-group-body' });
+    if (!outputExpanded) outputGroup.addClass('ks-collapsed');
+    outputHead.addEventListener('click', () => {
+      const isCollapsed = outputGroup.hasClass('ks-collapsed');
+      outputGroup.toggleClass('ks-collapsed', !isCollapsed);
+      this.setIconSafe(outputChev, isCollapsed ? 'chevron-down' : 'chevron-right', isCollapsed ? '\u2304' : '\u203A');
+      if (isCollapsed) this.toolExpanded.add(outputKey);
+      else this.toolExpanded.delete(outputKey);
+    });
+    this.renderPresetOutputConfig(outputBody, preset);
+  }
+
+  /**
+   * v0.8.2：预设级「输出属性」覆盖编辑器。每项一个开关（启用预设值）+ 编辑器；
+   * 未启用的项在 resolveToolConfig 里回退全局设置。
+   */
+  private renderPresetOutputConfig(containerEl: HTMLElement, preset: ToolPreset): void {
+    const oc = (preset.outputConfig = preset.outputConfig ?? {});
+
+    const info = new Setting(containerEl)
+      .setName('')
+      .setDesc('每个预设可独立定义这些设置（未启用/留空的项自动用设置页「输出属性」的全局值）。')
+    ;
+    this.markSearchable(info, '预设 输出属性 覆盖 outputConfig yaml 规则 模板 归档');
+
+    // —— AI 创建属性规则（yamlRules）——
+    const yamlEnabled = new Setting(containerEl)
+      .setName('AI 创建属性规则（预设覆盖）')
+      .setDesc('开启 = 本预设使用下方规则（AI 创建属性规则，结构与设置页一致）；关闭 = 用全局规则。')
+      .addToggle((t) =>
+        t.setValue(Array.isArray(oc.yamlRules)).onChange((v) => {
+          oc.yamlRules = v ? (oc.yamlRules ?? []) : undefined;
+          void this.plugin.saveSettings();
+          this.renderPresetOutputConfig(containerEl, preset);
+        })
+      );
+    this.markSearchable(yamlEnabled, '预设 输出属性 AI创建属性规则 yamlRules 覆盖');
+    if (Array.isArray(oc.yamlRules)) {
+      this.renderPresetRuleList(containerEl, oc.yamlRules, 'create 属性规则',
+        (rule) => `AI 创建属性规则 ${rule.key} ${rule.desc} ${rule.values.join(' ')} ${rule.default}`,
+        () => this.renderPresetOutputConfig(containerEl, preset));
+    }
+
+    // —— AI 创建模板（noteTemplate）——
+    const tmplEnabled = new Setting(containerEl)
+      .setName('AI 创建模板（预设覆盖）')
+      .setDesc('开启 = 本预设使用下方标题模板（结构与设置页「AI 创建模板」一致）；关闭 = 用全局模板。')
+      .addToggle((t) =>
+        t.setValue(Array.isArray(oc.noteTemplate)).onChange((v) => {
+          oc.noteTemplate = v ? (oc.noteTemplate ?? []) : undefined;
+          void this.plugin.saveSettings();
+          this.renderPresetOutputConfig(containerEl, preset);
+        })
+      );
+    this.markSearchable(tmplEnabled, '预设 输出属性 AI创建模板 noteTemplate 覆盖');
+    if (Array.isArray(oc.noteTemplate)) {
+      this.renderPresetTemplateList(containerEl, oc.noteTemplate, () => this.renderPresetOutputConfig(containerEl, preset));
+    }
+
+    // —— modify 属性规则（modifyYamlRules）——
+    const modYamlEnabled = new Setting(containerEl)
+      .setName('AI 修改属性规则（预设覆盖）')
+      .setDesc('开启 = 本预设使用下方规则（modify 工具属性规则）；关闭 = 用全局规则。')
+      .addToggle((t) =>
+        t.setValue(Array.isArray(oc.modifyYamlRules)).onChange((v) => {
+          oc.modifyYamlRules = v ? (oc.modifyYamlRules ?? []) : undefined;
+          void this.plugin.saveSettings();
+          this.renderPresetOutputConfig(containerEl, preset);
+        })
+      );
+    this.markSearchable(modYamlEnabled, '预设 输出属性 AI修改属性规则 modifyYamlRules 覆盖');
+    if (Array.isArray(oc.modifyYamlRules)) {
+      this.renderPresetRuleList(containerEl, oc.modifyYamlRules, 'modify 属性规则',
+        (rule) => `AI 修改属性规则 ${rule.key} ${rule.desc} ${rule.values.join(' ')} ${rule.default}`,
+        () => this.renderPresetOutputConfig(containerEl, preset));
+    }
+
+    // —— 归档三配置（modify_output_note_versioned）——
+    const archEnabled = new Setting(containerEl)
+      .setName('归档配置（预设覆盖）')
+      .setDesc('开启 = 本预设使用下方版本后缀/版本号属性/归档标记属性；关闭 = 用全局配置。')
+      .addToggle((t) =>
+        t.setValue(
+          oc.modifyVersionSuffix !== undefined ||
+          oc.modifyVersionProperty !== undefined ||
+          oc.modifyArchiveProperty !== undefined
+        ).onChange((v) => {
+          oc.modifyVersionSuffix = v ? (oc.modifyVersionSuffix ?? '') : undefined;
+          oc.modifyVersionProperty = v ? (oc.modifyVersionProperty ?? '') : undefined;
+          oc.modifyArchiveProperty = v ? (oc.modifyArchiveProperty ?? '') : undefined;
+          void this.plugin.saveSettings();
+          this.renderPresetOutputConfig(containerEl, preset);
+        })
+      );
+    this.markSearchable(archEnabled, '预设 输出属性 归档配置 版本后缀 版本号属性 归档标记 覆盖');
+    if (
+      oc.modifyVersionSuffix !== undefined ||
+      oc.modifyVersionProperty !== undefined ||
+      oc.modifyArchiveProperty !== undefined
+    ) {
+      const s = new Setting(containerEl)
+        .setName('版本后缀')
+        .setDesc('归档文件后缀（如「-归档」→ 原文名-归档.md）。')
+        .addText((text) =>
+          text
+            .setPlaceholder('如：-归档')
+            .setValue(oc.modifyVersionSuffix ?? '')
+            .onChange((v) => {
+              oc.modifyVersionSuffix = v;
+              void this.plugin.saveSettings();
+            })
+        );
+      this.markSearchable(s, '预设 输出属性 归档 版本后缀');
+      const vp = new Setting(containerEl)
+        .setName('版本号属性名')
+        .setDesc('写入原文件的版本号 yaml 属性名（数字递增）。')
+        .addText((text) =>
+          text
+            .setPlaceholder('如：version')
+            .setValue(oc.modifyVersionProperty ?? '')
+            .onChange((v) => {
+              oc.modifyVersionProperty = v;
+              void this.plugin.saveSettings();
+            })
+        );
+      this.markSearchable(vp, '预设 输出属性 归档 版本号属性');
+      const ap = new Setting(containerEl)
+        .setName('归档标记属性名')
+        .setDesc('写入归档文件 frontmatter 的 bool 属性名（如 archived，写 true）。')
+        .addText((text) =>
+          text
+            .setPlaceholder('如：archived')
+            .setValue(oc.modifyArchiveProperty ?? '')
+            .onChange((v) => {
+              oc.modifyArchiveProperty = v;
+              void this.plugin.saveSettings();
+            })
+        );
+      this.markSearchable(ap, '预设 输出属性 归档 归档标记属性');
+    }
+
+    // —— createRestrictYaml ——
+    const restrict = new Setting(containerEl)
+      .setName('限制 AI 只能使用已配置的属性（预设覆盖）')
+      .setDesc('开 = 本预设内 create/modify 的 yaml 键只能在对应规则集内；关 = 用全局设置（默认关闭）。')
+      .addToggle((t) =>
+        t.setValue(oc.createRestrictYaml === true).onChange((v) => {
+          oc.createRestrictYaml = v;
+          void this.plugin.saveSettings();
+          this.renderPresetOutputConfig(containerEl, preset);
+        })
+      );
+    this.markSearchable(restrict, '预设 输出属性 限制 已配置属性 createRestrictYaml 覆盖');
+  }
+
+  /** 预设内属性规则列表（结构与设置页规则行一致：属性名/解释/默认值/暴露开关 + 可选值 tag）。 */
+  private renderPresetRuleList(
+    containerEl: HTMLElement,
+    rules: YamlRule[],
+    label: string,
+    searchOf: (rule: YamlRule) => string,
+    rerender: () => void
+  ): void {
+    rules.forEach((rule, index) => {
+      const hay = searchOf(rule);
+      const row = new Setting(containerEl)
+        .setName('')
+        .setDesc('')
+        .addText((text) =>
+          text
+            .setPlaceholder('属性名')
+            .setValue(rule.key)
+            .onChange((v) => {
+              rule.key = v;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addText((text) =>
+          text
+            .setPlaceholder('解释（暴露时传给 AI）')
+            .setValue(rule.desc)
+            .onChange((v) => {
+              rule.desc = v;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addText((text) =>
+          text
+            .setPlaceholder('默认值（支持 {{moment}}）')
+            .setValue(rule.default)
+            .onChange((v) => {
+              rule.default = v;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addToggle((t) =>
+          t
+            .setValue(this.resolveUiExpose(rule))
+            .setTooltip('暴露给 AI')
+            .onChange((v) => {
+              rule.expose = v;
+              void this.plugin.saveSettings();
+              rerender();
+            })
+        )
+        .addButton((btn) =>
+          btn
+            .setIcon('trash-2')
+            .setTooltip('删除')
+            .onClick(() => {
+              rules.splice(index, 1);
+              void this.plugin.saveSettings();
+              rerender();
+            })
+        );
+      row.settingEl.addClass('ks-yaml-rule-row');
+      this.markSearchable(row, hay);
+      if (this.resolveUiExpose(rule)) {
+        const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
+        valuesEl.setAttribute('data-search', hay);
+        this.renderYamlValues(valuesEl, rule);
+      }
+    });
+    const addBtn = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
+          rules.push({ key: '', desc: '', values: [], default: '', expose: true });
+          void this.plugin.saveSettings();
+          rerender();
+        })
+      );
+    this.markSearchable(addBtn, `预设 输出属性 ${label} 添加规则`);
+  }
+
+  /** 预设内创建模板列表（标题/级别/允许 AI 写/解释 + 上移下移删除）。 */
+  private renderPresetTemplateList(containerEl: HTMLElement, entries: NoteTemplateEntry[], rerender: () => void): void {
+    entries.forEach((entry, index) => {
+      const row = new Setting(containerEl)
+        .setName('')
+        .setDesc('')
+        .addDropdown((drop) => {
+          const opts: Record<string, string> = {};
+          for (let l = 1; l <= 6; l++) opts[String(l)] = `H${l}（${'#'.repeat(l)} 标题）`;
+          drop.addOptions(opts);
+          drop.setValue(String(entry.level));
+          drop.onChange((v) => {
+            entry.level = parseInt(v, 10) || 1;
+            void this.plugin.saveSettings();
+          });
+        })
+        .addText((text) =>
+          text
+            .setPlaceholder('标题文本')
+            .setValue(entry.title)
+            .onChange((v) => {
+              entry.title = v;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addToggle((t) =>
+          t
+            .setValue(entry.allowAi)
+            .setTooltip('允许 AI 写')
+            .onChange((v) => {
+              entry.allowAi = v;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addButton((btn) =>
+          btn
+            .setIcon('chevron-up')
+            .setTooltip('上移')
+            .onClick(() => {
+              if (index > 0) {
+                const [e] = entries.splice(index, 1);
+                entries.splice(index - 1, 0, e);
+                void this.plugin.saveSettings();
+                rerender();
+              }
+            })
+        )
+        .addButton((btn) =>
+          btn
+            .setIcon('chevron-down')
+            .setTooltip('下移')
+            .onClick(() => {
+              if (index < entries.length - 1) {
+                const [e] = entries.splice(index, 1);
+                entries.splice(index + 1, 0, e);
+                void this.plugin.saveSettings();
+                rerender();
+              }
+            })
+        )
+        .addButton((btn) =>
+          btn
+            .setIcon('trash-2')
+            .setTooltip('删除')
+            .onClick(() => {
+              entries.splice(index, 1);
+              void this.plugin.saveSettings();
+              rerender();
+            })
+        );
+      row.settingEl.addClass('ks-template-row');
+      this.markSearchable(row, `预设 输出属性 创建模板 ${entry.title} ${entry.desc}`);
+      const descEl = containerEl.createDiv({ cls: 'ks-template-desc-wrap setting-item' });
+      const ta = descEl.createEl('textarea', { cls: 'ks-template-desc' });
+      ta.value = entry.desc;
+      ta.placeholder = '解释（允许 AI 写时随工具描述传给 AI）';
+      ta.addEventListener('input', () => {
+        entry.desc = ta.value;
+        void this.plugin.saveSettings();
+      });
+    });
+    const addBtn = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setIcon('plus').setButtonText('添加标题').onClick(() => {
+          entries.push({ title: '', level: 2, allowAi: true, desc: '' });
+          void this.plugin.saveSettings();
+          rerender();
+        })
+      );
+    this.markSearchable(addBtn, '预设 输出属性 创建模板 添加标题');
   }
 
   /** Render one collapsible per-tool config group (B.2): header = chevron + tool

@@ -26,7 +26,7 @@ export interface ResolvedToolConfig {
   tools: AnthropicTool[];
   /** The system prompt (preset override; '' = no system message). */
   systemPrompt: string;
-  /** The effective yaml rules (always from settings.yamlRules). */
+  /** The effective yaml rules (create; preset outputConfig overrides global). */
   yamlRules: YamlRule[];
   /** Override for list_recent_notes `days` (default = settings.recentDays). */
   listRecentDays?: number;
@@ -36,8 +36,16 @@ export interface ResolvedToolConfig {
   searchRestrictions?: { key: string; values: string[] }[];
   /** update_note_yaml allowed-attribute rules (always from settings; v0.7.0). */
   updateYamlRules: UpdateYamlRule[];
-  /** create_note body template (always from settings; v0.7.0). */
+  /** create_note body template (preset outputConfig overrides global; v0.7.0). */
   noteTemplate: NoteTemplateEntry[];
+  /** modify tools yaml rules (preset outputConfig overrides global; v0.8.2). */
+  modifyYamlRules: YamlRule[];
+  /** modify_output_note_versioned archive config (preset outputConfig overrides global). */
+  modifyVersionSuffix: string;
+  modifyVersionProperty: string;
+  modifyArchiveProperty: string;
+  /** create/modify restrict-yaml switch (preset outputConfig overrides global). */
+  createRestrictYaml: boolean;
 }
 
 /** Find the preset referenced by `settings.activePresetId`; null when inactive. */
@@ -56,11 +64,18 @@ export function buildSystemPrompt(preset?: ToolPreset | null): string {
 /** Resolve the effective tool/system configuration for a chat send. */
 export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedToolConfig {
   const preset = findActivePreset(settings);
-  const yamlRules = Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
-  const modifyYamlRules = Array.isArray(settings.modifyYamlRules) ? settings.modifyYamlRules : [];
-  const noteTemplate = Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
+  const oc = preset?.outputConfig;
+
+  // 预设级「输出属性」覆盖：定义了的用预设值，未定义的用全局。
+  const yamlRules = Array.isArray(oc?.yamlRules) ? oc.yamlRules! : Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
+  const modifyYamlRules = Array.isArray(oc?.modifyYamlRules) ? oc.modifyYamlRules! : Array.isArray(settings.modifyYamlRules) ? settings.modifyYamlRules : [];
+  const noteTemplate = Array.isArray(oc?.noteTemplate) ? oc.noteTemplate! : Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
   const updateYamlRules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
-  const createRestrictYaml = settings.createRestrictYaml === true;
+  const createRestrictYaml = oc?.createRestrictYaml !== undefined ? oc.createRestrictYaml : settings.createRestrictYaml === true;
+  const modifyVersionSuffix = oc?.modifyVersionSuffix !== undefined ? oc.modifyVersionSuffix : settings.modifyVersionSuffix;
+  const modifyVersionProperty = oc?.modifyVersionProperty !== undefined ? oc.modifyVersionProperty : settings.modifyVersionProperty;
+  const modifyArchiveProperty = oc?.modifyArchiveProperty !== undefined ? oc.modifyArchiveProperty : settings.modifyArchiveProperty;
+
   const baseTools = buildAnthropicTools(yamlRules, noteTemplate, { createRestrictYaml });
 
   // 1) base tool names in stable order.
@@ -115,5 +130,10 @@ export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedTo
     searchRestrictions: preset?.toolOverrides?.searchRestrictions,
     updateYamlRules,
     noteTemplate,
+    modifyYamlRules,
+    modifyVersionSuffix,
+    modifyVersionProperty,
+    modifyArchiveProperty,
+    createRestrictYaml,
   };
 }

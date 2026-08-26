@@ -12,6 +12,12 @@
  * `values` empty = any value allowed (no validation); `default` empty = the
  * property is not added when the AI omits it, and may carry a moment template
  * like `{{YYYY.MM.DD}}` rendered at creation time.
+ *
+ * v0.8.2 简化 UI：每个属性由「暴露给 AI」开关 + 默认值 + 可选值组成。
+ * - `expose`：true = 暴露给 AI（可选值作 enum 约束）；false = AI 不可见、不可修改。
+ * - `overwrite`（仅 modify 工具）：true = 每次修改强制覆写默认值（如 created=时间戳）；
+ *   false = 原样保留（AI 也不可见，如 approve）。
+ * 缺省兼容旧数据：expose 缺省 ≈ values 非空；overwrite 缺省 ≈ values 空且 default 非空。
  */
 export interface YamlRule {
   /** Frontmatter property name. */
@@ -22,6 +28,10 @@ export interface YamlRule {
   values: string[];
   /** Default value; empty = not added when the AI omits it. */
   default: string;
+  /** v0.8.2：是否暴露给 AI（false = AI 不可见不可改）。 */
+  expose?: boolean;
+  /** v0.8.2（modify 工具）：是否每次修改强制覆写默认值。 */
+  overwrite?: boolean;
 }
 
 /**

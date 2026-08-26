@@ -476,16 +476,16 @@ class SettingsRenderer {
   }
 
   /**
-   * Render the "AI 修改属性规则" block (v0.8.2): 与「AI 创建属性规则」结构完全一致
-   * （键名 + 解释 + 可选值 tag + 默认值 + 增删），但数据源为 `settings.modifyYamlRules`——
-   * 仅作用于 modify_output_note / modify_output_note_versioned，与 create_note 分开配置。
-   * 「仅默认值」的键（values 空 + default 非空）AI 不可见、每次修改强制覆写。
+   * Render the "AI 修改属性规则" block (v0.8.2): 与「AI 创建属性规则」结构一致，
+   * 数据源 `settings.modifyYamlRules`——仅作用于 modify_output_note / modify_output_note_versioned。
+   * 每行：属性名 + 解释 + 默认值 + 「暴露给 AI」开关 + 「覆写默认值」开关（modify 专属）+ 删除；
+   * 不暴露时隐藏可选值 tag 区（AI 看不到、也禁止写入）。
    */
   private renderModifyYamlRules(containerEl: HTMLElement): void {
     const info = new Setting(containerEl)
       .setName('AI 修改属性规则（modify 工具）')
-      .setDesc('控制 AI 使用 modify_output_note / modify_output_note_versioned 时的 frontmatter 键值对（与「AI 创建属性规则」结构相同、内容独立）：键名+解释+可选值（回车逐个添加）+默认值。可选值用于约束 AI 只能选这些值，留空=任意；默认值支持 {{YYYY.MM.DD}} 等 moment 模板。默认值不会暴露给 AI——每次修改文件时自动覆写（AI 不知情）；只配了默认值、无可选值约束的属性键也不对 AI 显示。可选值与默认值都留空的键 = 隐藏属性：AI 不可见、不可修改，modify 也不改动它的值（原样保留，如 approve）。');
-    this.markSearchable(info, 'AI 修改属性规则 modify 工具 键名 解释 可选值 默认值 moment 模板');
+      .setDesc('控制 AI 使用 modify_output_note / modify_output_note_versioned 时的 frontmatter 键值对（与「AI 创建属性规则」结构相同、内容独立）：属性名 + 「暴露给 AI」开关 + 可选值 + 默认值 + 「覆写默认值」开关。暴露 = AI 可见可改（可选值作约束）；不暴露 = AI 看不到、禁止 AI 写入。「覆写默认值」开 = 每次修改强制覆写默认值（如 created=时间戳，支持 {{moment}} 模板）；关 = 不修改原值（原样保留，如 approve）。');
+    this.markSearchable(info, 'AI 修改属性规则 modify 工具 键名 解释 可选值 默认值 暴露 覆写 moment 模板');
 
     const list = this.plugin.settings.modifyYamlRules || [];
     list.forEach((rule, index) => {
@@ -504,7 +504,7 @@ class SettingsRenderer {
         )
         .addText((text) =>
           text
-            .setPlaceholder('解释该属性的含义（随工具描述传给 AI）')
+            .setPlaceholder('解释（暴露时随工具描述传给 AI）')
             .setValue(rule.desc)
             .onChange((value) => {
               rule.desc = value;
@@ -513,11 +513,31 @@ class SettingsRenderer {
         )
         .addText((text) =>
           text
-            .setPlaceholder('默认值（每次修改时强制覆写的值，支持 {{YYYY.MM.DD}}；留空=不覆写）')
+            .setPlaceholder('默认值（支持 {{YYYY.MM.DD}}；留空=不插入/不覆写）')
             .setValue(rule.default)
             .onChange((value) => {
               rule.default = value;
               void this.plugin.saveSettings();
+            })
+        )
+        .addToggle((toggle) =>
+          toggle
+            .setValue(this.resolveUiExpose(rule))
+            .setTooltip('暴露给 AI')
+            .onChange((v) => {
+              rule.expose = v;
+              void this.plugin.saveSettings();
+              this.renderModifyYamlRules(containerEl);
+            })
+        )
+        .addToggle((toggle) =>
+          toggle
+            .setValue(this.resolveUiOverwrite(rule))
+            .setTooltip('覆写默认值')
+            .onChange((v) => {
+              rule.overwrite = v;
+              void this.plugin.saveSettings();
+              this.renderModifyYamlRules(containerEl);
             })
         )
         .addButton((btn) =>
@@ -534,10 +554,12 @@ class SettingsRenderer {
       row.settingEl.addClass('ks-yaml-rule-row');
       this.markSearchable(row, hay);
 
-      // 可选值 tag 输入区（与创建规则同款）。
-      const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
-      valuesEl.setAttribute('data-search', hay);
-      this.renderYamlValues(valuesEl, rule);
+      // 可选值 tag 输入区：仅「暴露给 AI」时显示。
+      if (this.resolveUiExpose(rule)) {
+        const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
+        valuesEl.setAttribute('data-search', hay);
+        this.renderYamlValues(valuesEl, rule);
+      }
     });
 
     const addBtn = new Setting(containerEl)
@@ -545,12 +567,29 @@ class SettingsRenderer {
       .setDesc('')
       .addButton((btn) =>
         btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
-          this.plugin.settings.modifyYamlRules.push({ key: '', desc: '', values: [], default: '' });
+          this.plugin.settings.modifyYamlRules.push({ key: '', desc: '', values: [], default: '', expose: true, overwrite: false });
           void this.plugin.saveSettings();
           this.renderModifyYamlRules(containerEl);
         })
       );
     this.markSearchable(addBtn, 'AI 修改属性规则 添加规则 增加 添加');
+  }
+
+  /** UI 侧 expose 解析（与工具层 resolveRuleExpose 同语义，避免 import 工具模块）。 */
+  private resolveUiExpose(rule: { expose?: boolean; values?: string[] }): boolean {
+    if (rule.expose === true) return true;
+    if (rule.expose === false) return false;
+    return Array.isArray(rule.values) && rule.values.length > 0;
+  }
+
+  /** UI 侧 overwrite 解析（与工具层 resolveRuleOverwrite 同语义）。 */
+  private resolveUiOverwrite(rule: { overwrite?: boolean; values?: string[]; default?: string }): boolean {
+    if (rule.overwrite === true) return true;
+    if (rule.overwrite === false) return false;
+    return (
+      (!Array.isArray(rule.values) || rule.values.length === 0) &&
+      String(rule.default ?? '').trim() !== ''
+    );
   }
 
   /** Render each extra property as a row: key input, value input, delete button. */
@@ -607,13 +646,13 @@ class SettingsRenderer {
 
     const info = new Setting(containerEl)
       .setName('')
-      .setDesc('控制 AI 使用 create_note 工具时的 frontmatter 键值对：键名+解释+可选值（回车逐个添加，显示为 chip）+默认值；默认值支持 {{YYYY.MM.DD}} 等 moment 模板，{{}} 内为 moment 兼容格式；可选值用于约束 AI 只能选这些值，留空=任意。默认值不会暴露给 AI——AI 创建文件时自动追加（AI 不知情）；只配了默认值、无可选值约束的属性键也不对 AI 显示。');
-    this.markSearchable(info, 'AI 创建属性规则 键名 解释 可选值 默认值 moment 模板 frontmatter');
+      .setDesc('控制 AI 使用 create_note 工具时的 frontmatter 键值对：属性名 + 「暴露给 AI」开关 + 可选值 + 默认值。暴露 = AI 可见（可选值作约束，留空=任意），默认值=AI 未填时自动补；不暴露 = AI 完全看不到、也禁止 AI 写入，创建时自动追加默认值。默认值支持 {{YYYY.MM.DD}} 等 moment 模板。');
+    this.markSearchable(info, 'AI 创建属性规则 键名 解释 可选值 默认值 暴露 moment 模板 frontmatter');
 
     // v0.8.0：限制 AI 只能使用「已配置的属性」——create_note / modify_output_note* 的 yaml 键必须在规则集内。
     const restrict = new Setting(containerEl)
       .setName('限制 AI 只能使用已配置的属性')
-      .setDesc('开启后，create_note / modify_output_note / modify_output_note_versioned 的 yaml 键只能在「AI 创建属性规则」里配置；规则外键会被拒绝（默认关闭，兼容现状）。')
+      .setDesc('开启后，create_note / modify_output_note / modify_output_note_versioned 的 yaml 键只能在对应属性规则里配置；规则外键会被拒绝（默认关闭，兼容现状）。')
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.createRestrictYaml)
@@ -638,7 +677,7 @@ class SettingsRenderer {
         )
         .addText((text) =>
           text
-            .setPlaceholder('解释该属性的含义（随工具描述传给 AI）')
+            .setPlaceholder('解释（暴露时随工具描述传给 AI）')
             .setValue(rule.desc)
             .onChange((value) => {
               rule.desc = value;
@@ -647,11 +686,21 @@ class SettingsRenderer {
         )
         .addText((text) =>
           text
-            .setPlaceholder('默认值（AI 未填此键时创建文件自动插入的值，支持 {{YYYY.MM.DD}}；留空=不插入）')
+            .setPlaceholder('默认值（AI 未填此键时自动插入，支持 {{YYYY.MM.DD}}；留空=不插入）')
             .setValue(rule.default)
             .onChange((value) => {
               rule.default = value;
               void this.plugin.saveSettings();
+            })
+        )
+        .addToggle((toggle) =>
+          toggle
+            .setValue(this.resolveUiExpose(rule))
+            .setTooltip('暴露给 AI')
+            .onChange((v) => {
+              rule.expose = v;
+              void this.plugin.saveSettings();
+              this.renderYamlRules(containerEl);
             })
         )
         .addButton((btn) =>
@@ -668,10 +717,12 @@ class SettingsRenderer {
       row.settingEl.addClass('ks-yaml-rule-row');
       this.markSearchable(row, hay);
 
-      // 可选值 tag 输入区：输入后回车添加 chip，chips 带 × 删除；同值去重；顺序=添加顺序。
-      const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
-      valuesEl.setAttribute('data-search', hay);
-      this.renderYamlValues(valuesEl, rule);
+      // 可选值 tag 输入区：仅「暴露给 AI」时显示。
+      if (this.resolveUiExpose(rule)) {
+        const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
+        valuesEl.setAttribute('data-search', hay);
+        this.renderYamlValues(valuesEl, rule);
+      }
     });
 
     const addBtn = new Setting(containerEl)
@@ -679,7 +730,7 @@ class SettingsRenderer {
       .setDesc('')
       .addButton((btn) =>
         btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
-          this.plugin.settings.yamlRules.push({ key: '', desc: '', values: [], default: '' });
+          this.plugin.settings.yamlRules.push({ key: '', desc: '', values: [], default: '', expose: true });
           void this.plugin.saveSettings();
           this.renderYamlRules(containerEl);
         })

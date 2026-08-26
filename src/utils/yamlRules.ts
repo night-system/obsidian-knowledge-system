@@ -167,11 +167,10 @@ export function applyDefaults(
 }
 
 /**
- * 覆写「固定默认」属性（v0.8.2，modify 工具用）：把 yamlRules 中「仅默认值」的键
- * （`values` 空 + `default` 非空，即不暴露给 AI 的固定属性，如 created=时间戳）
- * **每次修改都强制覆写**为渲染后的默认值——与 `applyDefaults` 的「AI 未填才补」
- * 不同：modify 工具每次更新时都刷新这些属性（例如 created 记录本次修改时间）。
- * create 与 modify 共用同一份 yamlRules 配置，只是语义不同。
+ * 覆写「固定默认」属性（v0.8.2，modify 工具用）：只覆写 `overwrite` 为真且
+ * `default` 非空的键（如 created=时间戳：每次修改强制覆写为渲染后的默认值）；
+ * `overwrite` 为假（或缺省时 values 非空）的键原样保留。`overwrite` 缺省兼容
+ * 旧数据：values 空且 default 非空视为覆写。
  * 返回新对象（不动入参）。
  */
 export function applyFixedDefaults(
@@ -182,7 +181,12 @@ export function applyFixedDefaults(
   const out: Record<string, unknown> = { ...(obj ?? {}) };
   for (const rule of rules ?? []) {
     if (!rule || !rule.key) continue;
-    if (rule.values && rule.values.length > 0) continue; // 有可选值约束 = 暴露给 AI，不覆写
+    const overwrite =
+      rule.overwrite === true ||
+      (rule.overwrite === undefined &&
+        (!Array.isArray(rule.values) || rule.values.length === 0) &&
+        String(rule.default ?? '').trim() !== '');
+    if (!overwrite) continue;
     if (String(rule.default ?? '').trim() === '') continue; // 无默认 → 跳过
     out[rule.key] = renderDefaultValue(rule.default, opts.moment, opts.now);
   }

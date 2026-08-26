@@ -125,18 +125,42 @@ export function buildAnthropicTools(
  * (v0.5.0) is preserved.
  */
 /**
+ * v0.8.2：规则键是否暴露给 AI。显式 `expose` 优先；缺省兼容旧数据：
+ * 旧配置无可选值（values 空）即视为隐藏，有可选值视为暴露。
+ */
+export function resolveRuleExpose(rule: YamlRule): boolean {
+  if (rule.expose === true) return true;
+  if (rule.expose === false) return false;
+  return Array.isArray(rule.values) && rule.values.length > 0;
+}
+
+/**
+ * v0.8.2（modify 工具）：规则键是否「每次修改强制覆写默认值」。显式 `overwrite`
+ * 优先；缺省兼容旧数据：旧配置「values 空且 default 非空」即视为覆写
+ * （如 created=时间戳），其余视为原样保留。
+ */
+export function resolveRuleOverwrite(rule: YamlRule): boolean {
+  if (rule.overwrite === true) return true;
+  if (rule.overwrite === false) return false;
+  return (
+    (!Array.isArray(rule.values) || rule.values.length === 0) &&
+    String(rule.default ?? '').trim() !== ''
+  );
+}
+
+/**
  * 构建 `create_note` / `modify_output_note*` 共用的 yaml 属性 schema 与描述：
- * 只暴露「有可选值约束」的键（否则该键对 AI 隐藏）；`restrictYaml` 开启时描述加
+ * 只暴露「expose 为真」的键（其余对 AI 隐藏）；`restrictYaml` 开启时描述加
  * 「只能使用已配置的属性」提示。`rejectWord` 控制越界时的措辞（创建/修改）。
  */
 function buildYamlSchema(rules: YamlRule[], restrictYaml: boolean, rejectWord: string): { yamlSchema: any; yamlDesc: string } {
-  const exposedRules = rules.filter((r) => r.key && r.values && r.values.length > 0);
+  const exposedRules = rules.filter((r) => r.key && resolveRuleExpose(r));
   const yamlDesc =
     'frontmatter 键值对对象（YAML frontmatter 区）。' +
     (restrictYaml
       ? '只能使用已配置的属性（下面的属性规则）——规则未列出的键名不允许使用。'
       : '项目已配置以下属性规则：') +
-    exposedRules.map((r) => `- ${r.key}：${r.desc}（可选值：${r.values.join('/')}）`).join('\n') +
+    exposedRules.map((r) => `- ${r.key}：${r.desc}${r.values && r.values.length > 0 ? `（可选值：${r.values.join('/')}）` : ''}`).join('\n') +
     (restrictYaml
       ? (exposedRules.length > 0 ? `\n规则内键名请严格遵守可选值，否则会被拒绝。` : '')
       : `\n规则未列出的键名可以随意添加；规则内键名请严格遵守可选值，否则${rejectWord}会被拒绝。`);
@@ -147,7 +171,7 @@ function buildYamlSchema(rules: YamlRule[], restrictYaml: boolean, rejectWord: s
       props[r.key] = {
         type: 'string',
         description: r.desc,
-        ...(r.values.length ? { enum: r.values } : {}),
+        ...(r.values && r.values.length ? { enum: r.values } : {}),
       };
     }
     yamlSchema.properties = props;
@@ -492,8 +516,11 @@ export async function createNoteTool(
 
   const rules = settings.yamlRules ?? [];
   const restrictYaml = settings.createRestrictYaml === true;
+  const hiddenKeys = (rules || [])
+    .filter((r) => r && r.key && !resolveRuleExpose(r))
+    .map((r) => r.key);
   const obj = parseYamlObject(args?.yaml);
-  const err = validateAiYaml(obj, rules, restrictYaml);
+  const err = validateAiYaml(obj, rules, restrictYaml, hiddenKeys);
   if (err) return { error: err }; // 校验失败：不落盘，错误回给 AI
 
   const moment = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
@@ -877,11 +904,11 @@ export async function modifyOutputNoteTool(
   const body = stripFrontmatter(raw);
 
   // yaml 白名单/规则校验（modify 用独立的 modifyYamlRules，与 create 的 yamlRules 分开）。
-  // v0.8.2 隐藏属性：可选值与默认值都留空的键 = AI 不可见、不可修改（原样保留）。
+  // v0.8.2 隐藏属性：expose=false 的键 = AI 不可见、不可修改（原样保留）。
   const rules = settings.modifyYamlRules ?? [];
   const restrictYaml = settings.createRestrictYaml === true;
   const hiddenKeys = (rules || [])
-    .filter((r) => r && r.key && (!r.values || r.values.length === 0) && String(r.default ?? '').trim() === '')
+    .filter((r) => r && r.key && !resolveRuleExpose(r))
     .map((r) => r.key);
   const aiYaml = parseYamlObject(args?.yaml);
   const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml, hiddenKeys);
@@ -930,11 +957,11 @@ export async function modifyOutputNoteVersionedTool(
   const body = stripFrontmatter(raw);
 
   // yaml + sections 校验（modify 用独立的 modifyYamlRules，与 create 的 yamlRules 分开）。
-  // v0.8.2 隐藏属性：可选值与默认值都留空的键 = AI 不可见、不可修改（原样保留）。
+  // v0.8.2 隐藏属性：expose=false 的键 = AI 不可见、不可修改（原样保留）。
   const rules = settings.modifyYamlRules ?? [];
   const restrictYaml = settings.createRestrictYaml === true;
   const hiddenKeys = (rules || [])
-    .filter((r) => r && r.key && (!r.values || r.values.length === 0) && String(r.default ?? '').trim() === '')
+    .filter((r) => r && r.key && !resolveRuleExpose(r))
     .map((r) => r.key);
   const aiYaml = parseYamlObject(args?.yaml);
   const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml, hiddenKeys);

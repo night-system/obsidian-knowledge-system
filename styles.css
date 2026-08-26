@@ -1083,3 +1083,222 @@
   font-size: var(--font-ui-small);
   font-family: var(--font-monospace);
 }
+
+/* ====================================================================== */
+/* UI 方案陈列（v0.8.1 设置页「UI 方案」tab）                              */
+/* ====================================================================== */
+
+.ks-ui-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  margin-top: var(--size-2-2);
+}
+
+.ks-ui-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  padding: var(--size-4-2);
+}
+
+.ks-ui-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  margin-bottom: var(--size-2-1);
+}
+
+.ks-ui-card-title {
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+.ks-ui-card-tag {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  padding: 1px var(--size-2-1);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
+
+.ks-ui-card-desc {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  margin-bottom: var(--size-2-2);
+  line-height: var(--line-height-normal);
+}
+
+/* 迷你 mock：固定高度 + 内部滚动不可见（纯展示） */
+.ks-ui-mock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-2);
+  padding: var(--size-2-2);
+  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  overflow: hidden;
+  max-height: 220px;
+}
+
+.ks-ui-msg {
+  max-width: 85%;
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-normal);
+  padding: var(--size-2-1) var(--size-2-2);
+  word-break: break-word;
+}
+
+/* 方案 1：dsh 风格（现状）—— 用户右对齐气泡 + AI 通栏 */
+.ks-ui-v1 .ks-ui-user {
+  align-self: flex-end;
+  background: var(--background-modifier-hover);
+  border-radius: 16px 16px 4px 16px;
+  color: var(--text-normal);
+}
+.ks-ui-v1 .ks-ui-ai {
+  align-self: stretch;
+  background: transparent;
+  color: var(--text-normal);
+}
+.ks-ui-v1 .ks-ui-ai-head {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  margin-bottom: var(--size-2-1);
+}
+
+/* 方案 2：双气泡 IM 风格 —— 用户右深色 / AI 左浅色 */
+.ks-ui-v2 .ks-ui-user {
+  align-self: flex-end;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 16px 16px 4px 16px;
+}
+.ks-ui-v2 .ks-ui-ai {
+  align-self: flex-start;
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  border-radius: 16px 16px 16px 4px;
+}
+
+/* 方案 3：极简文本流 —— 无气泡，细分割线 */
+.ks-ui-v3 .ks-ui-msg {
+  padding: var(--size-2-1) 0;
+}
+.ks-ui-v3 .ks-ui-user {
+  align-self: flex-end;
+  background: transparent;
+  color: var(--text-normal);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.ks-ui-v3 .ks-ui-ai {
+  align-self: stretch;
+  background: transparent;
+  color: var(--text-normal);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* 方案 4：卡片式消息 —— 每条独立卡片 */
+.ks-ui-v4 .ks-ui-msg {
+  align-self: stretch;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  color: var(--text-normal);
+}
+.ks-ui-v4 .ks-ui-user {
+  border-left: 3px solid var(--interactive-accent);
+}
+
+/* 方案 5：沉浸单栏 —— 用户小胶囊右上 / AI 通栏 */
+.ks-ui-v5 .ks-ui-user {
+  align-self: flex-end;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: var(--radius-m);
+  font-size: var(--font-ui-smaller);
+  padding: 2px var(--size-2-2);
+}
+.ks-ui-v5 .ks-ui-ai {
+  align-self: stretch;
+  background: transparent;
+  color: var(--text-normal);
+}
+.ks-ui-v5 .ks-ui-ai-head {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+/* 方案 6：分屏大输入区 —— 输入独立面板 */
+.ks-ui-v6 {
+  gap: var(--size-2-2);
+}
+.ks-ui-v6 .ks-ui-input {
+  flex: 1;
+  min-height: 80px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+  padding: var(--size-2-2);
+  display: flex;
+  align-items: flex-start;
+}
+.ks-ui-v6 .ks-ui-input-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--size-2-2);
+}
+.ks-ui-v6 .ks-ui-input-tools {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.ks-ui-v6 .ks-ui-input-send {
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-ui-small);
+}
+
+/* 输入区通用 mock（方案 1/2/3/4/5 共用同一输入条形态） */
+.ks-ui-input {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+  padding: var(--size-2-2);
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+}
+.ks-ui-input-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--size-2-2);
+}
+.ks-ui-input-tools {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.ks-ui-input-send {
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-ui-small);
+}

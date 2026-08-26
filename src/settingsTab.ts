@@ -5,7 +5,7 @@ import { countRecentFiles, outputLatestContent } from './core';
 import type KnowledgeSystemPlugin from './main';
 
 /** The settings tabs; `test` is the 5th (test tools), `preset` the 6th (v0.5.0). */
-export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'test' | 'preset';
+export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'test' | 'preset' | 'uiPreview';
 
 /** Stable tool order for the preset tool-config editors (v0.7.0 B.2). */
 const TOOL_NAMES = ['list_recent_notes', 'read_note', 'create_note', 'update_note_yaml', 'search_output_notes', 'modify_output_note', 'modify_output_note_versioned', 'read_output_note'];
@@ -77,6 +77,7 @@ class SettingsRenderer {
       { id: 'output', label: '输出属性' },
       { id: 'test', label: '测试工具' },
       { id: 'preset', label: '预设' },
+      { id: 'uiPreview', label: 'UI 方案' },
     ];
 
     const tabsEl = containerEl.createDiv({ cls: 'ks-tabs' });
@@ -112,6 +113,9 @@ class SettingsRenderer {
         break;
       case 'preset':
         this.renderPresetGroup(containerEl);
+        break;
+      case 'uiPreview':
+        this.renderUiPreviewGroup(containerEl);
         break;
     }
   }
@@ -1314,6 +1318,69 @@ class SettingsRenderer {
         })
       );
     this.markSearchable(addBtn, '预设 阉割版 添加键');
+  }
+
+  // -------------------------------------------------------------------------
+  // UI 方案陈列（v0.8.1：移动端 UI 方案挑选——用户在安卓上对比可用性后决定聊天视图最终布局）
+  // -------------------------------------------------------------------------
+
+  /** Render a mini chat mockup for one UI scheme. */
+  private uiMock(scene: 'chat' | 'input', cls: string, title: string, desc: string): HTMLElement {
+    const card = this.containerEl.createDiv({ cls: 'ks-ui-card' });
+    const head = card.createDiv({ cls: 'ks-ui-card-head' });
+    head.createSpan({ cls: 'ks-ui-card-title', text: title });
+    head.createSpan({ cls: 'ks-ui-card-tag', text: cls.replace(/^ks-ui-/, '') });
+    card.createDiv({ cls: 'ks-ui-card-desc', text: desc });
+
+    const mock = card.createDiv({ cls: `ks-ui-mock ${cls}` });
+    if (scene === 'chat') {
+      const u1 = mock.createDiv({ cls: 'ks-ui-msg ks-ui-user' });
+      u1.setText('帮我总结一下最近一周的笔记');
+      const a1 = mock.createDiv({ cls: 'ks-ui-msg ks-ui-ai' });
+      a1.createDiv({ cls: 'ks-ui-ai-head', text: 'AI · 思考中' });
+      a1.createDiv({ cls: 'ks-ui-ai-body' }).setText('好的，我先查看最近 7 天的笔记，然后为你整理一份摘要。');
+      const u2 = mock.createDiv({ cls: 'ks-ui-msg ks-ui-user' });
+      u2.setText('好的，请继续');
+      const a2 = mock.createDiv({ cls: 'ks-ui-msg ks-ui-ai' });
+      a2.createDiv({ cls: 'ks-ui-ai-head', text: 'AI · 已完成' });
+      a2.createDiv({ cls: 'ks-ui-ai-body' }).setText('已完成整理，共 12 篇笔记，要点如下：…');
+    } else {
+      const ta = mock.createDiv({ cls: 'ks-ui-input' });
+      ta.setText('输入消息…（Enter 发送 / Shift+Enter 换行）');
+      const row = mock.createDiv({ cls: 'ks-ui-input-row' });
+      row.createSpan({ cls: 'ks-ui-input-tools', text: '预设 ▾' });
+      row.createSpan({ cls: 'ks-ui-input-send', text: '↑' });
+    }
+    return card;
+  }
+
+  private renderUiPreviewGroup(containerEl: HTMLElement): void {
+    const bodyEl = this.createGroup(containerEl, '聊天 UI 方案陈列', false);
+
+    const info = new Setting(bodyEl)
+      .setName('')
+      .setDesc('以下是聊天界面的候选布局方案（迷你预览）。请在移动端查看每个方案的消息区与输入区效果，然后告诉我你喜欢哪个编号，我会把它实现为聊天视图的实际布局。');
+    this.markSearchable(info, 'UI 方案 聊天 布局 气泡 输入框 预览');
+
+    const grid = bodyEl.createDiv({ cls: 'ks-ui-grid' });
+
+    // 方案 1：当前 dsh 风格（用户气泡 + AI 通栏 + 输入卡列式）——现状
+    this.uiMock('chat', 'ks-ui-v1', '方案 1：dsh 风格（现状）', '用户右对齐气泡（22px 圆角、浅蓝底）、AI 通栏无边框、输入卡列式（上输入区 + 下按钮行）。桌面美观，移动端需验证窄屏。');
+    // 方案 2：双气泡 IM 风格
+    this.uiMock('chat', 'ks-ui-v2', '方案 2：双气泡 IM 风格', '用户右对齐深色气泡、AI 左对齐浅色气泡，两者都带圆角与最大宽度。聊天感强，移动端易读。');
+    // 方案 3：极简文本流
+    this.uiMock('chat', 'ks-ui-v3', '方案 3：极简文本流', '无气泡无边框，用户右对齐浅底、AI 左对齐通栏，消息间细分割线。最朴素，加载最轻。');
+    // 方案 4：卡片式消息
+    this.uiMock('chat', 'ks-ui-v4', '方案 4：卡片式消息', '每条消息独立圆角卡片（边框 + 背景），上下堆叠。结构清晰，移动端可点区域大。');
+    // 方案 5：沉浸单栏
+    this.uiMock('chat', 'ks-ui-v5', '方案 5：沉浸单栏', 'AI 全宽 markdown 流 + 用户小胶囊右上角，输入条悬浮底部（半透明）。类似 Claude 桌面观感。');
+    // 方案 6：分屏输入
+    this.uiMock('input', 'ks-ui-v6', '方案 6：分屏大输入区', '消息区在上、输入区固定底部且更高（4-6 行），适合移动端长输入。输入区独立成面板。');
+
+    const note = new Setting(bodyEl)
+      .setName('')
+      .setDesc('提示：以上均为静态预览，仅用于挑选布局方向。确定方案后我会把聊天视图改造成该布局，并保留现有全部功能（流式 markdown / 工具卡片 / 思考块 / 错误复制等）。');
+    this.markSearchable(note, 'UI 方案 提示 说明 挑选');
   }
 
   // -------------------------------------------------------------------------

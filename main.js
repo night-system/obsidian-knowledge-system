@@ -642,7 +642,8 @@ var SettingsRenderer = class {
       { id: "time", label: "\u65F6\u95F4" },
       { id: "output", label: "\u8F93\u51FA\u5C5E\u6027" },
       { id: "test", label: "\u6D4B\u8BD5\u5DE5\u5177" },
-      { id: "preset", label: "\u9884\u8BBE" }
+      { id: "preset", label: "\u9884\u8BBE" },
+      { id: "uiPreview", label: "UI \u65B9\u6848" }
     ];
     const tabsEl = containerEl.createDiv({ cls: "ks-tabs" });
     for (const tab of tabs) {
@@ -676,6 +677,9 @@ var SettingsRenderer = class {
         break;
       case "preset":
         this.renderPresetGroup(containerEl);
+        break;
+      case "uiPreview":
+        this.renderUiPreviewGroup(containerEl);
         break;
     }
   }
@@ -1552,6 +1556,51 @@ var SettingsRenderer = class {
       })
     );
     this.markSearchable(addBtn, "\u9884\u8BBE \u9609\u5272\u7248 \u6DFB\u52A0\u952E");
+  }
+  // -------------------------------------------------------------------------
+  // UI 方案陈列（v0.8.1：移动端 UI 方案挑选——用户在安卓上对比可用性后决定聊天视图最终布局）
+  // -------------------------------------------------------------------------
+  /** Render a mini chat mockup for one UI scheme. */
+  uiMock(scene, cls, title, desc) {
+    const card = this.containerEl.createDiv({ cls: "ks-ui-card" });
+    const head = card.createDiv({ cls: "ks-ui-card-head" });
+    head.createSpan({ cls: "ks-ui-card-title", text: title });
+    head.createSpan({ cls: "ks-ui-card-tag", text: cls.replace(/^ks-ui-/, "") });
+    card.createDiv({ cls: "ks-ui-card-desc", text: desc });
+    const mock = card.createDiv({ cls: `ks-ui-mock ${cls}` });
+    if (scene === "chat") {
+      const u1 = mock.createDiv({ cls: "ks-ui-msg ks-ui-user" });
+      u1.setText("\u5E2E\u6211\u603B\u7ED3\u4E00\u4E0B\u6700\u8FD1\u4E00\u5468\u7684\u7B14\u8BB0");
+      const a1 = mock.createDiv({ cls: "ks-ui-msg ks-ui-ai" });
+      a1.createDiv({ cls: "ks-ui-ai-head", text: "AI \xB7 \u601D\u8003\u4E2D" });
+      a1.createDiv({ cls: "ks-ui-ai-body" }).setText("\u597D\u7684\uFF0C\u6211\u5148\u67E5\u770B\u6700\u8FD1 7 \u5929\u7684\u7B14\u8BB0\uFF0C\u7136\u540E\u4E3A\u4F60\u6574\u7406\u4E00\u4EFD\u6458\u8981\u3002");
+      const u2 = mock.createDiv({ cls: "ks-ui-msg ks-ui-user" });
+      u2.setText("\u597D\u7684\uFF0C\u8BF7\u7EE7\u7EED");
+      const a2 = mock.createDiv({ cls: "ks-ui-msg ks-ui-ai" });
+      a2.createDiv({ cls: "ks-ui-ai-head", text: "AI \xB7 \u5DF2\u5B8C\u6210" });
+      a2.createDiv({ cls: "ks-ui-ai-body" }).setText("\u5DF2\u5B8C\u6210\u6574\u7406\uFF0C\u5171 12 \u7BC7\u7B14\u8BB0\uFF0C\u8981\u70B9\u5982\u4E0B\uFF1A\u2026");
+    } else {
+      const ta = mock.createDiv({ cls: "ks-ui-input" });
+      ta.setText("\u8F93\u5165\u6D88\u606F\u2026\uFF08Enter \u53D1\u9001 / Shift+Enter \u6362\u884C\uFF09");
+      const row = mock.createDiv({ cls: "ks-ui-input-row" });
+      row.createSpan({ cls: "ks-ui-input-tools", text: "\u9884\u8BBE \u25BE" });
+      row.createSpan({ cls: "ks-ui-input-send", text: "\u2191" });
+    }
+    return card;
+  }
+  renderUiPreviewGroup(containerEl) {
+    const bodyEl = this.createGroup(containerEl, "\u804A\u5929 UI \u65B9\u6848\u9648\u5217", false);
+    const info = new import_obsidian3.Setting(bodyEl).setName("").setDesc("\u4EE5\u4E0B\u662F\u804A\u5929\u754C\u9762\u7684\u5019\u9009\u5E03\u5C40\u65B9\u6848\uFF08\u8FF7\u4F60\u9884\u89C8\uFF09\u3002\u8BF7\u5728\u79FB\u52A8\u7AEF\u67E5\u770B\u6BCF\u4E2A\u65B9\u6848\u7684\u6D88\u606F\u533A\u4E0E\u8F93\u5165\u533A\u6548\u679C\uFF0C\u7136\u540E\u544A\u8BC9\u6211\u4F60\u559C\u6B22\u54EA\u4E2A\u7F16\u53F7\uFF0C\u6211\u4F1A\u628A\u5B83\u5B9E\u73B0\u4E3A\u804A\u5929\u89C6\u56FE\u7684\u5B9E\u9645\u5E03\u5C40\u3002");
+    this.markSearchable(info, "UI \u65B9\u6848 \u804A\u5929 \u5E03\u5C40 \u6C14\u6CE1 \u8F93\u5165\u6846 \u9884\u89C8");
+    const grid = bodyEl.createDiv({ cls: "ks-ui-grid" });
+    this.uiMock("chat", "ks-ui-v1", "\u65B9\u6848 1\uFF1Adsh \u98CE\u683C\uFF08\u73B0\u72B6\uFF09", "\u7528\u6237\u53F3\u5BF9\u9F50\u6C14\u6CE1\uFF0822px \u5706\u89D2\u3001\u6D45\u84DD\u5E95\uFF09\u3001AI \u901A\u680F\u65E0\u8FB9\u6846\u3001\u8F93\u5165\u5361\u5217\u5F0F\uFF08\u4E0A\u8F93\u5165\u533A + \u4E0B\u6309\u94AE\u884C\uFF09\u3002\u684C\u9762\u7F8E\u89C2\uFF0C\u79FB\u52A8\u7AEF\u9700\u9A8C\u8BC1\u7A84\u5C4F\u3002");
+    this.uiMock("chat", "ks-ui-v2", "\u65B9\u6848 2\uFF1A\u53CC\u6C14\u6CE1 IM \u98CE\u683C", "\u7528\u6237\u53F3\u5BF9\u9F50\u6DF1\u8272\u6C14\u6CE1\u3001AI \u5DE6\u5BF9\u9F50\u6D45\u8272\u6C14\u6CE1\uFF0C\u4E24\u8005\u90FD\u5E26\u5706\u89D2\u4E0E\u6700\u5927\u5BBD\u5EA6\u3002\u804A\u5929\u611F\u5F3A\uFF0C\u79FB\u52A8\u7AEF\u6613\u8BFB\u3002");
+    this.uiMock("chat", "ks-ui-v3", "\u65B9\u6848 3\uFF1A\u6781\u7B80\u6587\u672C\u6D41", "\u65E0\u6C14\u6CE1\u65E0\u8FB9\u6846\uFF0C\u7528\u6237\u53F3\u5BF9\u9F50\u6D45\u5E95\u3001AI \u5DE6\u5BF9\u9F50\u901A\u680F\uFF0C\u6D88\u606F\u95F4\u7EC6\u5206\u5272\u7EBF\u3002\u6700\u6734\u7D20\uFF0C\u52A0\u8F7D\u6700\u8F7B\u3002");
+    this.uiMock("chat", "ks-ui-v4", "\u65B9\u6848 4\uFF1A\u5361\u7247\u5F0F\u6D88\u606F", "\u6BCF\u6761\u6D88\u606F\u72EC\u7ACB\u5706\u89D2\u5361\u7247\uFF08\u8FB9\u6846 + \u80CC\u666F\uFF09\uFF0C\u4E0A\u4E0B\u5806\u53E0\u3002\u7ED3\u6784\u6E05\u6670\uFF0C\u79FB\u52A8\u7AEF\u53EF\u70B9\u533A\u57DF\u5927\u3002");
+    this.uiMock("chat", "ks-ui-v5", "\u65B9\u6848 5\uFF1A\u6C89\u6D78\u5355\u680F", "AI \u5168\u5BBD markdown \u6D41 + \u7528\u6237\u5C0F\u80F6\u56CA\u53F3\u4E0A\u89D2\uFF0C\u8F93\u5165\u6761\u60AC\u6D6E\u5E95\u90E8\uFF08\u534A\u900F\u660E\uFF09\u3002\u7C7B\u4F3C Claude \u684C\u9762\u89C2\u611F\u3002");
+    this.uiMock("input", "ks-ui-v6", "\u65B9\u6848 6\uFF1A\u5206\u5C4F\u5927\u8F93\u5165\u533A", "\u6D88\u606F\u533A\u5728\u4E0A\u3001\u8F93\u5165\u533A\u56FA\u5B9A\u5E95\u90E8\u4E14\u66F4\u9AD8\uFF084-6 \u884C\uFF09\uFF0C\u9002\u5408\u79FB\u52A8\u7AEF\u957F\u8F93\u5165\u3002\u8F93\u5165\u533A\u72EC\u7ACB\u6210\u9762\u677F\u3002");
+    const note = new import_obsidian3.Setting(bodyEl).setName("").setDesc("\u63D0\u793A\uFF1A\u4EE5\u4E0A\u5747\u4E3A\u9759\u6001\u9884\u89C8\uFF0C\u4EC5\u7528\u4E8E\u6311\u9009\u5E03\u5C40\u65B9\u5411\u3002\u786E\u5B9A\u65B9\u6848\u540E\u6211\u4F1A\u628A\u804A\u5929\u89C6\u56FE\u6539\u9020\u6210\u8BE5\u5E03\u5C40\uFF0C\u5E76\u4FDD\u7559\u73B0\u6709\u5168\u90E8\u529F\u80FD\uFF08\u6D41\u5F0F markdown / \u5DE5\u5177\u5361\u7247 / \u601D\u8003\u5757 / \u9519\u8BEF\u590D\u5236\u7B49\uFF09\u3002");
+    this.markSearchable(note, "UI \u65B9\u6848 \u63D0\u793A \u8BF4\u660E \u6311\u9009");
   }
   // -------------------------------------------------------------------------
   // model fetching

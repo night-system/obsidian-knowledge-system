@@ -122,12 +122,13 @@
 
 /* AI 创建属性规则 rows (key + desc + allowed values + default + delete). */
 .ks-yaml-rule-row .setting-item-control {
-  flex-wrap: nowrap;
+  flex-wrap: wrap; /* v0.8.2：移动端控件多时换行，避免横向溢出 */
   gap: var(--size-2-2);
 }
 
 .ks-yaml-rule-row .setting-item-control .text-input {
   min-width: 8em;
+  flex: 1 1 10em;
 }
 
 /* Standalone settings view (workspace leaf). */

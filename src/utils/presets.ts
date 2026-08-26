@@ -66,15 +66,37 @@ export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedTo
   const preset = findActivePreset(settings);
   const oc = preset?.outputConfig;
 
-  // 预设级「输出属性」覆盖：定义了的用预设值，未定义的用全局。
-  const yamlRules = Array.isArray(oc?.yamlRules) ? oc.yamlRules! : Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
-  const modifyYamlRules = Array.isArray(oc?.modifyYamlRules) ? oc.modifyYamlRules! : Array.isArray(settings.modifyYamlRules) ? settings.modifyYamlRules : [];
-  const noteTemplate = Array.isArray(oc?.noteTemplate) ? oc.noteTemplate! : Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
+  // 预设级「输出属性」覆盖：每个覆盖项由 `xxxEnabled` 开关控制——开 = 用预设值，
+  // 关/缺省 = 继承默认预设（全局设置）。关闭只切标志、不删数据。
+  const yamlRules =
+    oc?.yamlRulesEnabled === true && Array.isArray(oc.yamlRules)
+      ? oc.yamlRules
+      : Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
+  const modifyYamlRules =
+    oc?.modifyYamlRulesEnabled === true && Array.isArray(oc.modifyYamlRules)
+      ? oc.modifyYamlRules
+      : Array.isArray(settings.modifyYamlRules) ? settings.modifyYamlRules : [];
+  const noteTemplate =
+    oc?.noteTemplateEnabled === true && Array.isArray(oc.noteTemplate)
+      ? oc.noteTemplate
+      : Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
   const updateYamlRules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
-  const createRestrictYaml = oc?.createRestrictYaml !== undefined ? oc.createRestrictYaml : settings.createRestrictYaml === true;
-  const modifyVersionSuffix = oc?.modifyVersionSuffix !== undefined ? oc.modifyVersionSuffix : settings.modifyVersionSuffix;
-  const modifyVersionProperty = oc?.modifyVersionProperty !== undefined ? oc.modifyVersionProperty : settings.modifyVersionProperty;
-  const modifyArchiveProperty = oc?.modifyArchiveProperty !== undefined ? oc.modifyArchiveProperty : settings.modifyArchiveProperty;
+  const createRestrictYaml =
+    oc?.createRestrictYamlEnabled === true
+      ? oc.createRestrictYaml === true
+      : settings.createRestrictYaml === true;
+  const modifyVersionSuffix =
+    oc?.archiveEnabled === true && oc.modifyVersionSuffix !== undefined
+      ? oc.modifyVersionSuffix
+      : settings.modifyVersionSuffix;
+  const modifyVersionProperty =
+    oc?.archiveEnabled === true && oc.modifyVersionProperty !== undefined
+      ? oc.modifyVersionProperty
+      : settings.modifyVersionProperty;
+  const modifyArchiveProperty =
+    oc?.archiveEnabled === true && oc.modifyArchiveProperty !== undefined
+      ? oc.modifyArchiveProperty
+      : settings.modifyArchiveProperty;
 
   const baseTools = buildAnthropicTools(yamlRules, noteTemplate, { createRestrictYaml });
 

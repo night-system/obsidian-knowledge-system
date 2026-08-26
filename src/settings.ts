@@ -97,18 +97,23 @@ export interface ToolPreset {
     searchRestrictions?: { key: string; values: string[] }[];
   };
   /**
-   * v0.8.2：预设级「输出属性」覆盖（可选；undefined = 全部用全局设置）。
-   * 每项 undefined = 该项用全局；定义了则本预设内用预设值。
+   * v0.8.2：预设级「输出属性」覆盖（可选；每项未启用 = 该项继承默认预设/全局设置）。
+   * 每个覆盖项配一个 `xxxEnabled` 开关：关 = 继承全局（不删数据）；开 = 用预设值。
    * yamlRules（create 属性规则）/ noteTemplate（创建模板）/ modifyYamlRules（modify 属性规则）
    * / 归档三配置 / createRestrictYaml。
    */
   outputConfig?: {
+    yamlRulesEnabled?: boolean;
     yamlRules?: YamlRule[];
+    noteTemplateEnabled?: boolean;
     noteTemplate?: NoteTemplateEntry[];
+    modifyYamlRulesEnabled?: boolean;
     modifyYamlRules?: YamlRule[];
+    archiveEnabled?: boolean;
     modifyVersionSuffix?: string;
     modifyVersionProperty?: string;
     modifyArchiveProperty?: string;
+    createRestrictYamlEnabled?: boolean;
     createRestrictYaml?: boolean;
   };
 }

@@ -5238,19 +5238,18 @@ var SidebarView = class extends import_obsidian7.ItemView {
     }, REFRESH_DEBOUNCE_MS);
   }
   /**
-   * 打开设置：优先设置页 + 定位本插件 tab（openTabById('obsidian-knowledge-system')）；
-   * app.setting 不在公开类型里（Settings 核心插件），运行时存在，用安全 cast；
-   * 不可用/抛错则回退独立设置视图。
+   * v0.9.6：打开本插件设置视图——执行插件注册的命令
+   * `obsidian-knowledge-system:show-knowledge-system-settings-view`
+   * （即 activateView() 打开独立设置视图，不走 Obsidian 原生设置窗口）。
+   * executeCommandById 不可用/抛错时回退 plugin.activateView()。
    */
   openSettings() {
-    const setting = this.app.setting;
-    try {
-      if (setting && typeof setting.open === "function" && typeof setting.openTabById === "function") {
-        setting.open();
-        setting.openTabById("obsidian-knowledge-system");
-        return;
-      }
-    } catch (e) {
+    const commands = this.app.commands;
+    if (commands && typeof commands.executeCommandById === "function") {
+      void commands.executeCommandById("obsidian-knowledge-system:show-knowledge-system-settings-view").catch(() => {
+        void this.plugin.activateView();
+      });
+      return;
     }
     void this.plugin.activateView();
   }

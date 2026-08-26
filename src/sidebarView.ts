@@ -16,8 +16,7 @@ const POLL_INTERVAL_MS = 60_000;
  * 每行一个启用的面板：左侧 = 面板名称，右侧 = 匹配文件数
  * （collectPanelMatches(app, settings, panel).length）；点击行 → 打开对应面板
  * （plugin.openPanel(panel.id)，确保 .base 存在并打开）。底部固定「设置」按钮 →
- * 优先打开设置页并定位本插件 tab（app.setting.open + openTabById），不可用时
- * 回退独立设置视图（plugin.activateView()）。
+ * 执行本插件注册的命令（show-knowledge-system-settings-view，即打开独立设置视图）。
  *
  * 刷新触发：vault create/delete/rename/modify + metadataCache changed/resolved
  * （防抖 1s 重渲染）、60 秒定时轮询、手动刷新按钮。
@@ -92,22 +91,18 @@ export class SidebarView extends ItemView {
   }
 
   /**
-   * 打开设置：优先设置页 + 定位本插件 tab（openTabById('obsidian-knowledge-system')）；
-   * app.setting 不在公开类型里（Settings 核心插件），运行时存在，用安全 cast；
-   * 不可用/抛错则回退独立设置视图。
+   * v0.9.6：打开本插件设置视图——执行插件注册的命令
+   * `obsidian-knowledge-system:show-knowledge-system-settings-view`
+   * （即 activateView() 打开独立设置视图，不走 Obsidian 原生设置窗口）。
+   * executeCommandById 不可用/抛错时回退 plugin.activateView()。
    */
   private openSettings(): void {
-    const setting = (this.app as unknown as {
-      setting?: { open?: () => void; openTabById?: (id: string) => void };
-    }).setting;
-    try {
-      if (setting && typeof setting.open === 'function' && typeof setting.openTabById === 'function') {
-        setting.open();
-        setting.openTabById('obsidian-knowledge-system');
-        return;
-      }
-    } catch {
-      /* 回退独立设置视图 */
+    const commands = (this.app as unknown as { commands?: { executeCommandById?: (id: string) => Promise<void> } }).commands;
+    if (commands && typeof commands.executeCommandById === 'function') {
+      void commands.executeCommandById('obsidian-knowledge-system:show-knowledge-system-settings-view').catch(() => {
+        void this.plugin.activateView();
+      });
+      return;
     }
     void this.plugin.activateView();
   }

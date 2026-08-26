@@ -141,9 +141,9 @@ export interface ToolPreset {
 /**
  * v0.9.3：用户自定义面板（Bases 自定义视图，泛化自 v0.9.2 的整理面板）。
  * - 每个面板扫描一个文件夹（'source'/'output' 映射全局设置 sourceFolder/outputFolder，
- *   其他值 = vault 内自定义路径），列出 bool 属性**存在且值（忽略大小写）不是 'true'**
- *   的文件（v0.9.9：属性缺失/null 的文件不显示）；afterDate 之后（含当天）修改/创建
- *   的文件才显示（留空 = 不限）。
+ *   其他值 = vault 内自定义路径），按 attrMode 匹配 bool 属性（v0.9.11：'exists' =
+ *   属性存在且值（忽略大小写）不是 'true'，缺省；'missingOrFalse' = 属性不存在或
+ *   存在且不是 'true'）；afterDate 之后（含当天）修改/创建的文件才显示（留空 = 不限）。
  * - basePath = .base 文件路径（默认 `${name}.base`）；chatPresetId = 跳聊天预设
  *   （空 = 默认全部工具）；chatPrompt = prompt 模板（{{filename}} → basename 不含路径/.md）。
  */
@@ -156,8 +156,16 @@ export interface PanelConfig {
   enabled: boolean;
   /** 扫描文件夹：'source' | 'output' 映射全局设置，其他值 = 自定义路径。 */
   folder: 'source' | 'output' | string;
-  /** bool 属性名（v0.9.9：属性必须存在且值（忽略大小写）非 'true' → 显示；缺失不显示）。 */
+  /** bool 属性名（匹配行为见 attrMode）。 */
   attr: string;
+  /**
+   * v0.9.11：bool 属性匹配模式——'exists'（缺省）= 属性**必须存在**且值（忽略大小写）
+   * 不是 'true' 才匹配（v0.9.9 语义；空字符串算存在且非 true → 匹配，属性缺失不匹配）；
+   * 'missingOrFalse' = 属性**不存在或存在且不是 'true'** 都匹配（v0.9.4-0.9.8 语义，
+   * 缺失/null/空 或 非 true 都匹配）。缺省/undefined 按 'exists' 处理
+   * （渲染 `panel.attrMode !== 'missingOrFalse'`），兼容旧数据行为不变。
+   */
+  attrMode?: 'exists' | 'missingOrFalse';
   /** 最早日期 YYYY-MM-DD；留空 = 不限（parseAfterDate 语义）。 */
   afterDate?: string;
   /** .base 文件路径（默认 `${name}.base`，中文名没问题）。 */

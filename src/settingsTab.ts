@@ -784,7 +784,7 @@ class SettingsRenderer {
 
     const info = new Setting(containerEl)
       .setName('')
-      .setDesc('配置用户自定义面板（Bases 核心插件自定义视图）：可创建任意多个面板，每个面板扫描一个文件夹（源文件夹/输出文件夹跟随「文件夹」tab 的全局设置，或填自定义路径），列出 bool 属性存在且不是 true 的文件（v0.9.9：属性缺失的文件不显示）；可设最早日期（该日期之后修改/创建的文件才显示）。点击文件名打开文件、点击聊天图标用面板自己的预设 + prompt 模板跳聊天。每个面板可「生成面板」（按配置重建 .base）与「打开面板」。需要 Obsidian 1.10.0+ 并启用 Bases 核心插件。');
+      .setDesc('配置用户自定义面板（Bases 核心插件自定义视图）：可创建任意多个面板，每个面板扫描一个文件夹（源文件夹/输出文件夹跟随「文件夹」tab 的全局设置，或填自定义路径），按「匹配模式」列出 bool 属性命中的文件（缺省「存在且不是 true」= 属性缺失的文件不显示；可选「不存在或存在且不是 true」= 缺失文件也显示）；可设最早日期（该日期之后修改/创建的文件才显示）。点击文件名打开文件、点击聊天图标用面板自己的预设 + prompt 模板跳聊天。每个面板可「生成面板」（按配置重建 .base）与「打开面板」。需要 Obsidian 1.10.0+ 并启用 Bases 核心插件。');
     this.markSearchable(info, '面板 说明 Bases 自定义 多面板 扫描文件夹 生成面板 打开面板 聊天预设 prompt');
 
     // v0.9.10：打开方式（全局设置）——'tab' = 新标签页（默认，最初行为）；
@@ -831,8 +831,8 @@ class SettingsRenderer {
 
   /**
    * v0.9.3：渲染一个面板配置卡片（可折叠）：头部 = chevron + 名称输入 + 启用开关 +
-   * 删除按钮；主体 = 扫描文件夹（下拉 + 自定义路径）+ bool 属性名 + 最早日期 +
-   * 面板位置 + 显示删除按钮（v0.9.4）+ 聊天预设下拉 + 聊天 prompt +
+   * 删除按钮；主体 = 扫描文件夹（下拉 + 自定义路径）+ bool 属性名 + 匹配模式（v0.9.11）
+   * + 最早日期 + 面板位置 + 显示删除按钮（v0.9.4）+ 聊天预设下拉 + 聊天 prompt +
    * 「生成面板」「打开面板」按钮。折叠状态按 panel.id 记忆（缺省展开）。
    */
   private renderPanelCard(containerEl: HTMLElement, panel: PanelConfig, index: number): void {
@@ -921,7 +921,7 @@ class SettingsRenderer {
 
     const attr = new Setting(body)
       .setName('bool 属性名')
-      .setDesc('frontmatter 中标记「已处理」的 bool 属性名；属性存在且值不是 true 的文件显示在面板（属性缺失不显示，v0.9.9），设为 true 后消失。')
+      .setDesc('frontmatter 中标记「已处理」的 bool 属性名；匹配行为见下方「匹配模式」（设为 true 后文件消失）。')
       .addText((text) =>
         text
           .setPlaceholder('tidy')
@@ -932,6 +932,21 @@ class SettingsRenderer {
           })
       );
     this.markSearchable(attr, '面板 bool 属性名 attr 属性 已处理');
+
+    // v0.9.11：匹配模式——'exists'（缺省，v0.9.9 语义）/ 'missingOrFalse'（v0.9.4-0.9.8 语义）。
+    const attrMode = new Setting(body)
+      .setName('匹配模式')
+      .setDesc('「存在且不是 true」= 属性必须存在且值不是 true 才显示（缺省；属性缺失的文件不显示）；「不存在或存在且不是 true」= 属性不存在、或存在但值不是 true 都显示（v0.9.4-0.9.8 旧行为，缺失文件也会进来）。')
+      .addDropdown((drop) => {
+        drop.addOption('exists', '存在且不是 true');
+        drop.addOption('missingOrFalse', '不存在或存在且不是 true');
+        drop.setValue(panel.attrMode !== 'missingOrFalse' ? 'exists' : 'missingOrFalse');
+        drop.onChange((value) => {
+          panel.attrMode = value as 'exists' | 'missingOrFalse';
+          void this.plugin.saveSettings();
+        });
+      });
+    this.markSearchable(attrMode, '面板 匹配模式 存在 不存在 missingOrFalse exists 属性 显示 缺失');
 
     const afterDate = new Setting(body)
       .setName('最早日期')

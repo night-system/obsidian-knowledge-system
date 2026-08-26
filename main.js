@@ -1279,7 +1279,7 @@ var SettingsRenderer = class {
   // -------------------------------------------------------------------------
   renderPanelGroup(containerEl) {
     containerEl.empty();
-    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u7528\u6237\u81EA\u5B9A\u4E49\u9762\u677F\uFF08Bases \u6838\u5FC3\u63D2\u4EF6\u81EA\u5B9A\u4E49\u89C6\u56FE\uFF09\uFF1A\u53EF\u521B\u5EFA\u4EFB\u610F\u591A\u4E2A\u9762\u677F\uFF0C\u6BCF\u4E2A\u9762\u677F\u626B\u63CF\u4E00\u4E2A\u6587\u4EF6\u5939\uFF08\u6E90\u6587\u4EF6\u5939/\u8F93\u51FA\u6587\u4EF6\u5939\u8DDF\u968F\u300C\u6587\u4EF6\u5939\u300Dtab \u7684\u5168\u5C40\u8BBE\u7F6E\uFF0C\u6216\u586B\u81EA\u5B9A\u4E49\u8DEF\u5F84\uFF09\uFF0C\u5217\u51FA bool \u5C5E\u6027\u5B58\u5728\u4E14\u4E0D\u662F true \u7684\u6587\u4EF6\uFF08v0.9.9\uFF1A\u5C5E\u6027\u7F3A\u5931\u7684\u6587\u4EF6\u4E0D\u663E\u793A\uFF09\uFF1B\u53EF\u8BBE\u6700\u65E9\u65E5\u671F\uFF08\u8BE5\u65E5\u671F\u4E4B\u540E\u4FEE\u6539/\u521B\u5EFA\u7684\u6587\u4EF6\u624D\u663E\u793A\uFF09\u3002\u70B9\u51FB\u6587\u4EF6\u540D\u6253\u5F00\u6587\u4EF6\u3001\u70B9\u51FB\u804A\u5929\u56FE\u6807\u7528\u9762\u677F\u81EA\u5DF1\u7684\u9884\u8BBE + prompt \u6A21\u677F\u8DF3\u804A\u5929\u3002\u6BCF\u4E2A\u9762\u677F\u53EF\u300C\u751F\u6210\u9762\u677F\u300D\uFF08\u6309\u914D\u7F6E\u91CD\u5EFA .base\uFF09\u4E0E\u300C\u6253\u5F00\u9762\u677F\u300D\u3002\u9700\u8981 Obsidian 1.10.0+ \u5E76\u542F\u7528 Bases \u6838\u5FC3\u63D2\u4EF6\u3002");
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u7528\u6237\u81EA\u5B9A\u4E49\u9762\u677F\uFF08Bases \u6838\u5FC3\u63D2\u4EF6\u81EA\u5B9A\u4E49\u89C6\u56FE\uFF09\uFF1A\u53EF\u521B\u5EFA\u4EFB\u610F\u591A\u4E2A\u9762\u677F\uFF0C\u6BCF\u4E2A\u9762\u677F\u626B\u63CF\u4E00\u4E2A\u6587\u4EF6\u5939\uFF08\u6E90\u6587\u4EF6\u5939/\u8F93\u51FA\u6587\u4EF6\u5939\u8DDF\u968F\u300C\u6587\u4EF6\u5939\u300Dtab \u7684\u5168\u5C40\u8BBE\u7F6E\uFF0C\u6216\u586B\u81EA\u5B9A\u4E49\u8DEF\u5F84\uFF09\uFF0C\u6309\u300C\u5339\u914D\u6A21\u5F0F\u300D\u5217\u51FA bool \u5C5E\u6027\u547D\u4E2D\u7684\u6587\u4EF6\uFF08\u7F3A\u7701\u300C\u5B58\u5728\u4E14\u4E0D\u662F true\u300D= \u5C5E\u6027\u7F3A\u5931\u7684\u6587\u4EF6\u4E0D\u663E\u793A\uFF1B\u53EF\u9009\u300C\u4E0D\u5B58\u5728\u6216\u5B58\u5728\u4E14\u4E0D\u662F true\u300D= \u7F3A\u5931\u6587\u4EF6\u4E5F\u663E\u793A\uFF09\uFF1B\u53EF\u8BBE\u6700\u65E9\u65E5\u671F\uFF08\u8BE5\u65E5\u671F\u4E4B\u540E\u4FEE\u6539/\u521B\u5EFA\u7684\u6587\u4EF6\u624D\u663E\u793A\uFF09\u3002\u70B9\u51FB\u6587\u4EF6\u540D\u6253\u5F00\u6587\u4EF6\u3001\u70B9\u51FB\u804A\u5929\u56FE\u6807\u7528\u9762\u677F\u81EA\u5DF1\u7684\u9884\u8BBE + prompt \u6A21\u677F\u8DF3\u804A\u5929\u3002\u6BCF\u4E2A\u9762\u677F\u53EF\u300C\u751F\u6210\u9762\u677F\u300D\uFF08\u6309\u914D\u7F6E\u91CD\u5EFA .base\uFF09\u4E0E\u300C\u6253\u5F00\u9762\u677F\u300D\u3002\u9700\u8981 Obsidian 1.10.0+ \u5E76\u542F\u7528 Bases \u6838\u5FC3\u63D2\u4EF6\u3002");
     this.markSearchable(info, "\u9762\u677F \u8BF4\u660E Bases \u81EA\u5B9A\u4E49 \u591A\u9762\u677F \u626B\u63CF\u6587\u4EF6\u5939 \u751F\u6210\u9762\u677F \u6253\u5F00\u9762\u677F \u804A\u5929\u9884\u8BBE prompt");
     const openMode = new import_obsidian3.Setting(containerEl).setName("\u6253\u5F00\u65B9\u5F0F").setDesc("\u70B9\u51FB\u9762\u677F/\u8BBE\u7F6E\u65F6\u5728\u54EA\u91CC\u6253\u5F00\uFF1A\u65B0\u6807\u7B7E\u9875 = \u6700\u521D\u884C\u4E3A\uFF08\u9ED8\u8BA4\uFF09\uFF1B\u5F53\u524D\u6807\u7B7E\u9875 = \u66FF\u6362\u5F53\u524D\u663E\u793A\u7684\u6807\u7B7E\uFF08\u6B63\u5728\u7F16\u8F91\u7B14\u8BB0\u65F6\u53EF\u80FD\u66FF\u6362\u6389\u7B14\u8BB0\uFF09\u3002").addDropdown((drop) => {
       drop.addOption("tab", "\u65B0\u6807\u7B7E\u9875\uFF08\u9ED8\u8BA4\uFF09");
@@ -1314,8 +1314,8 @@ var SettingsRenderer = class {
   }
   /**
    * v0.9.3：渲染一个面板配置卡片（可折叠）：头部 = chevron + 名称输入 + 启用开关 +
-   * 删除按钮；主体 = 扫描文件夹（下拉 + 自定义路径）+ bool 属性名 + 最早日期 +
-   * 面板位置 + 显示删除按钮（v0.9.4）+ 聊天预设下拉 + 聊天 prompt +
+   * 删除按钮；主体 = 扫描文件夹（下拉 + 自定义路径）+ bool 属性名 + 匹配模式（v0.9.11）
+   * + 最早日期 + 面板位置 + 显示删除按钮（v0.9.4）+ 聊天预设下拉 + 聊天 prompt +
    * 「生成面板」「打开面板」按钮。折叠状态按 panel.id 记忆（缺省展开）。
    */
   renderPanelCard(containerEl, panel, index) {
@@ -1384,13 +1384,23 @@ var SettingsRenderer = class {
       );
       this.markSearchable(folderPath, "\u9762\u677F \u626B\u63CF\u6587\u4EF6\u5939 \u81EA\u5B9A\u4E49\u8DEF\u5F84 \u6587\u4EF6\u5939 \u8DEF\u5F84");
     }
-    const attr = new import_obsidian3.Setting(body).setName("bool \u5C5E\u6027\u540D").setDesc("frontmatter \u4E2D\u6807\u8BB0\u300C\u5DF2\u5904\u7406\u300D\u7684 bool \u5C5E\u6027\u540D\uFF1B\u5C5E\u6027\u5B58\u5728\u4E14\u503C\u4E0D\u662F true \u7684\u6587\u4EF6\u663E\u793A\u5728\u9762\u677F\uFF08\u5C5E\u6027\u7F3A\u5931\u4E0D\u663E\u793A\uFF0Cv0.9.9\uFF09\uFF0C\u8BBE\u4E3A true \u540E\u6D88\u5931\u3002").addText(
+    const attr = new import_obsidian3.Setting(body).setName("bool \u5C5E\u6027\u540D").setDesc("frontmatter \u4E2D\u6807\u8BB0\u300C\u5DF2\u5904\u7406\u300D\u7684 bool \u5C5E\u6027\u540D\uFF1B\u5339\u914D\u884C\u4E3A\u89C1\u4E0B\u65B9\u300C\u5339\u914D\u6A21\u5F0F\u300D\uFF08\u8BBE\u4E3A true \u540E\u6587\u4EF6\u6D88\u5931\uFF09\u3002").addText(
       (text) => text.setPlaceholder("tidy").setValue(panel.attr || "").onChange((value) => {
         panel.attr = value;
         void this.plugin.saveSettings();
       })
     );
     this.markSearchable(attr, "\u9762\u677F bool \u5C5E\u6027\u540D attr \u5C5E\u6027 \u5DF2\u5904\u7406");
+    const attrMode = new import_obsidian3.Setting(body).setName("\u5339\u914D\u6A21\u5F0F").setDesc("\u300C\u5B58\u5728\u4E14\u4E0D\u662F true\u300D= \u5C5E\u6027\u5FC5\u987B\u5B58\u5728\u4E14\u503C\u4E0D\u662F true \u624D\u663E\u793A\uFF08\u7F3A\u7701\uFF1B\u5C5E\u6027\u7F3A\u5931\u7684\u6587\u4EF6\u4E0D\u663E\u793A\uFF09\uFF1B\u300C\u4E0D\u5B58\u5728\u6216\u5B58\u5728\u4E14\u4E0D\u662F true\u300D= \u5C5E\u6027\u4E0D\u5B58\u5728\u3001\u6216\u5B58\u5728\u4F46\u503C\u4E0D\u662F true \u90FD\u663E\u793A\uFF08v0.9.4-0.9.8 \u65E7\u884C\u4E3A\uFF0C\u7F3A\u5931\u6587\u4EF6\u4E5F\u4F1A\u8FDB\u6765\uFF09\u3002").addDropdown((drop) => {
+      drop.addOption("exists", "\u5B58\u5728\u4E14\u4E0D\u662F true");
+      drop.addOption("missingOrFalse", "\u4E0D\u5B58\u5728\u6216\u5B58\u5728\u4E14\u4E0D\u662F true");
+      drop.setValue(panel.attrMode !== "missingOrFalse" ? "exists" : "missingOrFalse");
+      drop.onChange((value) => {
+        panel.attrMode = value;
+        void this.plugin.saveSettings();
+      });
+    });
+    this.markSearchable(attrMode, "\u9762\u677F \u5339\u914D\u6A21\u5F0F \u5B58\u5728 \u4E0D\u5B58\u5728 missingOrFalse exists \u5C5E\u6027 \u663E\u793A \u7F3A\u5931");
     const afterDate = new import_obsidian3.Setting(body).setName("\u6700\u65E9\u65E5\u671F").setDesc("\u53EA\u770B\u8BE5\u65E5\u671F\u4E4B\u540E\uFF08\u542B\u5F53\u5929\uFF09\u4FEE\u6539/\u521B\u5EFA\u7684\u6587\u4EF6\uFF0C\u4E4B\u524D\u7684\u4E0D\u770B\uFF1B\u683C\u5F0F YYYY-MM-DD\uFF08\u5982 2026-08-01\uFF09\uFF1B\u7559\u7A7A = \u4E0D\u9650\u3002").addText(
       (text) => text.setPlaceholder("\u5982\uFF1A2026-08-01").setValue(panel.afterDate || "").onChange((value) => {
         panel.afterDate = value;
@@ -5006,9 +5016,14 @@ function collectPanelMatches(app, settings, panel, files) {
     if (attr) {
       const fm = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
       const raw = fm == null ? void 0 : fm[attr];
-      const exists = raw !== void 0 && raw !== null;
-      if (!exists) return false;
-      if (String(raw).toLowerCase() === "true") return false;
+      if (panel.attrMode === "missingOrFalse") {
+        const isDone = raw !== void 0 && raw !== null && raw !== "" && String(raw).toLowerCase() === "true";
+        if (isDone) return false;
+      } else {
+        const exists = raw !== void 0 && raw !== null;
+        if (!exists) return false;
+        if (String(raw).toLowerCase() === "true") return false;
+      }
     }
     return true;
   });

@@ -65,8 +65,9 @@ class ConfirmDeleteModal extends Modal {
  * Bases 查询把该文件夹所有 md 文件（含 frontmatter）交给视图（this.data.data:
  * BasesEntry[]）；视图在 onDataUpdated 里做两层过滤：
  * - 日期：file.stat.mtime（回退 ctime）>= afterDate 当天 00:00（解析失败/留空 = 不限）；
- * - bool 属性（v0.9.9）：frontmatter[panel.attr] **必须存在**（缺失/null 不显示）且
- *   String(值).toLowerCase() !== 'true' → 显示；否则隐藏。
+ * - bool 属性（v0.9.11 按 panel.attrMode）：'exists' 缺省 = frontmatter[panel.attr]
+ *   **必须存在**且 String(值).toLowerCase() !== 'true' → 显示；'missingOrFalse' =
+ *   属性缺失/null/空 或 值非 'true' → 显示。其余情况隐藏。
  * 每条提供「打开」（点击文件名）、「bool 开关」（v0.9.4：把 frontmatter[panel.attr]
  * 设为 true → 条目消失 / v0.9.9：关闭则写 false → 条目回到面板）和「聊天」
  * （message-square 图标 → openChatWith：应用面板自己的预设 + 预填 panel.chatPrompt
@@ -126,7 +127,8 @@ function resolveFolder(app: App, raw: string): unknown {
  * v0.9.5：面板匹配判定提取为公共函数（面板视图与左侧边栏面板导航共用）。
  * - folder 解析（source/output → settings.sourceFolder/outputFolder，其他 = 自定义路径）→
  *   递归取 md → afterDate 过滤（parseAfterDate，mtime 回退 ctime）→
- *   attr 判定（缺失/null/空/`String(v).toLowerCase() !== 'true'` → 匹配）。
+ *   attr 判定（v0.9.11 按 panel.attrMode 分支：'exists' 缺省 = 属性存在且值非 'true'；
+ *   'missingOrFalse' = 属性缺失/null/空 或 值非 'true'）。
  * - 可选 `files` 参数：传入时跳过文件夹扫描，直接过滤给定列表（面板视图的数据来自
  *   Bases，folder 已由 .base filters 限定，传入 entries 的 file 列表即可，行为一致）。
  */
@@ -147,11 +149,18 @@ export function collectPanelMatches(
     if (attr) {
       const fm = app.metadataCache.getFileCache(file)?.frontmatter;
       const raw = fm?.[attr];
-      // v0.9.9：属性**必须存在**（fm[attr] !== undefined && !== null）且值（字符串化、
-      // 忽略大小写）不是 'true' → 匹配；属性缺失/null 的文件不再进入面板。
-      const exists = raw !== undefined && raw !== null;
-      if (!exists) return false;
-      if (String(raw).toLowerCase() === 'true') return false;
+      if (panel.attrMode === 'missingOrFalse') {
+        // v0.9.11：'missingOrFalse'（v0.9.4-0.9.8 旧语义）——缺失/null/空 或
+        // 值（字符串化、忽略大小写）非 'true' → 匹配（空字符串也算匹配）。
+        const isDone = raw !== undefined && raw !== null && raw !== '' && String(raw).toLowerCase() === 'true';
+        if (isDone) return false;
+      } else {
+        // v0.9.11：'exists'（缺省，v0.9.9 语义）——属性**必须存在**（缺失/null 不匹配）
+        // 且值（字符串化、忽略大小写）不是 'true' → 匹配（空字符串算存在且非 true）。
+        const exists = raw !== undefined && raw !== null;
+        if (!exists) return false;
+        if (String(raw).toLowerCase() === 'true') return false;
+      }
     }
     return true;
   });

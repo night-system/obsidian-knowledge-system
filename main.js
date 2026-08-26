@@ -856,7 +856,7 @@ var SettingsRenderer = class {
     });
     this.markSearchable(apiKey, "\u8FDE\u63A5 anthropic API Key \u5BC6\u94A5");
     const test = new import_obsidian3.Setting(bodyEl).setName("\u6D4B\u8BD5\u5E76\u83B7\u53D6\u6A21\u578B").setDesc("\u8C03\u7528\u670D\u52A1\u5546\u6A21\u578B\u5217\u8868\u63A5\u53E3\uFF08\u5148\u8BD5 /models\uFF0C\u56DE\u9000 /v1/models\uFF09\uFF0C\u586B\u5145\u4E0B\u65B9\u6A21\u578B\u4E0B\u62C9\u6846\u3002").addButton(
-      (btn) => btn.setButtonText("\u6D4B\u8BD5\u5E76\u83B7\u53D6\u6A21\u578B").setCta().onClick(async () => {
+      (btn) => btn.setIcon("refresh-cw").setButtonText("\u6D4B\u8BD5\u5E76\u83B7\u53D6\u6A21\u578B").setCta().onClick(async () => {
         await this.refreshModels();
       })
     );
@@ -950,7 +950,7 @@ var SettingsRenderer = class {
     const extraEl = bodyEl.createDiv({ cls: "ks-extra-props" });
     this.renderExtraProperties(extraEl);
     const addBtn = new import_obsidian3.Setting(bodyEl).setName("").setDesc("").addButton(
-      (btn) => btn.setButtonText("+ \u6DFB\u52A0\u5C5E\u6027").onClick(() => {
+      (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u5C5E\u6027").onClick(() => {
         this.plugin.settings.extraProperties.push({ key: "", value: "" });
         void this.plugin.saveSettings();
         this.renderExtraProperties(extraEl);
@@ -1055,7 +1055,7 @@ var SettingsRenderer = class {
       this.renderYamlValues(valuesEl, rule);
     });
     const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
-      (btn) => btn.setButtonText("+ \u6DFB\u52A0\u89C4\u5219").onClick(() => {
+      (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u89C4\u5219").onClick(() => {
         this.plugin.settings.yamlRules.push({ key: "", desc: "", values: [], default: "" });
         void this.plugin.saveSettings();
         this.renderYamlRules(containerEl);
@@ -1151,7 +1151,7 @@ var SettingsRenderer = class {
       this.renderYamlValues(valuesEl, rule);
     });
     const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
-      (btn) => btn.setButtonText("+ \u6DFB\u52A0\u89C4\u5219").onClick(() => {
+      (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u89C4\u5219").onClick(() => {
         this.plugin.settings.updateYamlRules.push({ key: "", desc: "", values: [] });
         void this.plugin.saveSettings();
         this.renderUpdateYamlRules(containerEl);
@@ -1171,7 +1171,7 @@ var SettingsRenderer = class {
     containerEl.empty();
     const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u5B9A\u4E49 create_note \u8F93\u51FA\u7684\u6B63\u6587\u6A21\u677F\u7ED3\u6784\uFF1A\u6807\u9898\u6587\u672C + \u7EA7\u522B\uFF08H1/H2/H3\u2026\uFF09+\u300C\u5141\u8BB8 AI \u5199\u300D+ \u89E3\u91CA\u3002AI \u53EA\u80FD\u5728\u6807\u6CE8\u300C\u5141\u8BB8 AI \u5199\u300D\u7684\u6807\u9898\u4E0B\u5199\u5185\u5BB9\uFF08sections \u53C2\u6570\uFF09\uFF1B\u4E0D\u5141\u8BB8 AI \u5199\u7684\u6807\u9898\u7531\u6A21\u677F\u56FA\u5B9A\u8F93\u51FA\u3002\u6A21\u677F\u6309\u6B64\u987A\u5E8F\u7EC4\u88C5\u6B63\u6587\uFF1B\u81F3\u5C11\u4E00\u4E2A\u300C\u5141\u8BB8 AI \u5199\u300D\u6807\u9898\u624D\u751F\u6548\uFF0C\u672A\u914D\u7F6E\u6A21\u677F\u5219\u4FDD\u6301\u539F\u6837\uFF08\u81EA\u7531\u6B63\u6587\uFF09\u3002");
     this.markSearchable(info, "AI \u521B\u5EFA\u6A21\u677F create_note \u6B63\u6587 \u6807\u9898 \u7EA7\u522B \u5141\u8BB8AI\u5199 \u6A21\u677F");
-    const cfgRow = new import_obsidian3.Setting(containerEl).setName("\u6A21\u677F\u914D\u7F6E\u5BFC\u51FA/\u5BFC\u5165").setDesc("\u300C\u590D\u5236\u914D\u7F6E\u300D\u628A\u5F53\u524D\u6A21\u677F\u914D\u7F6E\u590D\u5236\u4E3A JSON \u5230\u526A\u8D34\u677F\uFF1B\u300C\u7C98\u8D34\u914D\u7F6E\u300D\u4ECE\u526A\u8D34\u677F\u89E3\u6790 JSON \u5E76\u5408\u5E76\uFF08\u6309\u6807\u9898\u6587\u672C\u5408\u5E76\uFF1A\u5DF2\u5B58\u5728\u5219\u66F4\u65B0\u7EA7\u522B/\u5141\u8BB8AI\u5199/\u89E3\u91CA\uFF0C\u5426\u5219\u8FFD\u52A0\uFF09\u3002").addButton((btn) => btn.setButtonText("\u590D\u5236\u914D\u7F6E").onClick(() => this.copyTemplateConfig())).addButton((btn) => btn.setButtonText("\u7C98\u8D34\u914D\u7F6E").onClick(async () => this.pasteTemplateConfig(containerEl)));
+    const cfgRow = new import_obsidian3.Setting(containerEl).setName("\u6A21\u677F\u914D\u7F6E\u5BFC\u51FA/\u5BFC\u5165").setDesc("\u300C\u590D\u5236\u914D\u7F6E\u300D\u628A\u5F53\u524D\u6A21\u677F\u914D\u7F6E\u590D\u5236\u4E3A JSON \u5230\u526A\u8D34\u677F\uFF1B\u300C\u7C98\u8D34\u914D\u7F6E\u300D\u4ECE\u526A\u8D34\u677F\u89E3\u6790 JSON \u5E76\u5408\u5E76\uFF08\u6309\u6807\u9898\u6587\u672C\u5408\u5E76\uFF1A\u5DF2\u5B58\u5728\u5219\u66F4\u65B0\u7EA7\u522B/\u5141\u8BB8AI\u5199/\u89E3\u91CA\uFF0C\u5426\u5219\u8FFD\u52A0\uFF09\u3002").addButton((btn) => btn.setIcon("copy").setButtonText("\u590D\u5236\u914D\u7F6E").onClick(() => this.copyTemplateConfig())).addButton((btn) => btn.setIcon("clipboard").setButtonText("\u7C98\u8D34\u914D\u7F6E").onClick(async () => this.pasteTemplateConfig(containerEl)));
     this.markSearchable(cfgRow, "AI \u521B\u5EFA\u6A21\u677F \u6A21\u677F\u914D\u7F6E \u5BFC\u51FA \u5BFC\u5165 \u590D\u5236 \u7C98\u8D34");
     const list = this.plugin.settings.noteTemplate || [];
     const rowsEl = containerEl.createDiv({ cls: "ks-template-rows" });
@@ -1235,7 +1235,7 @@ var SettingsRenderer = class {
     renderRows();
     renderPreview();
     const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
-      (btn) => btn.setButtonText("+ \u6DFB\u52A0\u6807\u9898").onClick(() => {
+      (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u6807\u9898").onClick(() => {
         this.plugin.settings.noteTemplate.push({ title: "", level: 2, allowAi: true, desc: "" });
         void this.plugin.saveSettings();
         renderRows();
@@ -1365,14 +1365,14 @@ var SettingsRenderer = class {
   renderTestGroup(containerEl) {
     const bodyEl = this.createGroup(containerEl, "\u6D4B\u8BD5\u5DE5\u5177", false);
     const count = new import_obsidian3.Setting(bodyEl).setName("\u7EDF\u8BA1\u6700\u8FD1\u6587\u4EF6\u6570").setDesc("\u626B\u63CF\u6E90\u6587\u4EF6\u5939\uFF0C\u7EDF\u8BA1\u6700\u8FD1 N \u5929\u5185\u7684 Markdown \u6587\u4EF6\u6570\u3002").addButton(
-      (btn) => btn.setButtonText("\u7EDF\u8BA1\u6700\u8FD1\u6587\u4EF6\u6570").setCta().onClick(() => {
+      (btn) => btn.setIcon("list").setButtonText("\u7EDF\u8BA1\u6700\u8FD1\u6587\u4EF6\u6570").setCta().onClick(() => {
         const n = countRecentFiles(this.plugin);
         new import_obsidian3.Notice(`\u6E90\u6587\u4EF6\u5939\u6700\u8FD1 ${this.plugin.settings.recentDays} \u5929\u5171\u6709 ${n} \u4E2A\u6587\u4EF6`);
       })
     );
     this.markSearchable(count, "\u6D4B\u8BD5 \u7EDF\u8BA1 \u6700\u8FD1\u6587\u4EF6\u6570 \u7EDF\u8BA1\u6700\u8FD1 \u7EDF\u8BA1");
     const output = new import_obsidian3.Setting(bodyEl).setName("\u8F93\u51FA\u6700\u65B0\u5185\u5BB9\u6D4B\u8BD5").setDesc("\u53D6\u6E90\u6587\u4EF6\u5939\u65F6\u95F4\u6700\u65B0\u7684\u6587\u4EF6\uFF0C\u5C06\u5176\u6B63\u6587\u6700\u540E 100 \u5B57\u7B26\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u5939\u3002").addButton(
-      (btn) => btn.setButtonText("\u8F93\u51FA\u6700\u65B0\u5185\u5BB9\u6D4B\u8BD5").setCta().onClick(async () => {
+      (btn) => btn.setIcon("file-text").setButtonText("\u8F93\u51FA\u6700\u65B0\u5185\u5BB9\u6D4B\u8BD5").setCta().onClick(async () => {
         await outputLatestContent(this.plugin);
       })
     );
@@ -1401,7 +1401,7 @@ var SettingsRenderer = class {
     const presets = this.plugin.settings.toolPresets || [];
     presets.forEach((preset, index) => this.renderPresetRow(listBody, preset, index, containerEl));
     const addBtn = new import_obsidian3.Setting(listBody).setName("").setDesc("").addButton(
-      (btn) => btn.setButtonText("+ \u65B0\u5EFA\u9884\u8BBE").onClick(() => {
+      (btn) => btn.setIcon("plus").setButtonText("\u65B0\u5EFA\u9884\u8BBE").onClick(() => {
         const np = {
           id: String(Date.now()),
           name: "\u65B0\u9884\u8BBE",
@@ -1647,7 +1647,7 @@ var SettingsRenderer = class {
       this.renderYamlValues(valuesEl, item);
     });
     const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
-      (btn) => btn.setButtonText("+ \u6DFB\u52A0\u952E").onClick(() => {
+      (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u952E").onClick(() => {
         preset.toolOverrides.searchRestrictions.push({ key: "", values: [] });
         void this.plugin.saveSettings();
         this.renderSearchRestrictions(containerEl, preset);

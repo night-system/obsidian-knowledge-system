@@ -207,23 +207,21 @@
   margin-top: 4px;
 }
 
-/* 28px 圆图标按钮（dsh .action）：hover 显示背景。 */
+/* 裸图标按钮（v0.8.1：与 UI 方案陈列一致——无包裹、无底色、无圆底，
+   仅图标 + 主题色；hover 仅变色）。 */
 .ks-chat-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 6px;
+  padding: 4px;
   border: none;
-  border-radius: 28px;
   background: transparent;
   color: var(--text-muted, var(--text-normal, #888));
   cursor: pointer;
 }
 
 .ks-chat-action:hover {
-  background: var(--background-modifier-hover);
+  background: transparent;
   color: var(--text-normal, #222);
 }
 
@@ -352,32 +350,29 @@
   margin-left: auto; /* 发送钮钉在右侧（dsh .trailing margin-left:auto） */
 }
 
-/* 发送按钮（dsh .primary 34:10465）：34×34 圆、interactive-accent、disabled opacity .4。
+/* 发送按钮（v0.8.1 裸图标：无底色/无圆形包裹，与 UI 方案陈列一致）。
    icon 必须可见：显式 `color` + `stroke: currentColor`，svg 描边继承按钮前景色。 */
 .ks-chat-send {
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  background: var(--interactive-accent);
-  /* 主题变量可能未定义/低对比 → 回退 #fff（dsh accent 底白 icon）。 */
-  color: var(--text-on-accent, #fff);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  padding: 6px;
   border: none;
+  background: transparent;
+  color: var(--text-normal);
   cursor: pointer;
   flex: 0 0 auto;
-  padding: 0;
 }
 
 .ks-chat-send:hover {
-  background: var(--interactive-accent-hover);
+  background: transparent;
+  color: var(--interactive-accent);
 }
 
 .ks-chat-send:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  background: var(--interactive-accent);
+  background: transparent;
 }
 
 /* 统一所有聊天 icon：显式 `color`（带主题回退）+ `stroke: currentColor` +
@@ -385,22 +380,22 @@
    只设 size/stroke-width，不设 stroke/fill；lucide svg 自带
    `stroke="currentColor"`，因此 `color` 才是决定 icon 可见性的真正开关。 */
 .ks-chat-send svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   stroke: currentColor;
   fill: none;
-  color: var(--text-on-accent, #fff);
+  color: inherit;
 }
 
-/* Busy → square stop button (dsh: rounded square, not a circle). */
+/* Busy → square stop button（裸图标，无包裹）。 */
 .ks-chat-send-stop {
-  border-radius: 12px;
+  border-radius: 0;
 }
 
 .ks-chat-send-stop svg {
   fill: currentColor;
   stroke: currentColor;
-  color: var(--text-on-accent, #fff);
+  color: inherit;
 }
 
 /* Collapsible thinking block（dsh ReasoningRow 复刻）. */
@@ -611,19 +606,31 @@
   padding: var(--size-2-2);
 }
 
+/* 错误块「一键复制」（v0.8.1 裸图标化：无底色，仅图标+文字 + 主题色）。 */
 .ks-chat-copy {
   align-self: flex-start;
-  background: var(--background-secondary);
-  color: var(--text-normal);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  color: var(--text-muted);
   border: none;
-  border-radius: var(--radius-s);
-  padding: var(--size-2-1) var(--size-2-2);
+  border-radius: 0;
+  padding: var(--size-2-1) var(--size-2-1);
   cursor: pointer;
   font-size: var(--font-ui-small);
 }
 
 .ks-chat-copy:hover {
-  background: var(--background-modifier-hover);
+  background: transparent;
+  color: var(--text-normal);
+}
+
+.ks-chat-copy svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
 }
 
 /* Blink keyframes shared by the think「…」and the streaming cursor. */
@@ -1343,4 +1350,62 @@
   text-align: center;
   word-break: break-all;
   max-width: 100%;
+}
+
+/* ====================================================================== */
+/* 裸按钮统一规则（v0.8.1：与 UI 方案陈列一致——无包裹、无底色）          */
+/* ====================================================================== */
+
+/* 设置页按钮：去掉 Obsidian 默认按钮的底色/边框/圆角包裹，仅图标+文字+主题色。 */
+.ks-tab-content .setting-item-control button,
+.ks-view .setting-item-control button {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: var(--text-muted);
+  padding: var(--size-2-1) var(--size-2-1);
+}
+
+.ks-tab-content .setting-item-control button:hover,
+.ks-view .setting-item-control button:hover {
+  background: transparent !important;
+  color: var(--text-normal);
+}
+
+/* cta 按钮同样裸化（去 accent 底色，保留文字可读）。 */
+.ks-tab-content .setting-item-control button.mod-cta,
+.ks-view .setting-item-control button.mod-cta {
+  background: transparent !important;
+  color: var(--interactive-accent);
+}
+
+.ks-tab-content .setting-item-control button.mod-cta:hover,
+.ks-view .setting-item-control button.mod-cta:hover {
+  background: transparent !important;
+  color: var(--interactive-accent-hover);
+}
+
+/* 按钮内图标与文字对齐。 */
+.ks-tab-content .setting-item-control button svg,
+.ks-view .setting-item-control button svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  vertical-align: -3px;
+  margin-right: 4px;
+}
+
+/* 设置页 icon-only 按钮（删除等）：无底色无边框，hover 仅变色。 */
+.ks-tab-content .clickable-icon,
+.ks-view .clickable-icon {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.ks-tab-content .clickable-icon:hover,
+.ks-view .clickable-icon:hover {
+  background: transparent;
+  color: var(--text-normal);
 }

@@ -221,7 +221,7 @@ class SettingsRenderer {
       .setName('测试并获取模型')
       .setDesc('调用服务商模型列表接口（先试 /models，回退 /v1/models），填充下方模型下拉框。')
       .addButton((btn) =>
-        btn.setButtonText('测试并获取模型').setCta().onClick(async () => {
+        btn.setIcon('refresh-cw').setButtonText('测试并获取模型').setCta().onClick(async () => {
           await this.refreshModels();
         })
       );
@@ -416,7 +416,7 @@ class SettingsRenderer {
       .setName('')
       .setDesc('')
       .addButton((btn) =>
-        btn.setButtonText('+ 添加属性').onClick(() => {
+        btn.setIcon('plus').setButtonText('添加属性').onClick(() => {
           this.plugin.settings.extraProperties.push({ key: '', value: '' });
           void this.plugin.saveSettings();
           this.renderExtraProperties(extraEl);
@@ -597,7 +597,7 @@ class SettingsRenderer {
       .setName('')
       .setDesc('')
       .addButton((btn) =>
-        btn.setButtonText('+ 添加规则').onClick(() => {
+        btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
           this.plugin.settings.yamlRules.push({ key: '', desc: '', values: [], default: '' });
           void this.plugin.saveSettings();
           this.renderYamlRules(containerEl);
@@ -723,7 +723,7 @@ class SettingsRenderer {
       .setName('')
       .setDesc('')
       .addButton((btn) =>
-        btn.setButtonText('+ 添加规则').onClick(() => {
+        btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
           this.plugin.settings.updateYamlRules.push({ key: '', desc: '', values: [] });
           void this.plugin.saveSettings();
           this.renderUpdateYamlRules(containerEl);
@@ -753,8 +753,8 @@ class SettingsRenderer {
     const cfgRow = new Setting(containerEl)
       .setName('模板配置导出/导入')
       .setDesc('「复制配置」把当前模板配置复制为 JSON 到剪贴板；「粘贴配置」从剪贴板解析 JSON 并合并（按标题文本合并：已存在则更新级别/允许AI写/解释，否则追加）。')
-      .addButton((btn) => btn.setButtonText('复制配置').onClick(() => this.copyTemplateConfig()))
-      .addButton((btn) => btn.setButtonText('粘贴配置').onClick(async () => this.pasteTemplateConfig(containerEl)));
+      .addButton((btn) => btn.setIcon('copy').setButtonText('复制配置').onClick(() => this.copyTemplateConfig()))
+      .addButton((btn) => btn.setIcon('clipboard').setButtonText('粘贴配置').onClick(async () => this.pasteTemplateConfig(containerEl)));
     this.markSearchable(cfgRow, 'AI 创建模板 模板配置 导出 导入 复制 粘贴');
 
     const list = this.plugin.settings.noteTemplate || [];
@@ -824,7 +824,7 @@ class SettingsRenderer {
       .setName('')
       .setDesc('')
       .addButton((btn) =>
-        btn.setButtonText('+ 添加标题').onClick(() => {
+        btn.setIcon('plus').setButtonText('添加标题').onClick(() => {
           this.plugin.settings.noteTemplate.push({ title: '', level: 2, allowAi: true, desc: '' });
           void this.plugin.saveSettings();
           renderRows();
@@ -967,7 +967,7 @@ class SettingsRenderer {
       .setName('统计最近文件数')
       .setDesc('扫描源文件夹，统计最近 N 天内的 Markdown 文件数。')
       .addButton((btn) =>
-        btn.setButtonText('统计最近文件数').setCta().onClick(() => {
+        btn.setIcon('list').setButtonText('统计最近文件数').setCta().onClick(() => {
           const n = countRecentFiles(this.plugin);
           new Notice(`源文件夹最近 ${this.plugin.settings.recentDays} 天共有 ${n} 个文件`);
         })
@@ -978,7 +978,7 @@ class SettingsRenderer {
       .setName('输出最新内容测试')
       .setDesc('取源文件夹时间最新的文件，将其正文最后 100 字符写入输出文件夹。')
       .addButton((btn) =>
-        btn.setButtonText('输出最新内容测试').setCta().onClick(async () => {
+        btn.setIcon('file-text').setButtonText('输出最新内容测试').setCta().onClick(async () => {
           await outputLatestContent(this.plugin);
         })
       );
@@ -1024,7 +1024,7 @@ class SettingsRenderer {
       .setName('')
       .setDesc('')
       .addButton((btn) =>
-        btn.setButtonText('+ 新建预设').onClick(() => {
+        btn.setIcon('plus').setButtonText('新建预设').onClick(() => {
           const np: ToolPreset = {
             id: String(Date.now()),
             name: '新预设',
@@ -1311,7 +1311,7 @@ class SettingsRenderer {
       .setName('')
       .setDesc('')
       .addButton((btn) =>
-        btn.setButtonText('+ 添加键').onClick(() => {
+        btn.setIcon('plus').setButtonText('添加键').onClick(() => {
           (preset.toolOverrides.searchRestrictions as { key: string; values: string[] }[]).push({ key: '', values: [] });
           void this.plugin.saveSettings();
           this.renderSearchRestrictions(containerEl, preset);

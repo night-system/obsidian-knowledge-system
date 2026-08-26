@@ -1324,6 +1324,40 @@ class SettingsRenderer {
   // UI 方案陈列（v0.8.1：移动端 UI 方案挑选——用户在安卓上对比可用性后决定聊天视图最终布局）
   // -------------------------------------------------------------------------
 
+  /** All lucide icon names worth verifying on mobile (plugin-used + candidates). */
+  private readonly UI_ICON_NAMES: string[] = [
+    // 插件当前使用
+    'arrow-up', 'square', 'copy', 'check', 'clipboard-copy', 'chevron-right', 'chevron-down',
+    'chevron-up', 'wrench', 'search', 'trash-2', 'x', 'settings', 'play', 'bot',
+    // 候选/常用
+    'clipboard', 'clipboard-list', 'send', 'plus', 'minus', 'pencil', 'save', 'download',
+    'upload', 'file-text', 'files', 'list', 'book-open', 'bookmark', 'star', 'heart',
+    'info', 'alert-circle', 'help-circle', 'external-link', 'refresh-cw', 'rotate-ccw',
+    'filter', 'sliders', 'toggle-left', 'toggle-right', 'chevrons-up-down', 'chevrons-down-up',
+    'git-commit-vertical', 'git-branch', 'folder-git', 'more-vertical', 'more-horizontal',
+    'package', 'mic', 'image', 'paperclip', 'smile', 'sparkles', 'brain', 'cpu', 'zap',
+    'file-edit', 'file-pen', 'folder-open', 'folder', 'tag', 'tags', 'link', 'unlink',
+    'calendar', 'clock', 'history', 'archive', 'database', 'hard-drive', 'layers', 'columns',
+    'panel-left', 'panel-right', 'layout-grid', 'rows', 'scale', 'shield', 'lock', 'eye',
+    'eye-off', 'bell', 'mail', 'home', 'menu', 'circle', 'circle-dot', 'dot', 'command',
+  ];
+
+  /** Render a grid of lucide icons (name + rendered icon) for mobile verification. */
+  private renderUiIconGrid(containerEl: HTMLElement): void {
+    const info = new Setting(containerEl)
+      .setName('')
+      .setDesc('以下是 lucide 图标陈列（每个图标下方是其名字）。请在移动端查看：能正常显示为图形的是可用图标；显示为空白/占位符的是当前 Obsidian 版本不支持的图标名。把「能用哪些、不能用哪些」告诉我，我会据此替换插件里所有用到的图标。');
+    this.markSearchable(info, 'lucide 图标 陈列 验证 可用 图标名');
+
+    const grid = containerEl.createDiv({ cls: 'ks-ui-icon-grid' });
+    for (const name of this.UI_ICON_NAMES) {
+      const cell = grid.createDiv({ cls: 'ks-ui-icon-cell' });
+      const iconEl = cell.createDiv({ cls: 'ks-ui-icon-glyph' });
+      setIcon(iconEl, name);
+      cell.createDiv({ cls: 'ks-ui-icon-name', text: name });
+    }
+  }
+
   /** Render a mini chat mockup for one UI scheme. */
   private uiMock(scene: 'chat' | 'input', cls: string, title: string, desc: string): HTMLElement {
     const card = this.containerEl.createDiv({ cls: 'ks-ui-card' });
@@ -1381,6 +1415,9 @@ class SettingsRenderer {
       .setName('')
       .setDesc('提示：以上均为静态预览，仅用于挑选布局方向。确定方案后我会把聊天视图改造成该布局，并保留现有全部功能（流式 markdown / 工具卡片 / 思考块 / 错误复制等）。');
     this.markSearchable(note, 'UI 方案 提示 说明 挑选');
+
+    // lucide 图标陈列（移动端可用性验证）
+    this.renderUiIconGrid(bodyEl);
   }
 
   // -------------------------------------------------------------------------

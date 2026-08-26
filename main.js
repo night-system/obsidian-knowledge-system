@@ -618,6 +618,104 @@ var SettingsRenderer = class {
     this.presetExpanded = /* @__PURE__ */ new Set();
     /** Expanded per-tool config group keys `${presetId}:${toolName}` (B.2). */
     this.toolExpanded = /* @__PURE__ */ new Set();
+    // -------------------------------------------------------------------------
+    // UI 方案陈列（v0.8.1：移动端 UI 方案挑选——用户在安卓上对比可用性后决定聊天视图最终布局）
+    // -------------------------------------------------------------------------
+    /** All lucide icon names worth verifying on mobile (plugin-used + candidates). */
+    this.UI_ICON_NAMES = [
+      // 插件当前使用
+      "arrow-up",
+      "square",
+      "copy",
+      "check",
+      "clipboard-copy",
+      "chevron-right",
+      "chevron-down",
+      "chevron-up",
+      "wrench",
+      "search",
+      "trash-2",
+      "x",
+      "settings",
+      "play",
+      "bot",
+      // 候选/常用
+      "clipboard",
+      "clipboard-list",
+      "send",
+      "plus",
+      "minus",
+      "pencil",
+      "save",
+      "download",
+      "upload",
+      "file-text",
+      "files",
+      "list",
+      "book-open",
+      "bookmark",
+      "star",
+      "heart",
+      "info",
+      "alert-circle",
+      "help-circle",
+      "external-link",
+      "refresh-cw",
+      "rotate-ccw",
+      "filter",
+      "sliders",
+      "toggle-left",
+      "toggle-right",
+      "chevrons-up-down",
+      "chevrons-down-up",
+      "git-commit-vertical",
+      "git-branch",
+      "folder-git",
+      "more-vertical",
+      "more-horizontal",
+      "package",
+      "mic",
+      "image",
+      "paperclip",
+      "smile",
+      "sparkles",
+      "brain",
+      "cpu",
+      "zap",
+      "file-edit",
+      "file-pen",
+      "folder-open",
+      "folder",
+      "tag",
+      "tags",
+      "link",
+      "unlink",
+      "calendar",
+      "clock",
+      "history",
+      "archive",
+      "database",
+      "hard-drive",
+      "layers",
+      "columns",
+      "panel-left",
+      "panel-right",
+      "layout-grid",
+      "rows",
+      "scale",
+      "shield",
+      "lock",
+      "eye",
+      "eye-off",
+      "bell",
+      "mail",
+      "home",
+      "menu",
+      "circle",
+      "circle-dot",
+      "dot",
+      "command"
+    ];
     this.app = app;
     this.plugin = plugin;
     this.currentModels = Array.isArray(plugin.settings.models) ? plugin.settings.models.slice() : [];
@@ -1557,9 +1655,18 @@ var SettingsRenderer = class {
     );
     this.markSearchable(addBtn, "\u9884\u8BBE \u9609\u5272\u7248 \u6DFB\u52A0\u952E");
   }
-  // -------------------------------------------------------------------------
-  // UI 方案陈列（v0.8.1：移动端 UI 方案挑选——用户在安卓上对比可用性后决定聊天视图最终布局）
-  // -------------------------------------------------------------------------
+  /** Render a grid of lucide icons (name + rendered icon) for mobile verification. */
+  renderUiIconGrid(containerEl) {
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u4EE5\u4E0B\u662F lucide \u56FE\u6807\u9648\u5217\uFF08\u6BCF\u4E2A\u56FE\u6807\u4E0B\u65B9\u662F\u5176\u540D\u5B57\uFF09\u3002\u8BF7\u5728\u79FB\u52A8\u7AEF\u67E5\u770B\uFF1A\u80FD\u6B63\u5E38\u663E\u793A\u4E3A\u56FE\u5F62\u7684\u662F\u53EF\u7528\u56FE\u6807\uFF1B\u663E\u793A\u4E3A\u7A7A\u767D/\u5360\u4F4D\u7B26\u7684\u662F\u5F53\u524D Obsidian \u7248\u672C\u4E0D\u652F\u6301\u7684\u56FE\u6807\u540D\u3002\u628A\u300C\u80FD\u7528\u54EA\u4E9B\u3001\u4E0D\u80FD\u7528\u54EA\u4E9B\u300D\u544A\u8BC9\u6211\uFF0C\u6211\u4F1A\u636E\u6B64\u66FF\u6362\u63D2\u4EF6\u91CC\u6240\u6709\u7528\u5230\u7684\u56FE\u6807\u3002");
+    this.markSearchable(info, "lucide \u56FE\u6807 \u9648\u5217 \u9A8C\u8BC1 \u53EF\u7528 \u56FE\u6807\u540D");
+    const grid = containerEl.createDiv({ cls: "ks-ui-icon-grid" });
+    for (const name of this.UI_ICON_NAMES) {
+      const cell = grid.createDiv({ cls: "ks-ui-icon-cell" });
+      const iconEl = cell.createDiv({ cls: "ks-ui-icon-glyph" });
+      (0, import_obsidian3.setIcon)(iconEl, name);
+      cell.createDiv({ cls: "ks-ui-icon-name", text: name });
+    }
+  }
   /** Render a mini chat mockup for one UI scheme. */
   uiMock(scene, cls, title, desc) {
     const card = this.containerEl.createDiv({ cls: "ks-ui-card" });
@@ -1601,6 +1708,7 @@ var SettingsRenderer = class {
     this.uiMock("input", "ks-ui-v6", "\u65B9\u6848 6\uFF1A\u5206\u5C4F\u5927\u8F93\u5165\u533A", "\u6D88\u606F\u533A\u5728\u4E0A\u3001\u8F93\u5165\u533A\u56FA\u5B9A\u5E95\u90E8\u4E14\u66F4\u9AD8\uFF084-6 \u884C\uFF09\uFF0C\u9002\u5408\u79FB\u52A8\u7AEF\u957F\u8F93\u5165\u3002\u8F93\u5165\u533A\u72EC\u7ACB\u6210\u9762\u677F\u3002");
     const note = new import_obsidian3.Setting(bodyEl).setName("").setDesc("\u63D0\u793A\uFF1A\u4EE5\u4E0A\u5747\u4E3A\u9759\u6001\u9884\u89C8\uFF0C\u4EC5\u7528\u4E8E\u6311\u9009\u5E03\u5C40\u65B9\u5411\u3002\u786E\u5B9A\u65B9\u6848\u540E\u6211\u4F1A\u628A\u804A\u5929\u89C6\u56FE\u6539\u9020\u6210\u8BE5\u5E03\u5C40\uFF0C\u5E76\u4FDD\u7559\u73B0\u6709\u5168\u90E8\u529F\u80FD\uFF08\u6D41\u5F0F markdown / \u5DE5\u5177\u5361\u7247 / \u601D\u8003\u5757 / \u9519\u8BEF\u590D\u5236\u7B49\uFF09\u3002");
     this.markSearchable(note, "UI \u65B9\u6848 \u63D0\u793A \u8BF4\u660E \u6311\u9009");
+    this.renderUiIconGrid(bodyEl);
   }
   // -------------------------------------------------------------------------
   // model fetching

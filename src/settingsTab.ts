@@ -57,6 +57,14 @@ function isTmplEntry(v: unknown): v is NoteTemplateEntry {
 function isRestriction(v: unknown): v is { key: string; values: string[] } {
   return isPlainObject(v) && isStr(v.key) && isStrArr(v.values);
 }
+/** v0.9.1：update_note_yaml 规则（UpdateYamlRule，无 default/expose/overwrite）。
+ *  宽松处理：只检查 key/desc/values 的类型，忽略多余字段。 */
+function isUpdateYamlRule(v: unknown): v is UpdateYamlRule {
+  return isPlainObject(v) && isStr(v.key) && isStr(v.desc) && isStrArr(v.values);
+}
+function isUpdateYamlRules(v: unknown): v is UpdateYamlRule[] {
+  return Array.isArray(v) && v.every(isUpdateYamlRule);
+}
 /** 字段名白名单：出现未知字段即拒绝（格式不正确的导入不允许）。 */
 function rejectUnknownFields(cfg: Record<string, unknown>, allowed: string[]): string | null {
   for (const k of Object.keys(cfg)) {
@@ -260,6 +268,37 @@ const modifyIo: ToolConfigIO = {
   },
   applyToGlobal(s, cfg) {
     if (cfg.modifyYamlRules !== undefined) s.modifyYamlRules = cfg.modifyYamlRules;
+  },
+};
+
+/** v0.9.1：update_note_yaml 的配置 IO（属性规则覆盖：updateYamlRulesEnabled 开关 + 规则列表）。 */
+const updateYamlIo: ToolConfigIO = {
+  label: 'update_note_yaml',
+  exportFromPreset(p) {
+    const oc = p.outputConfig ?? {};
+    const cfg: Record<string, unknown> = {};
+    if (oc.updateYamlRulesEnabled !== undefined) cfg.updateYamlRulesEnabled = oc.updateYamlRulesEnabled;
+    if (oc.updateYamlRules !== undefined) cfg.updateYamlRules = oc.updateYamlRules;
+    return cfg;
+  },
+  exportFromGlobal(s) {
+    return { updateYamlRulesEnabled: true, updateYamlRules: s.updateYamlRules };
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: '必须是 JSON 对象' };
+    const bad = rejectUnknownFields(raw, ['updateYamlRulesEnabled', 'updateYamlRules']);
+    if (bad) return { ok: false, error: bad };
+    if (raw.updateYamlRulesEnabled !== undefined && !isBool(raw.updateYamlRulesEnabled)) return { ok: false, error: 'updateYamlRulesEnabled 必须是布尔值' };
+    if (raw.updateYamlRules !== undefined && !isUpdateYamlRules(raw.updateYamlRules)) return { ok: false, error: 'updateYamlRules 每项必须是 {key, desc, values[]}' };
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    const oc = (p.outputConfig = p.outputConfig ?? {});
+    if (cfg.updateYamlRulesEnabled !== undefined) oc.updateYamlRulesEnabled = cfg.updateYamlRulesEnabled;
+    if (cfg.updateYamlRules !== undefined) oc.updateYamlRules = cfg.updateYamlRules;
+  },
+  applyToGlobal(s, cfg) {
+    if (cfg.updateYamlRules !== undefined) s.updateYamlRules = cfg.updateYamlRules;
   },
 };
 
@@ -1621,6 +1660,71 @@ class SettingsRenderer {
   }
 
   /**
+   * v0.9.1：预设内 update_note_yaml 属性规则列表（与全局 renderUpdateYamlRules 同构，
+   * 但数据源是预设 outputConfig.updateYamlRules 数组）。每条 = key 输入 + 解释
+   * textarea（多行，解释各可选值含义）+ 可选值 chips（复用 renderYamlValues）+
+   * 删除；底部「添加规则」按钮 push `{key:'', desc:'', values:[]}`。
+   */
+  private renderPresetUpdateYamlRules(
+    containerEl: HTMLElement,
+    rules: UpdateYamlRule[],
+    rerender: () => void
+  ): void {
+    rules.forEach((rule, index) => {
+      const hay = `AI 修改属性规则 ${rule.key} ${rule.desc} ${rule.values.join(' ')}`;
+      const row = new Setting(containerEl)
+        .setName('')
+        .setDesc('')
+        .addText((text) =>
+          text
+            .setPlaceholder('属性名，如 status')
+            .setValue(rule.key)
+            .onChange((value) => {
+              rule.key = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addTextArea((text) =>
+          text
+            .setPlaceholder('解释该属性及各可选值的含义，将随工具描述传给 AI')
+            .setValue(rule.desc)
+            .onChange((value) => {
+              rule.desc = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addButton((btn) =>
+          btn
+            .setIcon('trash-2')
+            .setTooltip('删除')
+            .onClick(() => {
+              rules.splice(index, 1);
+              void this.plugin.saveSettings();
+              rerender();
+            })
+        );
+      row.settingEl.addClasses(['ks-yaml-rule-row', 'ks-update-yaml-rule-row']);
+      this.markSearchable(row, hay);
+
+      // 可选值 chips 区：与全局版一致，挂在行之后（desc 为多行 textarea，独立成区）。
+      const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
+      valuesEl.setAttribute('data-search', hay);
+      this.renderYamlValues(valuesEl, rule);
+    });
+    const addBtn = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
+          rules.push({ key: '', desc: '', values: [] });
+          void this.plugin.saveSettings();
+          rerender();
+        })
+      );
+    this.markSearchable(addBtn, '预设 update_note_yaml AI修改属性规则 添加规则 增加 添加');
+  }
+
+  /**
    * Render the "AI 创建模板（create_note 正文结构）" group (v0.7.0 B.4): one
    * row per template heading = level dropdown + title text + "允许 AI 写" toggle
    * + 解释 (multi-line textarea) + up/down/delete, plus a live preview. The body
@@ -1945,6 +2049,13 @@ class SettingsRenderer {
       const modBody = b.createDiv();
       this.renderModifyYamlRules(modBody);
     }, modifyIo);
+
+    // v0.9.1：默认预设的 update_note_yaml 属性规则（复用全局 renderUpdateYamlRules，
+    // 内部 empty/重渲染只作用于自己的容器——包一层 div 避免清掉同组的 io 条）。
+    renderGlobalGroup('update_note_yaml（属性规则）', '默认预设的 update_note_yaml 属性规则（允许修改的属性 + 可选值约束）。', (b) => {
+      const updateYamlBody = b.createDiv();
+      this.renderUpdateYamlRules(updateYamlBody);
+    }, updateYamlIo);
 
     renderGlobalGroup('modify_output_note_versioned（归档配置）', '默认预设的归档配置（版本后缀 / 版本号属性 / 归档标记属性）。', (b) => {
       const suffix = new Setting(b)
@@ -2278,9 +2389,35 @@ class SettingsRenderer {
       '修改源文件 frontmatter 属性（需全局开关暴露）', (body) => {
         const info = new Setting(body)
           .setName('说明')
-          .setDesc('描述「修改源文件 frontmatter 属性」。实际对 AI 暴露还须开启全局开关「暴露 update_note_yaml 工具」；只能修改设置页配置的属性（值须在允许范围内）。');
+          .setDesc('描述「修改源文件 frontmatter 属性」。实际对 AI 暴露还须开启全局开关「暴露 update_note_yaml 工具」；只能修改设置页配置的属性（值须在允许范围内）。属性规则默认继承「默认预设（全局设置）」，也可在本预设内独立配置（见下方）。');
         this.markSearchable(info, '预设 update_note_yaml 说明 修改 frontmatter');
-      });
+
+        // v0.9.1：预设覆盖 —— AI 修改属性规则（Enabled 开关：关 = 继承默认，不删数据）
+        const oc = (preset.outputConfig = preset.outputConfig ?? {});
+        const renderPresetUpdateRules = () => {
+          updateYamlWrap.empty();
+          if (oc.updateYamlRulesEnabled === true && Array.isArray(oc.updateYamlRules)) {
+            this.renderPresetUpdateYamlRules(updateYamlWrap, oc.updateYamlRules, renderPresetUpdateRules);
+          }
+        };
+        const updateYamlOv = new Setting(body)
+          .setName('AI 修改属性规则（覆盖默认预设）')
+          .setDesc('开 = 本预设用下方规则；关 = 继承「默认预设（全局设置）」的规则（已有配置保留，重新打开仍可用）。')
+          .addToggle((t) =>
+            t.setValue(oc.updateYamlRulesEnabled === true).onChange((v) => {
+              oc.updateYamlRulesEnabled = v;
+              if (v && !Array.isArray(oc.updateYamlRules)) oc.updateYamlRules = [];
+              void this.plugin.saveSettings();
+              renderPresetUpdateRules(); // 只重建列表容器，不整组重渲染（v0.8.2 修复丢焦点）
+            })
+          );
+        this.markSearchable(updateYamlOv, '预设 update_note_yaml AI修改属性规则 覆盖 updateYamlRules');
+        // v0.9.1：列表容器在开关之后创建，规则列表（含「添加规则」按钮）随开关展开
+        // 显示在开关下方；关 = 整个列表收起（v0.8.x 教训：容器在开关前创建会导致列表
+        // 显示在开关上方）。
+        const updateYamlWrap = body.createDiv();
+        renderPresetUpdateRules();
+      }, updateYamlIo, rerenderAll);
 
     this.renderToolConfigGroup(toolArea, preset, 'search_output_notes',
       '搜索输出文件夹（参数：模式 完整/阉割）', (body) => {

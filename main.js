@@ -745,6 +745,12 @@ function isTmplEntry(v) {
 function isRestriction(v) {
   return isPlainObject(v) && isStr(v.key) && isStrArr(v.values);
 }
+function isUpdateYamlRule(v) {
+  return isPlainObject(v) && isStr(v.key) && isStr(v.desc) && isStrArr(v.values);
+}
+function isUpdateYamlRules(v) {
+  return Array.isArray(v) && v.every(isUpdateYamlRule);
+}
 function rejectUnknownFields(cfg, allowed) {
   for (const k of Object.keys(cfg)) {
     if (!allowed.includes(k)) return `\u672A\u77E5\u5B57\u6BB5\u300C${k}\u300D`;
@@ -929,6 +935,37 @@ var modifyIo = {
   },
   applyToGlobal(s, cfg) {
     if (cfg.modifyYamlRules !== void 0) s.modifyYamlRules = cfg.modifyYamlRules;
+  }
+};
+var updateYamlIo = {
+  label: "update_note_yaml",
+  exportFromPreset(p) {
+    var _a;
+    const oc = (_a = p.outputConfig) != null ? _a : {};
+    const cfg = {};
+    if (oc.updateYamlRulesEnabled !== void 0) cfg.updateYamlRulesEnabled = oc.updateYamlRulesEnabled;
+    if (oc.updateYamlRules !== void 0) cfg.updateYamlRules = oc.updateYamlRules;
+    return cfg;
+  },
+  exportFromGlobal(s) {
+    return { updateYamlRulesEnabled: true, updateYamlRules: s.updateYamlRules };
+  },
+  validate(raw) {
+    if (!isPlainObject(raw)) return { ok: false, error: "\u5FC5\u987B\u662F JSON \u5BF9\u8C61" };
+    const bad = rejectUnknownFields(raw, ["updateYamlRulesEnabled", "updateYamlRules"]);
+    if (bad) return { ok: false, error: bad };
+    if (raw.updateYamlRulesEnabled !== void 0 && !isBool(raw.updateYamlRulesEnabled)) return { ok: false, error: "updateYamlRulesEnabled \u5FC5\u987B\u662F\u5E03\u5C14\u503C" };
+    if (raw.updateYamlRules !== void 0 && !isUpdateYamlRules(raw.updateYamlRules)) return { ok: false, error: "updateYamlRules \u6BCF\u9879\u5FC5\u987B\u662F {key, desc, values[]}" };
+    return { ok: true, cfg: raw };
+  },
+  applyToPreset(p, cfg) {
+    var _a;
+    const oc = p.outputConfig = (_a = p.outputConfig) != null ? _a : {};
+    if (cfg.updateYamlRulesEnabled !== void 0) oc.updateYamlRulesEnabled = cfg.updateYamlRulesEnabled;
+    if (cfg.updateYamlRules !== void 0) oc.updateYamlRules = cfg.updateYamlRules;
+  },
+  applyToGlobal(s, cfg) {
+    if (cfg.updateYamlRules !== void 0) s.updateYamlRules = cfg.updateYamlRules;
   }
 };
 var archiveIo = {
@@ -1918,6 +1955,47 @@ var SettingsRenderer = class {
     this.markSearchable(addBtn, "AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219 \u6DFB\u52A0\u89C4\u5219 \u589E\u52A0 \u6DFB\u52A0");
   }
   /**
+   * v0.9.1：预设内 update_note_yaml 属性规则列表（与全局 renderUpdateYamlRules 同构，
+   * 但数据源是预设 outputConfig.updateYamlRules 数组）。每条 = key 输入 + 解释
+   * textarea（多行，解释各可选值含义）+ 可选值 chips（复用 renderYamlValues）+
+   * 删除；底部「添加规则」按钮 push `{key:'', desc:'', values:[]}`。
+   */
+  renderPresetUpdateYamlRules(containerEl, rules, rerender) {
+    rules.forEach((rule, index) => {
+      const hay = `AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219 ${rule.key} ${rule.desc} ${rule.values.join(" ")}`;
+      const row = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addText(
+        (text) => text.setPlaceholder("\u5C5E\u6027\u540D\uFF0C\u5982 status").setValue(rule.key).onChange((value) => {
+          rule.key = value;
+          void this.plugin.saveSettings();
+        })
+      ).addTextArea(
+        (text) => text.setPlaceholder("\u89E3\u91CA\u8BE5\u5C5E\u6027\u53CA\u5404\u53EF\u9009\u503C\u7684\u542B\u4E49\uFF0C\u5C06\u968F\u5DE5\u5177\u63CF\u8FF0\u4F20\u7ED9 AI").setValue(rule.desc).onChange((value) => {
+          rule.desc = value;
+          void this.plugin.saveSettings();
+        })
+      ).addButton(
+        (btn) => btn.setIcon("trash-2").setTooltip("\u5220\u9664").onClick(() => {
+          rules.splice(index, 1);
+          void this.plugin.saveSettings();
+          rerender();
+        })
+      );
+      row.settingEl.addClasses(["ks-yaml-rule-row", "ks-update-yaml-rule-row"]);
+      this.markSearchable(row, hay);
+      const valuesEl = containerEl.createDiv({ cls: "ks-yaml-values setting-item" });
+      valuesEl.setAttribute("data-search", hay);
+      this.renderYamlValues(valuesEl, rule);
+    });
+    const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u89C4\u5219").onClick(() => {
+        rules.push({ key: "", desc: "", values: [] });
+        void this.plugin.saveSettings();
+        rerender();
+      })
+    );
+    this.markSearchable(addBtn, "\u9884\u8BBE update_note_yaml AI\u4FEE\u6539\u5C5E\u6027\u89C4\u5219 \u6DFB\u52A0\u89C4\u5219 \u589E\u52A0 \u6DFB\u52A0");
+  }
+  /**
    * Render the "AI 创建模板（create_note 正文结构）" group (v0.7.0 B.4): one
    * row per template heading = level dropdown + title text + "允许 AI 写" toggle
    * + 解释 (multi-line textarea) + up/down/delete, plus a live preview. The body
@@ -2193,6 +2271,10 @@ var SettingsRenderer = class {
       const modBody = b.createDiv();
       this.renderModifyYamlRules(modBody);
     }, modifyIo);
+    renderGlobalGroup("update_note_yaml\uFF08\u5C5E\u6027\u89C4\u5219\uFF09", "\u9ED8\u8BA4\u9884\u8BBE\u7684 update_note_yaml \u5C5E\u6027\u89C4\u5219\uFF08\u5141\u8BB8\u4FEE\u6539\u7684\u5C5E\u6027 + \u53EF\u9009\u503C\u7EA6\u675F\uFF09\u3002", (b) => {
+      const updateYamlBody = b.createDiv();
+      this.renderUpdateYamlRules(updateYamlBody);
+    }, updateYamlIo);
     renderGlobalGroup("modify_output_note_versioned\uFF08\u5F52\u6863\u914D\u7F6E\uFF09", "\u9ED8\u8BA4\u9884\u8BBE\u7684\u5F52\u6863\u914D\u7F6E\uFF08\u7248\u672C\u540E\u7F00 / \u7248\u672C\u53F7\u5C5E\u6027 / \u5F52\u6863\u6807\u8BB0\u5C5E\u6027\uFF09\u3002", (b) => {
       const suffix = new import_obsidian3.Setting(b).setName("\u7248\u672C\u540E\u7F00").setDesc("\u5F52\u6863\u6587\u4EF6\u540E\u7F00\uFF08\u5982\u300C-\u5F52\u6863\u300D\u2192 \u539F\u6587\u540D-\u5F52\u6863.md\uFF09\u3002").addText(
         (text) => text.setPlaceholder("\u5982\uFF1A-\u5F52\u6863").setValue(this.plugin.settings.modifyVersionSuffix).onChange((v) => this.updateSetting("modifyVersionSuffix", v))
@@ -2452,9 +2534,30 @@ var SettingsRenderer = class {
       "update_note_yaml",
       "\u4FEE\u6539\u6E90\u6587\u4EF6 frontmatter \u5C5E\u6027\uFF08\u9700\u5168\u5C40\u5F00\u5173\u66B4\u9732\uFF09",
       (body) => {
-        const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u4FEE\u6539\u6E90\u6587\u4EF6 frontmatter \u5C5E\u6027\u300D\u3002\u5B9E\u9645\u5BF9 AI \u66B4\u9732\u8FD8\u987B\u5F00\u542F\u5168\u5C40\u5F00\u5173\u300C\u66B4\u9732 update_note_yaml \u5DE5\u5177\u300D\uFF1B\u53EA\u80FD\u4FEE\u6539\u8BBE\u7F6E\u9875\u914D\u7F6E\u7684\u5C5E\u6027\uFF08\u503C\u987B\u5728\u5141\u8BB8\u8303\u56F4\u5185\uFF09\u3002");
+        var _a;
+        const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u4FEE\u6539\u6E90\u6587\u4EF6 frontmatter \u5C5E\u6027\u300D\u3002\u5B9E\u9645\u5BF9 AI \u66B4\u9732\u8FD8\u987B\u5F00\u542F\u5168\u5C40\u5F00\u5173\u300C\u66B4\u9732 update_note_yaml \u5DE5\u5177\u300D\uFF1B\u53EA\u80FD\u4FEE\u6539\u8BBE\u7F6E\u9875\u914D\u7F6E\u7684\u5C5E\u6027\uFF08\u503C\u987B\u5728\u5141\u8BB8\u8303\u56F4\u5185\uFF09\u3002\u5C5E\u6027\u89C4\u5219\u9ED8\u8BA4\u7EE7\u627F\u300C\u9ED8\u8BA4\u9884\u8BBE\uFF08\u5168\u5C40\u8BBE\u7F6E\uFF09\u300D\uFF0C\u4E5F\u53EF\u5728\u672C\u9884\u8BBE\u5185\u72EC\u7ACB\u914D\u7F6E\uFF08\u89C1\u4E0B\u65B9\uFF09\u3002");
         this.markSearchable(info, "\u9884\u8BBE update_note_yaml \u8BF4\u660E \u4FEE\u6539 frontmatter");
-      }
+        const oc = preset.outputConfig = (_a = preset.outputConfig) != null ? _a : {};
+        const renderPresetUpdateRules = () => {
+          updateYamlWrap.empty();
+          if (oc.updateYamlRulesEnabled === true && Array.isArray(oc.updateYamlRules)) {
+            this.renderPresetUpdateYamlRules(updateYamlWrap, oc.updateYamlRules, renderPresetUpdateRules);
+          }
+        };
+        const updateYamlOv = new import_obsidian3.Setting(body).setName("AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219\uFF08\u8986\u76D6\u9ED8\u8BA4\u9884\u8BBE\uFF09").setDesc("\u5F00 = \u672C\u9884\u8BBE\u7528\u4E0B\u65B9\u89C4\u5219\uFF1B\u5173 = \u7EE7\u627F\u300C\u9ED8\u8BA4\u9884\u8BBE\uFF08\u5168\u5C40\u8BBE\u7F6E\uFF09\u300D\u7684\u89C4\u5219\uFF08\u5DF2\u6709\u914D\u7F6E\u4FDD\u7559\uFF0C\u91CD\u65B0\u6253\u5F00\u4ECD\u53EF\u7528\uFF09\u3002").addToggle(
+          (t) => t.setValue(oc.updateYamlRulesEnabled === true).onChange((v) => {
+            oc.updateYamlRulesEnabled = v;
+            if (v && !Array.isArray(oc.updateYamlRules)) oc.updateYamlRules = [];
+            void this.plugin.saveSettings();
+            renderPresetUpdateRules();
+          })
+        );
+        this.markSearchable(updateYamlOv, "\u9884\u8BBE update_note_yaml AI\u4FEE\u6539\u5C5E\u6027\u89C4\u5219 \u8986\u76D6 updateYamlRules");
+        const updateYamlWrap = body.createDiv();
+        renderPresetUpdateRules();
+      },
+      updateYamlIo,
+      rerenderAll
     );
     this.renderToolConfigGroup(
       toolArea,
@@ -3867,7 +3970,7 @@ function resolveToolConfig(settings) {
   const yamlRules = (oc == null ? void 0 : oc.yamlRulesEnabled) === true && Array.isArray(oc.yamlRules) ? oc.yamlRules : Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
   const modifyYamlRules = (oc == null ? void 0 : oc.modifyYamlRulesEnabled) === true && Array.isArray(oc.modifyYamlRules) ? oc.modifyYamlRules : Array.isArray(settings.modifyYamlRules) ? settings.modifyYamlRules : [];
   const noteTemplate = (oc == null ? void 0 : oc.noteTemplateEnabled) === true && Array.isArray(oc.noteTemplate) ? oc.noteTemplate : Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
-  const updateYamlRules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
+  const updateYamlRules = (oc == null ? void 0 : oc.updateYamlRulesEnabled) === true && Array.isArray(oc.updateYamlRules) ? oc.updateYamlRules : Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
   const createRestrictYaml = (oc == null ? void 0 : oc.createRestrictYamlEnabled) === true ? oc.createRestrictYaml === true : settings.createRestrictYaml === true;
   const modifyVersionSuffix = (oc == null ? void 0 : oc.archiveEnabled) === true && oc.modifyVersionSuffix !== void 0 ? oc.modifyVersionSuffix : settings.modifyVersionSuffix;
   const modifyVersionProperty = (oc == null ? void 0 : oc.archiveEnabled) === true && oc.modifyVersionProperty !== void 0 ? oc.modifyVersionProperty : settings.modifyVersionProperty;
@@ -4584,6 +4687,9 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
         yamlRules: cfg == null ? void 0 : cfg.yamlRules,
         modifyYamlRules: cfg == null ? void 0 : cfg.modifyYamlRules,
         noteTemplate: cfg == null ? void 0 : cfg.noteTemplate,
+        // v0.9.1：update_note_yaml 属性规则同样用生效配置（预设覆盖后），
+        // 使执行期校验（updateNoteYamlTool 读 settings.updateYamlRules）与工具 schema 一致。
+        updateYamlRules: cfg == null ? void 0 : cfg.updateYamlRules,
         modifyVersionSuffix: cfg == null ? void 0 : cfg.modifyVersionSuffix,
         modifyVersionProperty: cfg == null ? void 0 : cfg.modifyVersionProperty,
         modifyArchiveProperty: cfg == null ? void 0 : cfg.modifyArchiveProperty,

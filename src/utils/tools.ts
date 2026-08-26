@@ -664,9 +664,10 @@ export async function createNoteTool(
  * Anthropic schema for `update_note_yaml` (v0.5.0, default NOT exposed). The
  * AI updates a source-folder note's frontmatter keys; other keys are preserved.
  *
- * v0.7.0 阉割版：传入 `updateRules`（来自 settings.updateYamlRules）时，`updates`
- * 的每个 `key` 被约束为规则键（enum），描述含每条规则的解释与可选值；未配置规则
- * （空数组）→ 维持 v0.5.0 现状「任意键」。规则恒来自全局 settings（预设不覆写）。
+ * v0.7.0 阉割版：传入 `updateRules`（来自 settings.updateYamlRules，v0.9.1 起可为预设
+ * outputConfig.updateYamlRules 覆盖值）时，`updates` 的每个 `key` 被约束为规则键
+ * （enum），描述含每条规则的解释与可选值；未配置规则（空数组）→ 维持 v0.5.0 现状
+ * 「任意键」。
  */
 export function buildUpdateNoteYamlTool(updateRules?: UpdateYamlRule[]): AnthropicTool {
   const rules = (Array.isArray(updateRules) ? updateRules : []).filter((r) => r && r.key && r.key.trim());

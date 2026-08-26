@@ -41,7 +41,7 @@ export interface ResolvedToolConfig {
   recentOutputAttr?: string;
   /** v0.8.9：list_recent_output_notes 日期格式（moment 双大括号模板；缺省回退全局 timeFormat）。 */
   recentOutputFormat?: string;
-  /** update_note_yaml allowed-attribute rules (always from settings; v0.7.0). */
+  /** update_note_yaml allowed-attribute rules (preset outputConfig overrides global; v0.7.0, v0.9.1 预设覆盖). */
   updateYamlRules: UpdateYamlRule[];
   /** create_note body template (preset outputConfig overrides global; v0.7.0). */
   noteTemplate: NoteTemplateEntry[];
@@ -87,7 +87,10 @@ export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedTo
     oc?.noteTemplateEnabled === true && Array.isArray(oc.noteTemplate)
       ? oc.noteTemplate
       : Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
-  const updateYamlRules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
+  const updateYamlRules =
+    oc?.updateYamlRulesEnabled === true && Array.isArray(oc.updateYamlRules)
+      ? oc.updateYamlRules
+      : Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
   const createRestrictYaml =
     oc?.createRestrictYamlEnabled === true
       ? oc.createRestrictYaml === true

@@ -796,6 +796,9 @@ export class KnowledgeChatView extends ItemView {
         yamlRules: cfg?.yamlRules,
         modifyYamlRules: cfg?.modifyYamlRules,
         noteTemplate: cfg?.noteTemplate,
+        // v0.9.1：update_note_yaml 属性规则同样用生效配置（预设覆盖后），
+        // 使执行期校验（updateNoteYamlTool 读 settings.updateYamlRules）与工具 schema 一致。
+        updateYamlRules: cfg?.updateYamlRules,
         modifyVersionSuffix: cfg?.modifyVersionSuffix,
         modifyVersionProperty: cfg?.modifyVersionProperty,
         modifyArchiveProperty: cfg?.modifyArchiveProperty,

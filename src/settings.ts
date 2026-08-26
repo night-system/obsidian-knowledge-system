@@ -117,7 +117,7 @@ export interface ToolPreset {
    * v0.8.2：预设级「输出属性」覆盖（可选；每项未启用 = 该项继承默认预设/全局设置）。
    * 每个覆盖项配一个 `xxxEnabled` 开关：关 = 继承全局（不删数据）；开 = 用预设值。
    * yamlRules（create 属性规则）/ noteTemplate（创建模板）/ modifyYamlRules（modify 属性规则）
-   * / 归档三配置 / createRestrictYaml。
+   * / updateYamlRules（update_note_yaml 属性规则，v0.9.1）/ 归档三配置 / createRestrictYaml。
    */
   outputConfig?: {
     yamlRulesEnabled?: boolean;
@@ -126,6 +126,9 @@ export interface ToolPreset {
     noteTemplate?: NoteTemplateEntry[];
     modifyYamlRulesEnabled?: boolean;
     modifyYamlRules?: YamlRule[];
+    /** v0.9.1：update_note_yaml 属性规则覆盖（结构同全局 UpdateYamlRule，无 default/expose）。 */
+    updateYamlRulesEnabled?: boolean;
+    updateYamlRules?: UpdateYamlRule[];
     archiveEnabled?: boolean;
     modifyVersionSuffix?: string;
     modifyVersionProperty?: string;

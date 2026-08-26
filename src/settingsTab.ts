@@ -567,11 +567,12 @@ class SettingsRenderer {
       .setName('')
       .setDesc(
         '开关说明：\n' +
-          '· 暴露给 AI：开 = AI 可见此属性，可填写值（下方可选值用于约束只能选这些值，留空=任意）；关 = AI 完全看不到此属性、也禁止 AI 写入。\n' +
-          '· 覆写默认值：开 = 每次修改文件时把此属性强制覆写为默认值（如 created + {{YYYY-MM-DD HH:mm}} 记录本次修改时间；默认值支持 {{moment}} 模板）；关 = 不修改此属性的原值（原样保留，如 approve）。\n' +
-          '· 默认值：暴露时 = AI 未填此键才自动补入；不暴露且覆写开 = 每次强制覆写；留空 = 不插入/不覆写。'
+          '第一个开关（暴露给 AI）：开 = AI 可见此属性，可填写值（可选值用于约束只能选这些值，留空=任意）；关 = AI 完全看不到此属性、也禁止 AI 写入。\n' +
+          '第二个开关（覆写默认值）：开 = 每次修改文件时把此属性强制覆写为默认值（如 created + {{YYYY-MM-DD HH:mm}} 记录本次修改时间）；关 = 不修改此属性的原值（原样保留，如 approve）。\n' +
+          '默认值输入框：暴露时 = AI 未填此键才自动补入；不暴露且覆写开 = 每次强制覆写；留空 = 不插入/不覆写。\n' +
+          '默认值支持 {{YYYY.MM.DD}} 等 moment 模板。'
       );
-    this.markSearchable(legend, 'AI 修改属性规则 开关说明 暴露给AI 覆写默认值 默认值 可选值');
+    this.markSearchable(legend, 'AI 修改属性规则 开关说明 第一个开关 第二个开关 暴露给AI 覆写默认值 默认值 可选值');
 
     const addBtn = new Setting(containerEl)
       .setName('')
@@ -741,11 +742,11 @@ class SettingsRenderer {
       .setName('')
       .setDesc(
         '开关说明：\n' +
-          '· 暴露给 AI：开 = AI 可见此属性，可填写值（下方可选值用于约束只能选这些值，留空=任意）；关 = AI 完全看不到此属性、也禁止 AI 写入。\n' +
-          '· 默认值：暴露时 = AI 未填此键才自动补入；不暴露时 = 创建文件自动追加默认值（如 approve → 未审核）；留空 = 不插入。\n' +
-          '· 默认值支持 {{YYYY.MM.DD}} 等 moment 模板。'
+          '第一个开关（暴露给 AI）：开 = AI 可见此属性，可填写值（可选值用于约束只能选这些值，留空=任意）；关 = AI 完全看不到此属性、也禁止 AI 写入。\n' +
+          '默认值输入框：暴露时 = AI 未填此键才自动补入；不暴露时 = 创建文件自动追加默认值（如 approve → 未审核）；留空 = 不插入。\n' +
+          '默认值支持 {{YYYY.MM.DD}} 等 moment 模板。'
       );
-    this.markSearchable(legend, 'AI 创建属性规则 开关说明 暴露给AI 默认值 可选值');
+    this.markSearchable(legend, 'AI 创建属性规则 开关说明 第一个开关 暴露给AI 默认值 可选值');
 
     const addBtn = new Setting(containerEl)
       .setName('')

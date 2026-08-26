@@ -958,7 +958,7 @@ var SettingsRenderer = class {
     this.renderExtraProperties(extraEl);
     const addBtn = new import_obsidian3.Setting(bodyEl).setName("").setDesc("").addButton(
       (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u5C5E\u6027").onClick(() => {
-        this.plugin.settings.extraProperties.unshift({ key: "", value: "" });
+        this.plugin.settings.extraProperties.push({ key: "", value: "" });
         void this.plugin.saveSettings();
         this.renderExtraProperties(extraEl);
       })
@@ -1040,7 +1040,7 @@ var SettingsRenderer = class {
       row.settingEl.addClass("ks-yaml-rule-row");
       this.markSearchable(row, hay);
       if (this.resolveUiExpose(rule)) {
-        const valuesEl = containerEl.createDiv({ cls: "ks-yaml-values setting-item" });
+        const valuesEl = row.controlEl.createDiv({ cls: "ks-yaml-values" });
         valuesEl.setAttribute("data-search", hay);
         this.renderYamlValues(valuesEl, rule);
       }
@@ -1051,7 +1051,7 @@ var SettingsRenderer = class {
     this.markSearchable(legend, "AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219 \u5F00\u5173\u8BF4\u660E \u7B2C\u4E00\u4E2A\u5F00\u5173 \u7B2C\u4E8C\u4E2A\u5F00\u5173 \u66B4\u9732\u7ED9AI \u8986\u5199\u9ED8\u8BA4\u503C \u9ED8\u8BA4\u503C \u53EF\u9009\u503C");
     const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
       (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u89C4\u5219").onClick(() => {
-        this.plugin.settings.modifyYamlRules.unshift({ key: "", desc: "", values: [], default: "", expose: true, overwrite: false });
+        this.plugin.settings.modifyYamlRules.push({ key: "", desc: "", values: [], default: "", expose: true, overwrite: false });
         void this.plugin.saveSettings();
         this.renderModifyYamlRules(containerEl);
       })
@@ -1148,7 +1148,7 @@ var SettingsRenderer = class {
       row.settingEl.addClass("ks-yaml-rule-row");
       this.markSearchable(row, hay);
       if (this.resolveUiExpose(rule)) {
-        const valuesEl = containerEl.createDiv({ cls: "ks-yaml-values setting-item" });
+        const valuesEl = row.controlEl.createDiv({ cls: "ks-yaml-values" });
         valuesEl.setAttribute("data-search", hay);
         this.renderYamlValues(valuesEl, rule);
       }
@@ -1159,7 +1159,7 @@ var SettingsRenderer = class {
     this.markSearchable(legend, "AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 \u5F00\u5173\u8BF4\u660E \u7B2C\u4E00\u4E2A\u5F00\u5173 \u66B4\u9732\u7ED9AI \u9ED8\u8BA4\u503C \u53EF\u9009\u503C");
     const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
       (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u89C4\u5219").onClick(() => {
-        this.plugin.settings.yamlRules.unshift({ key: "", desc: "", values: [], default: "", expose: true });
+        this.plugin.settings.yamlRules.push({ key: "", desc: "", values: [], default: "", expose: true });
         void this.plugin.saveSettings();
         this.renderYamlRules(containerEl);
       })
@@ -1255,7 +1255,7 @@ var SettingsRenderer = class {
     });
     const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
       (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u89C4\u5219").onClick(() => {
-        this.plugin.settings.updateYamlRules.unshift({ key: "", desc: "", values: [] });
+        this.plugin.settings.updateYamlRules.push({ key: "", desc: "", values: [] });
         void this.plugin.saveSettings();
         this.renderUpdateYamlRules(containerEl);
       })
@@ -1454,12 +1454,15 @@ var SettingsRenderer = class {
       new import_obsidian3.Notice("\u590D\u5236\u5931\u8D25");
     }
   }
-  /** Small lucide icon button (no emoji) for the template row operations. */
+  /** Small lucide icon button (no emoji) for the template row operations.
+   *  v0.8.x：按钮带文字标签（触屏无 hover，title/aria-label 不可见），
+   *  图标不可见时回退 glyph，文字始终显示。 */
   addIconBtn(parent, icon, tooltip, onClick) {
     const btn = parent.createEl("button", { cls: "ks-template-op" });
+    this.setIconSafe(btn, icon, tooltip === "\u5220\u9664" ? "\xD7" : "\u203A");
+    btn.createSpan({ text: tooltip });
     btn.setAttribute("aria-label", tooltip);
     btn.setAttribute("title", tooltip);
-    this.setIconSafe(btn, icon, tooltip === "\u5220\u9664" ? "\xD7" : "\u203A");
     btn.addEventListener("click", onClick);
   }
   // -------------------------------------------------------------------------
@@ -1578,7 +1581,7 @@ var SettingsRenderer = class {
           enabledTools: [],
           toolOverrides: {}
         };
-        this.plugin.settings.toolPresets.unshift(np);
+        this.plugin.settings.toolPresets.push(np);
         void this.plugin.saveSettings();
         this.renderPresetGroup(containerEl);
       })
@@ -1671,7 +1674,6 @@ var SettingsRenderer = class {
         const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u521B\u5EFA\u65B0\u7B14\u8BB0\u300D\u3002\u5141\u8BB8 AI \u521B\u5EFA\u65B0\u7B14\u8BB0\uFF1B\u6B63\u6587\u7ED3\u6784\u4E0E frontmatter \u5C5E\u6027\u89C4\u5219\u9ED8\u8BA4\u7EE7\u627F\u300C\u9ED8\u8BA4\u9884\u8BBE\uFF08\u5168\u5C40\u8BBE\u7F6E\uFF09\u300D\uFF0C\u4E5F\u53EF\u5728\u672C\u9884\u8BBE\u5185\u72EC\u7ACB\u914D\u7F6E\uFF08\u89C1\u4E0B\u65B9\uFF09\u3002");
         this.markSearchable(info, "\u9884\u8BBE create_note \u8BF4\u660E \u521B\u5EFA \u65B0\u5EFA");
         const oc = preset.outputConfig = (_a = preset.outputConfig) != null ? _a : {};
-        const yamlRulesWrap = body.createDiv();
         const renderCreateRules = () => {
           yamlRulesWrap.empty();
           if (oc.yamlRulesEnabled === true && Array.isArray(oc.yamlRules)) {
@@ -1693,8 +1695,8 @@ var SettingsRenderer = class {
           })
         );
         this.markSearchable(yamlOv, "\u9884\u8BBE create_note AI\u521B\u5EFA\u5C5E\u6027\u89C4\u5219 \u8986\u76D6 yamlRules");
+        const yamlRulesWrap = body.createDiv();
         renderCreateRules();
-        const tmplWrap = body.createDiv();
         const renderPresetTemplate = () => {
           tmplWrap.empty();
           if (oc.noteTemplateEnabled === true && Array.isArray(oc.noteTemplate)) {
@@ -1710,6 +1712,7 @@ var SettingsRenderer = class {
           })
         );
         this.markSearchable(tmplOv, "\u9884\u8BBE create_note AI\u521B\u5EFA\u6A21\u677F \u8986\u76D6 noteTemplate");
+        const tmplWrap = body.createDiv();
         renderPresetTemplate();
         const restrictOv = new import_obsidian3.Setting(body).setName("\u9650\u5236 AI \u53EA\u80FD\u4F7F\u7528\u5DF2\u914D\u7F6E\u7684\u5C5E\u6027\uFF08\u8986\u76D6\u9ED8\u8BA4\u9884\u8BBE\uFF09").setDesc("\u5F00 = \u672C\u9884\u8BBE\u5185 create/modify \u7684 yaml \u952E\u53EA\u80FD\u5728\u5BF9\u5E94\u89C4\u5219\u96C6\u5185\uFF1B\u5173 = \u7EE7\u627F\u9ED8\u8BA4\u9884\u8BBE\u3002").addToggle(
           (t) => t.setValue(oc.createRestrictYamlEnabled === true).onChange((v) => {
@@ -1761,7 +1764,6 @@ var SettingsRenderer = class {
         const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u8986\u76D6\u4FEE\u6539\u8F93\u51FA\u6587\u4EF6\u5939\u7B14\u8BB0\u300D\u3002sections \u7684\u952E\u5FC5\u987B\u662F\u539F\u6587\u4E2D\u5DF2\u5B58\u5728\u7684\u6807\u9898\u6587\u672C\uFF0C\u53EA\u80FD\u4FEE\u6539\u6807\u9898\u4E0B\u7684\u6587\u5B57\uFF08\u4E0D\u80FD\u4FEE\u6539\u6807\u9898\u6216\u65B0\u589E\u6807\u9898\uFF0C\u7981\u6B62 # \u5F00\u5934\uFF09\uFF1Byaml \u89C4\u5219\u9ED8\u8BA4\u7EE7\u627F\u300C\u9ED8\u8BA4\u9884\u8BBE\uFF08\u5168\u5C40\u8BBE\u7F6E\uFF09\u300D\uFF0C\u4E5F\u53EF\u5728\u672C\u9884\u8BBE\u5185\u72EC\u7ACB\u914D\u7F6E\uFF08\u89C1\u4E0B\u65B9\uFF09\u3002");
         this.markSearchable(info, "\u9884\u8BBE modify_output_note \u8BF4\u660E \u4FEE\u6539 \u8F93\u51FA \u8986\u76D6");
         const oc = preset.outputConfig = (_a = preset.outputConfig) != null ? _a : {};
-        const modYamlRulesWrap = body.createDiv();
         const renderModifyRules = () => {
           modYamlRulesWrap.empty();
           if (oc.modifyYamlRulesEnabled === true && Array.isArray(oc.modifyYamlRules)) {
@@ -1783,6 +1785,7 @@ var SettingsRenderer = class {
           })
         );
         this.markSearchable(modYamlOv, "\u9884\u8BBE modify_output_note AI\u4FEE\u6539\u5C5E\u6027\u89C4\u5219 \u8986\u76D6 modifyYamlRules");
+        const modYamlRulesWrap = body.createDiv();
         renderModifyRules();
       }
     );
@@ -1888,14 +1891,14 @@ var SettingsRenderer = class {
       row.settingEl.addClass("ks-yaml-rule-row");
       this.markSearchable(row, hay);
       if (this.resolveUiExpose(rule)) {
-        const valuesEl = containerEl.createDiv({ cls: "ks-yaml-values setting-item" });
+        const valuesEl = row.controlEl.createDiv({ cls: "ks-yaml-values" });
         valuesEl.setAttribute("data-search", hay);
         this.renderYamlValues(valuesEl, rule);
       }
     });
     const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
       (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u89C4\u5219").onClick(() => {
-        rules.unshift({ key: "", desc: "", values: [], default: "", expose: true });
+        rules.push({ key: "", desc: "", values: [], default: "", expose: true });
         void this.plugin.saveSettings();
         rerender();
       })
@@ -1904,6 +1907,8 @@ var SettingsRenderer = class {
   }
   /** 预设内创建模板列表（标题/级别/允许 AI 写/解释 + 上移下移删除）。 */
   renderPresetTemplateList(containerEl, entries, rerender) {
+    const hint = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u6761\u76EE\u5F00\u5173\u8BF4\u660E\uFF1A\u7B2C\u4E00\u4E2A\u5F00\u5173\uFF08\u5141\u8BB8 AI \u5199\uFF09\uFF1A\u5F00 = AI \u53EF\u5728\u6B64\u6807\u9898\u4E0B\u5199\u5185\u5BB9\uFF1B\u5173 = \u8BE5\u6807\u9898\u7531\u6A21\u677F\u56FA\u5B9A\u8F93\u51FA\uFF0CAI \u4E0D\u80FD\u5199\u3002");
+    this.markSearchable(hint, "\u9884\u8BBE \u521B\u5EFA\u6A21\u677F \u5141\u8BB8AI\u5199 \u5F00\u5173 \u8BF4\u660E \u542B\u4E49");
     entries.forEach((entry, index) => {
       const row = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addDropdown((drop) => {
         const opts = {};
@@ -2058,7 +2063,7 @@ var SettingsRenderer = class {
     });
     const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
       (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u952E").onClick(() => {
-        preset.toolOverrides.searchRestrictions.unshift({ key: "", values: [] });
+        preset.toolOverrides.searchRestrictions.push({ key: "", values: [] });
         void this.plugin.saveSettings();
         this.renderSearchRestrictions(containerEl, preset);
       })

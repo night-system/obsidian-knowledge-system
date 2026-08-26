@@ -131,6 +131,20 @@
   flex: 1 1 10em;
 }
 
+/* v0.8.x：可选值输入区挂到 controlEl 内，与属性名/解释/默认值同一行；
+   窄屏由父级 flex-wrap 自动换行；chips 在区内换行。 */
+.ks-yaml-rule-row .setting-item-control .ks-yaml-values {
+  flex: 1 1 14em;
+  min-width: 12em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-1);
+}
+
+.ks-yaml-rule-row .setting-item-control .ks-yaml-values .ks-yaml-values-input {
+  min-width: 8em;
+}
+
 /* Standalone settings view (workspace leaf). */
 .ks-view {
   padding: var(--size-4-2) var(--size-4-3);
@@ -1063,14 +1077,15 @@
 .ks-template-op {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 4px;
+  gap: 4px; /* v0.8.x：图标 + 文字标签（触屏可见） */
+  padding: 4px 6px;
   border: none !important;
   border-radius: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
   color: var(--text-muted);
   cursor: pointer;
+  font-size: var(--font-ui-small);
 }
 
 .ks-template-op:hover {

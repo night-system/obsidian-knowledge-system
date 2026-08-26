@@ -425,7 +425,7 @@ class SettingsRenderer {
       .setDesc('')
       .addButton((btn) =>
         btn.setIcon('plus').setButtonText('添加属性').onClick(() => {
-          this.plugin.settings.extraProperties.unshift({ key: '', value: '' });
+          this.plugin.settings.extraProperties.push({ key: '', value: '' });
           void this.plugin.saveSettings();
           this.renderExtraProperties(extraEl);
         })
@@ -565,9 +565,10 @@ class SettingsRenderer {
       row.settingEl.addClass('ks-yaml-rule-row');
       this.markSearchable(row, hay);
 
-      // 可选值 tag 输入区：仅「暴露给 AI」时显示。
+      // 可选值 tag 输入区：仅「暴露给 AI」时显示；v0.8.x 起挂在 controlEl 内，
+      // 与属性名/解释/默认值三个控件同一行（窄屏由 flex-wrap 自动换行）。
       if (this.resolveUiExpose(rule)) {
-        const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
+        const valuesEl = row.controlEl.createDiv({ cls: 'ks-yaml-values' });
         valuesEl.setAttribute('data-search', hay);
         this.renderYamlValues(valuesEl, rule);
       }
@@ -590,7 +591,7 @@ class SettingsRenderer {
       .setDesc('')
       .addButton((btn) =>
         btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
-          this.plugin.settings.modifyYamlRules.unshift({ key: '', desc: '', values: [], default: '', expose: true, overwrite: false });
+          this.plugin.settings.modifyYamlRules.push({ key: '', desc: '', values: [], default: '', expose: true, overwrite: false });
           void this.plugin.saveSettings();
           this.renderModifyYamlRules(containerEl);
         })
@@ -740,9 +741,10 @@ class SettingsRenderer {
       row.settingEl.addClass('ks-yaml-rule-row');
       this.markSearchable(row, hay);
 
-      // 可选值 tag 输入区：仅「暴露给 AI」时显示。
+      // 可选值 tag 输入区：仅「暴露给 AI」时显示；v0.8.x 起挂在 controlEl 内，
+      // 与属性名/解释/默认值三个控件同一行（窄屏由 flex-wrap 自动换行）。
       if (this.resolveUiExpose(rule)) {
-        const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
+        const valuesEl = row.controlEl.createDiv({ cls: 'ks-yaml-values' });
         valuesEl.setAttribute('data-search', hay);
         this.renderYamlValues(valuesEl, rule);
       }
@@ -764,7 +766,7 @@ class SettingsRenderer {
       .setDesc('')
       .addButton((btn) =>
         btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
-          this.plugin.settings.yamlRules.unshift({ key: '', desc: '', values: [], default: '', expose: true });
+          this.plugin.settings.yamlRules.push({ key: '', desc: '', values: [], default: '', expose: true });
           void this.plugin.saveSettings();
           this.renderYamlRules(containerEl);
         })
@@ -890,7 +892,7 @@ class SettingsRenderer {
       .setDesc('')
       .addButton((btn) =>
         btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
-          this.plugin.settings.updateYamlRules.unshift({ key: '', desc: '', values: [] });
+          this.plugin.settings.updateYamlRules.push({ key: '', desc: '', values: [] });
           void this.plugin.saveSettings();
           this.renderUpdateYamlRules(containerEl);
         })
@@ -1113,12 +1115,15 @@ class SettingsRenderer {
     }
   }
 
-  /** Small lucide icon button (no emoji) for the template row operations. */
+  /** Small lucide icon button (no emoji) for the template row operations.
+   *  v0.8.x：按钮带文字标签（触屏无 hover，title/aria-label 不可见），
+   *  图标不可见时回退 glyph，文字始终显示。 */
   private addIconBtn(parent: HTMLElement, icon: string, tooltip: string, onClick: () => void): void {
     const btn = parent.createEl('button', { cls: 'ks-template-op' });
+    this.setIconSafe(btn, icon, tooltip === '删除' ? '\u00d7' : '\u203a');
+    btn.createSpan({ text: tooltip });
     btn.setAttribute('aria-label', tooltip);
     btn.setAttribute('title', tooltip);
-    this.setIconSafe(btn, icon, tooltip === '删除' ? '\u00d7' : '\u203a');
     btn.addEventListener('click', onClick);
   }
 
@@ -1299,7 +1304,7 @@ class SettingsRenderer {
             enabledTools: [],
             toolOverrides: {},
           };
-          this.plugin.settings.toolPresets.unshift(np);
+          this.plugin.settings.toolPresets.push(np);
           void this.plugin.saveSettings();
           this.renderPresetGroup(containerEl);
         })
@@ -1412,7 +1417,6 @@ class SettingsRenderer {
 
         // v0.8.2：预设覆盖 —— AI 创建属性规则（Enabled 开关：关 = 继承默认，不删数据）
         const oc = (preset.outputConfig = preset.outputConfig ?? {});
-        const yamlRulesWrap = body.createDiv();
         const renderCreateRules = () => {
           yamlRulesWrap.empty();
           if (oc.yamlRulesEnabled === true && Array.isArray(oc.yamlRules)) {
@@ -1433,10 +1437,12 @@ class SettingsRenderer {
             })
           );
         this.markSearchable(yamlOv, '预设 create_note AI创建属性规则 覆盖 yamlRules');
+        // v0.8.x：列表容器在开关之后创建，规则列表（含「添加规则」按钮）随开关展开
+        // 显示在「AI 创建属性规则」下方、「AI 创建模板」上方；关 = 整个列表收起。
+        const yamlRulesWrap = body.createDiv();
         renderCreateRules();
 
         // v0.8.2：预设覆盖 —— AI 创建模板（Enabled 开关：关 = 继承默认，不删数据）
-        const tmplWrap = body.createDiv();
         const renderPresetTemplate = () => {
           tmplWrap.empty();
           if (oc.noteTemplateEnabled === true && Array.isArray(oc.noteTemplate)) {
@@ -1455,6 +1461,8 @@ class SettingsRenderer {
             })
           );
         this.markSearchable(tmplOv, '预设 create_note AI创建模板 覆盖 noteTemplate');
+        // v0.8.x：列表容器在开关之后创建，模板列表随开关展开显示在开关下方。
+        const tmplWrap = body.createDiv();
         renderPresetTemplate();
 
         // v0.8.2：预设覆盖 —— 限制仅已配置属性（Enabled 开关：关 = 继承默认）
@@ -1507,7 +1515,6 @@ class SettingsRenderer {
 
         // v0.8.2：预设覆盖 —— AI 修改属性规则（Enabled 开关：关 = 继承默认，不删数据）
         const oc = (preset.outputConfig = preset.outputConfig ?? {});
-        const modYamlRulesWrap = body.createDiv();
         const renderModifyRules = () => {
           modYamlRulesWrap.empty();
           if (oc.modifyYamlRulesEnabled === true && Array.isArray(oc.modifyYamlRules)) {
@@ -1528,6 +1535,8 @@ class SettingsRenderer {
             })
           );
         this.markSearchable(modYamlOv, '预设 modify_output_note AI修改属性规则 覆盖 modifyYamlRules');
+        // v0.8.x：列表容器在开关之后创建，规则列表随开关展开显示在开关下方。
+        const modYamlRulesWrap = body.createDiv();
         renderModifyRules();
       });
 
@@ -1670,8 +1679,10 @@ class SettingsRenderer {
         );
       row.settingEl.addClass('ks-yaml-rule-row');
       this.markSearchable(row, hay);
+      // 可选值 tag 输入区：仅「暴露给 AI」时显示；v0.8.x 起挂在 controlEl 内，
+      // 与属性名/解释/默认值三个控件同一行（窄屏由 flex-wrap 自动换行）。
       if (this.resolveUiExpose(rule)) {
-        const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
+        const valuesEl = row.controlEl.createDiv({ cls: 'ks-yaml-values' });
         valuesEl.setAttribute('data-search', hay);
         this.renderYamlValues(valuesEl, rule);
       }
@@ -1681,7 +1692,7 @@ class SettingsRenderer {
       .setDesc('')
       .addButton((btn) =>
         btn.setIcon('plus').setButtonText('添加规则').onClick(() => {
-          rules.unshift({ key: '', desc: '', values: [], default: '', expose: true });
+          rules.push({ key: '', desc: '', values: [], default: '', expose: true });
           void this.plugin.saveSettings();
           rerender();
         })
@@ -1691,6 +1702,11 @@ class SettingsRenderer {
 
   /** 预设内创建模板列表（标题/级别/允许 AI 写/解释 + 上移下移删除）。 */
   private renderPresetTemplateList(containerEl: HTMLElement, entries: NoteTemplateEntry[], rerender: () => void): void {
+    // v0.8.x：条目开关含义解释——触屏无 hover，tooltip 不可见，列表顶部加一行说明。
+    const hint = new Setting(containerEl)
+      .setName('')
+      .setDesc('条目开关说明：第一个开关（允许 AI 写）：开 = AI 可在此标题下写内容；关 = 该标题由模板固定输出，AI 不能写。');
+    this.markSearchable(hint, '预设 创建模板 允许AI写 开关 说明 含义');
     entries.forEach((entry, index) => {
       const row = new Setting(containerEl)
         .setName('')
@@ -1905,7 +1921,7 @@ class SettingsRenderer {
       .setDesc('')
       .addButton((btn) =>
         btn.setIcon('plus').setButtonText('添加键').onClick(() => {
-          (preset.toolOverrides.searchRestrictions as { key: string; values: string[] }[]).unshift({ key: '', values: [] });
+          (preset.toolOverrides.searchRestrictions as { key: string; values: string[] }[]).push({ key: '', values: [] });
           void this.plugin.saveSettings();
           this.renderSearchRestrictions(containerEl, preset);
         })

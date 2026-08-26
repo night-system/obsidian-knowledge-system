@@ -1878,6 +1878,17 @@ function applyDefaults(obj, rules, opts) {
   }
   return out;
 }
+function applyFixedDefaults(obj, rules, opts) {
+  var _a;
+  const out = { ...obj != null ? obj : {} };
+  for (const rule of rules != null ? rules : []) {
+    if (!rule || !rule.key) continue;
+    if (rule.values && rule.values.length > 0) continue;
+    if (String((_a = rule.default) != null ? _a : "").trim() === "") continue;
+    out[rule.key] = renderDefaultValue(rule.default, opts.moment, opts.now);
+  }
+  return out;
+}
 function needsQuoting(v) {
   if (v === "") return true;
   if (/^[\s]|\s$/.test(v)) return true;
@@ -2499,7 +2510,8 @@ async function modifyOutputNoteTool(ctx, args) {
   const bodyResult = applySectionsToBody(body, (_b = args == null ? void 0 : args.sections) != null ? _b : {});
   if ("error" in bodyResult) return { error: bodyResult.error };
   const moment = (_c = ctx.moment) != null ? _c : typeof window !== "undefined" ? window.moment : null;
-  const newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
+  let newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
+  newFM = applyFixedDefaults(newFM, rules, { moment, now: ctx.now });
   const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
   await ctx.app.vault.adapter.write(match.path, newContent);
   return { result: { path: match.path } };
@@ -2551,7 +2563,8 @@ ${serializeYamlFromObj({ [archiveProperty]: true })}
     await ctx.app.vault.create(archivePath, archiveHeader + "\n" + archiveBlock);
   }
   const moment = (_c = ctx.moment) != null ? _c : typeof window !== "undefined" ? window.moment : null;
-  const newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
+  let newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
+  newFM = applyFixedDefaults(newFM, rules, { moment, now: ctx.now });
   newFM[versionProperty] = currentVersion + 1;
   const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
   await ctx.app.vault.adapter.write(match.path, newContent);

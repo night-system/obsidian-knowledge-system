@@ -167,6 +167,28 @@ export function applyDefaults(
 }
 
 /**
+ * 覆写「固定默认」属性（v0.8.2，modify 工具用）：把 yamlRules 中「仅默认值」的键
+ * （`values` 空 + `default` 非空，即不暴露给 AI 的固定属性，如 created=时间戳）
+ * **每次修改都强制覆写**为渲染后的默认值——与 `applyDefaults` 的「AI 未填才补」
+ * 不同：modify 工具每次更新时都刷新这些属性（例如 created 记录本次修改时间）。
+ * 返回新对象（不动入参）。
+ */
+export function applyFixedDefaults(
+  obj: Record<string, unknown>,
+  rules: YamlRule[],
+  opts: { moment: any; now?: number }
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...(obj ?? {}) };
+  for (const rule of rules ?? []) {
+    if (!rule || !rule.key) continue;
+    if (rule.values && rule.values.length > 0) continue; // 有可选值约束 = 暴露给 AI，不覆写
+    if (String(rule.default ?? '').trim() === '') continue; // 无默认 → 跳过
+    out[rule.key] = renderDefaultValue(rule.default, opts.moment, opts.now);
+  }
+  return out;
+}
+
+/**
  * Whether a plain string needs YAML double-quoting.
  * v0.8.1：时间戳形态（`2026-08-26` / `2026.08.26` / `2026-08-26 15:30` /
  * `2026-08-26T15:30:00` 等）即使含冒号也不加引号——时间戳的冒号在 YAML 中

@@ -1,6 +1,6 @@
 # obsidian-knowledge-system
 
-配置驱动的 AI 知识系统框架。v0.6.0：**聊天 UI 一比一复刻 dsh**（输入卡片改列式：textarea 上 + 按钮行下；预设选择器移入卡内左工具区、删除测试按钮、发送按钮 icon 兜底可见 + 思考块复刻 ReasoningRow 单行摘要/22px 缩进/AI 消息去头行 + 消息操作行 copy 按钮）+ **修复「渲染两份（原文+markdown）」**（单一写入者：文本块一律先 `empty()` 再 `MarkdownRenderer.render`，`renderAll` 不再写文本内容）+ **日志复制按钮**（聊天页「复制诊断日志」打包最近流式/渲染检查/错误，apiKey 脱敏）+ **渲染单份闭环检查**（流结束自动 `[ks-render-check]`）。v0.5.0：**流式期间直接渲染 markdown**（180ms 节流，第一次输出就是 markdown）+ **首 token（TTFT）检测点**（`[ks-stream]` 增 `ttfbMs`/`firstEventMs`）+ **聊天 UI 认真照抄 dsh**（用户气泡胶囊 / 无边框 AI 叙述 / 输入卡片 22px / 时间戳 hover 显现 / 流式状态行 shimmer / 思考块扫光）+ **默认模型建议标注**；v0.4.0 实现**真正逐字流式渲染**：改为**边读边解析边渲染**（增量 SSE 解析器 + 120ms 节流 + 持久容器低闪烁增量 DOM），AI 回复逐词冒出、不再「一大段一大段出现」，并升级**聊天 UI**（气泡化输入条、lucide 图标、AI/模型徽标、流式光标、思考块闪烁、移动端触控）；`create_note` 支持**属性规则**配置（见设置页）。v0.3.2 增加 **Base URL 端点自动探测**：聊天端点自动探测 `/anthropic` 前缀（DeepSeek 官方 `https://api.deepseek.com/anthropic`），模型列表自动探测根端点，404 时**自动纠偏并回写设置**，并在聊天页显示**一键可复制的诊断错误**。v0.3.1 接入 **Anthropic 兼容协议**（`POST {baseUrl}/v1/messages`，`x-api-key`）、**内置工具集**（`list_recent_notes` / `read_note` / `create_note`）、**AI 聊天视图**与「测试任务」按钮；聊天用**原生 `fetch` 流式**（桌面 Electron + 移动端 WebView 均可，端点 CORS 已放行），**兼容性不佳时自动降级为非流式**（`requestUrl` + `stream:false`）；v0.2.0 起还含独立**设置视图**、**动态输出属性**、**测试工具**标签页。
+配置驱动的 AI 知识系统框架。v0.7.0：**预设可折叠 + 每工具独立折叠配置**（工具参数逐项解释）；**update_note_yaml 阉割版**（可配置可修改属性+可选值+多行解释，越界拒绝）；**create_note 标题模板**（配置标题级别/是否允许 AI 写/解释，AI 只能写允许的标题，正文按模板组装）；**聊天 icon 可见性修复**（color 主题回退，任何主题可见）。v0.6.0：**聊天 UI 一比一复刻 dsh**（输入卡片改列式：textarea 上 + 按钮行下；预设选择器移入卡内左工具区、删除测试按钮、发送按钮 icon 兜底可见 + 思考块复刻 ReasoningRow 单行摘要/22px 缩进/AI 消息去头行 + 消息操作行 copy 按钮）+ **修复「渲染两份（原文+markdown）」**（单一写入者：文本块一律先 `empty()` 再 `MarkdownRenderer.render`，`renderAll` 不再写文本内容）+ **日志复制按钮**（聊天页「复制诊断日志」打包最近流式/渲染检查/错误，apiKey 脱敏）+ **渲染单份闭环检查**（流结束自动 `[ks-render-check]`）。v0.5.0：**流式期间直接渲染 markdown**（180ms 节流，第一次输出就是 markdown）+ **首 token（TTFT）检测点**（`[ks-stream]` 增 `ttfbMs`/`firstEventMs`）+ **聊天 UI 认真照抄 dsh**（用户气泡胶囊 / 无边框 AI 叙述 / 输入卡片 22px / 时间戳 hover 显现 / 流式状态行 shimmer / 思考块扫光）+ **默认模型建议标注**；v0.4.0 实现**真正逐字流式渲染**：改为**边读边解析边渲染**（增量 SSE 解析器 + 120ms 节流 + 持久容器低闪烁增量 DOM），AI 回复逐词冒出、不再「一大段一大段出现」，并升级**聊天 UI**（气泡化输入条、lucide 图标、AI/模型徽标、流式光标、思考块闪烁、移动端触控）；`create_note` 支持**属性规则**配置（见设置页）。v0.3.2 增加 **Base URL 端点自动探测**：聊天端点自动探测 `/anthropic` 前缀（DeepSeek 官方 `https://api.deepseek.com/anthropic`），模型列表自动探测根端点，404 时**自动纠偏并回写设置**，并在聊天页显示**一键可复制的诊断错误**。v0.3.1 接入 **Anthropic 兼容协议**（`POST {baseUrl}/v1/messages`，`x-api-key`）、**内置工具集**（`list_recent_notes` / `read_note` / `create_note`）、**AI 聊天视图**与「测试任务」按钮；聊天用**原生 `fetch` 流式**（桌面 Electron + 移动端 WebView 均可，端点 CORS 已放行），**兼容性不佳时自动降级为非流式**（`requestUrl` + `stream:false`）；v0.2.0 起还含独立**设置视图**、**动态输出属性**、**测试工具**标签页。
 
 ---
 
@@ -23,6 +23,9 @@
 - **独立设置视图**：命令面板 "Show Knowledge System settings view" 打开同设置 UI。
 - **测试工具标签页**：设置页第 5 个标签页一键执行「统计最近文件数」「输出最新内容测试」。
 - **工具预设系统 + 两个新工具（v0.5.0）**：新增 **第 6 个「预设」标签页**，可把「启用的工具子集」「工具参数覆写（如 list_recent_notes 天数、禁用 create_note、search 模式）」「自定义系统提示词」保存成预设并在**聊天界面**用下拉选择器随时切换（切换后下次请求生效）。新增工具 `update_note_yaml`（更新源文件夹笔记指定 frontmatter 值，**默认不暴露**，可在全局开关中开启）与 `search_output_notes`（在输出文件夹按「包含匹配」搜索，支持完整/阉割两种模式）。同时「AI 创建属性规则」的可选值改为**逐个 tag/chip 输入**（回车添加、× 删除、自动去重），并把该分组**上移到「输出属性」页顶部**、更名为「AI 创建属性规则（create_note 默认值与约束）」以便发现。
+- **预设可折叠 + 每个工具单独折叠（新增）**：设置 → 预设 页的每份预设**默认折叠收起**（头部 = 名称输入 + 展开 chevron + 删除按钮）；展开后**每个工具**（list_recent_notes / read_note / create_note / update_note_yaml / search_output_notes）各有**独立折叠区**，折叠区标题向用户解释该工具的参数，内容为「启用该工具」toggle（映射到工具白名单）+ 该工具的参数配置；自定义系统提示在预设展开体内。
+- **update_note_yaml 阉割版（新增）**：设置 → 输出属性 页新增「**AI 修改属性规则（update_note_yaml）**」分组，与「AI 创建属性规则」并列。每条规则 = 属性名 + **解释（用大文本框写清该属性及各可选值的含义）** + 可选值（tag 输入，留空=任意）；仅当全局开关「暴露 update_note_yaml 工具」开启时生效；AI 只能修改这些属性，值必须在允许范围内（越界拒绝，不写盘）。
+- **create_note 模板 / 标题控制（新增）**：设置 → 输出属性 页新增「**AI 创建模板（create_note 正文结构）**」分组。定义标题模板（标题文本 + 级别 H1/H2/H3… +「允许 AI 写」toggle + 解释，支持上移/下移/删除 + 实时预览）。AI 创建笔记时 `content` 参数改为 `sections`（每个「允许 AI 写」的标题 = 必填参数名，解释 = 该标题的 description）；创建时按模板顺序组装正文（不允许 AI 写的标题如大标题由模板固定输出，AI 只能在允许的标题下写）。**至少一个「允许 AI 写」标题才生效**；未配置模板则保持原样（自由正文）。
 
 ---
 
@@ -134,6 +137,35 @@
 
 示例：`approve`（解释「审核状态」，可选值 `未审核、已审核`，默认值 `未审核`）→ AI 未写时自动加 `approve: 未审核`；AI 写「未审核/已审核」允许，写其它值则拒绝创建。
 
+#### AI 修改属性规则（update_note_yaml）
+
+设置 → 输出属性 页（标题「**AI 修改属性规则（update_note_yaml）**」）可配置「AI 只能修改哪些 frontmatter 属性」：每条规则 = **属性名 + 解释（大文本框）+ 可选值列表**。
+
+- 仅当全局开关「暴露 update_note_yaml 工具」开启时生效。
+- AI 使用 `update_note_yaml` 时只能修改这些属性，值必须在对应可选值内；**越界会被拒绝（不写盘）**，错误回给 AI 修正。
+- 可选值**留空 = 任意**（不校验）；未配置任何规则时维持原样（任意键均可改）。
+
+| 字段 | 说明 |
+|---|---|
+| 属性名 | frontmatter 键名（如 `status`）。 |
+| 解释 | 用**大文本框**写清该属性及各可选值的含义，将随工具描述传给 AI。 |
+| 可选值 | 逐个 tag 添加的可选值列表（回车添加 / ×删除 / 自动去重）；**留空 = 任意值**。 |
+
+#### AI 创建模板（create_note 正文结构）
+
+设置 → 输出属性 页（标题「**AI 创建模板（create_note 正文结构）**」）可定义 `create_note` 输出的**正文模板**：每行 = 标题文本 + 级别（H1/H2/H3…）+「允许 AI 写」toggle + 解释（大文本框），支持上移/下移/删除，并**实时预览**组装结果。
+
+- **至少一个「允许 AI 写」标题才生效**；未配置模板则保持原样（自由正文）。
+- AI 创建笔记时 `content` 参数改为 **`sections` 对象**：每个「允许 AI 写」的标题 = 一个必填参数（参数名 = 标题文本，说明 = 该标题的解释），值为该标题下的文字。
+- 不允许 AI 写的标题（如「大标题」）由模板固定输出，AI 不能在下面写；正文按模板顺序组装。
+
+| 字段 | 说明 |
+|---|---|
+| 级别 | H1/H2/H3…（对应 `#`/`##`/`###`）。 |
+| 标题文本 | 该标题的文字（如「简介」）。 |
+| 允许 AI 写 | 是否允许 AI 在该标题下写内容。 |
+| 解释 | 该标题下的内容要求（AI 可见）；仅在「允许 AI 写」时随工具描述传给 AI。 |
+
 ### 测试工具（标签页）
 
 | 名称 | 说明 |
@@ -141,21 +173,21 @@
 | 统计最近文件数 | 扫描源文件夹，统计最近 N 天内的 Markdown 文件数，以 Notice 提示。 |
 | 输出最新内容测试 | 取源文件夹时间最新的文件，将其正文最后 100 个字符（按 Unicode 字符计，含换行）写入输出文件夹，并生成含可配置属性名的 frontmatter。 |
 
-### 预设（标签页，v0.5.0 第 6 个标签页）
+### 预设（标签页，第 6 个标签页）
 
-「工具预设」把一组「工具配置」保存成预设，并在聊天界面用下拉选择器随时切换。一份预设包含：
+「工具预设」把一组「工具配置」保存成预设，并在聊天界面用下拉选择器随时切换。**每份预设默认折叠收起**（头部 = 名称输入 + 展开箭头 + 删除按钮），展开后可编辑：
 
 | 字段 | 说明 |
 |---|---|
-| 名称 | 预设显示名（聊天选择器里显示）。 |
+| 名称 | 预设显示名（聊天选择器里显示，在预设头部直接编辑）。 |
 | 系统提示词 | 随预设绑定的自定义系统提示；留空 = 默认（不发送 system）。 |
-| 启用工具 | 勾选允许 AI 使用的工具（list_recent_notes / read_note / create_note / update_note_yaml / search_output_notes）；全部不勾 = 默认（全部工具）。 |
-| list_recent_notes 天数 | 覆写其 `days`；留空 = 用「时间」页的「最近 N 天」。 |
-| create_note / update_note_yaml | false = 从暴露列表移除对应工具。 |
-| search_output_notes 模式 | 完整版（AI 按任意键搜索）/ 阉割版（只能按下方限定键搜索）。 |
+| （每个工具一个折叠区） | 每个工具（list_recent_notes / read_note / create_note / update_note_yaml / search_output_notes）一个**默认折叠**的配置区；折叠区标题向用户解释该工具的参数。 |
+| 启用该工具（toggle） | 每个工具折叠区顶部的「启用该工具」开关，映射到工具白名单（`enabledTools`）；关闭 = 从本预设移除该工具。 |
+| list_recent_notes 天数 | 折叠区内「回看天数」，覆写其 `days`；留空 = 用「时间」页的「最近 N 天」。 |
+| search_output_notes 模式 | 折叠区内「搜索模式」：完整版（AI 按任意键搜索）/ 阉割版（只能按下方限定键搜索）。 |
 | 阉割版限定键 | search 为阉割版时的限定键 + 可选值（chip 填写；留空 = 任意值）。 |
 
-> **全局开关**：设置 → 预设 页可打开「update_yaml_tool_enabled」以向 AI 暴露 `update_note_yaml`（默认关闭）。聊天界面输入栏上方的**预设下拉选择器**切换当前预设（默认「默认（全部工具）」= 全部工具 + 设置里的 yaml 规则），切换后**下次请求生效**。
+> **全局开关**：设置 → 预设 页可打开「暴露 update_note_yaml 工具」以向 AI 暴露 `update_note_yaml`（默认关闭）；`update_note_yaml` 折叠区的「启用该工具」切换的是该预设是否纳入，实际对 AI 暴露还须全局开关开启。聊天界面输入栏上方的**预设下拉选择器**切换当前预设（默认「默认（全部工具）」= 全部工具 + 设置里的 yaml 规则），切换后**下次请求生效**。
 
 ---
 
@@ -204,6 +236,13 @@ source: notes/example.md
 ---
 
 ## 更新日志
+
+### v0.7.0（预设折叠 + 每工具独立折叠配置 + update_note_yaml 阉割版 + create_note 标题模板 + icon 可见性修复）
+- **聊天 icon 可见性修复**：根因=`setIcon` 的 lucide svg 以 `currentColor` 绘制，真正开关是元素 `color`（`stroke: currentColor` 近乎空操作）；改为全聊天 icon 显式 `color`（带主题回退：发送钮 `var(--text-on-accent, #fff)`、操作钮 `var(--text-muted, var(--text-normal, #888))`、think/tool 图标回退）+ `svg { stroke: currentColor; fill: none }`，任何主题/移动端均可见。
+- **预设可折叠**：预设 tab 每份预设默认折叠收起（头部=名称+展开 chevron+删除），展开态重渲染后恢复（`presetExpanded`）。
+- **每工具独立折叠配置**：预设展开区内每个工具一个 `ks-tool-config` 折叠区（默认收起），标题=工具名+一行参数说明（向用户解释参数）；内容=「启用该工具」toggle（映射 `enabledTools`，兼容旧数据）+ 各工具参数（list_recent_notes 天数 / search 模式+限定键 / create_note、update_note_yaml、read_note 说明）。
+- **update_note_yaml 阉割版**：新增 `updateYamlRules` 设置（「AI 修改属性规则」分组）：属性名 + **多行 textarea 解释**（可写每个可选值的含义）+ 可选值 tag + 删除；配置后 AI 只能修改这些属性、值必须在可选值内（越界 `{error}` 不写盘）；未配置维持 v0.5.0 任意键行为。
+- **create_note 标题模板**：新增 `noteTemplate` 设置（「AI 创建模板」分组）：标题级别 H1-H6 + 标题文本 + 「允许 AI 写」toggle + 解释 textarea + 上移/下移/删除 + 实时预览；配置后 AI 侧 `content` 变为 `sections` 对象（每个允许写的标题=必填参数、参数名=标题、description=解释），创建时按模板顺序组装正文（不允许 AI 写的标题如大标题由模板固定输出）；无模板保持原样。
 
 ### v0.6.0（聊天 UI 一比一复刻 dsh + 修复渲染两份 + 日志复制按钮 + 渲染单份闭环检查）
 - **A.1 输入区一比一复刻 dsh（结构级）**：`.ks-chat-inputbar` 改为**列式**（卡片 22px 圆角 + 1px 边框 + 阴影，`gap:12px`）= textarea 区（上，auto-grow ≤12em、`font-size:16px`、占位符不变）+ 按钮行 `.ks-chat-input-row`（下）。按钮行左侧 `.ks-chat-input-tools`（**预设选择器移入**，`.ks-preset-select` 小下拉含「默认（全部工具）」+ 各预设，onChange 沿用原 `buildPresetBar` 逻辑）；右侧 `.ks-chat-input-trailing`（发送钮，`margin-left:auto` 钉右）。**删除测试按钮**（`.ks-chat-test` 及 `send(TEST_PROMPT)` 调用；`TEST_PROMPT` 常量已删）。发送钮 34px 圆 `--interactive-accent`、`--text-on-accent`、disabled opacity .4、busy 时 `square`（保留 v0.5.0 stop 行为）；**icon 兜底可见**（`stroke: currentColor` + 颜色显式；`setIcon` 后 svg 无绘制内容时退化文本 ↑/■）。

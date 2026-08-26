@@ -1058,7 +1058,9 @@ export class KnowledgeChatView extends ItemView {
     const err = this.lastErrorText;
     const lines: string[] = [];
     lines.push('[Knowledge System 诊断日志]');
-    lines.push('版本: 0.6.0');
+    // 版本号动态取当前插件 manifest，避免随版本迭代漏改硬编码值。
+    const version = this.plugin.manifest?.version ?? '未知';
+    lines.push(`版本: ${version}`);
     const model = (settings.model || '').trim();
     lines.push(`模型: ${model || '（未设置）'}${stream?.toolsCount != null ? `（toolsCount: ${stream.toolsCount}）` : ''}`);
     lines.push(`平台: ${Platform.isMobile ? '移动端' : '桌面'}`);
@@ -1093,7 +1095,7 @@ export class KnowledgeChatView extends ItemView {
         return 'error' in r ? `ERROR: ${r.error}` : r.result.content;
       }
       if (name === 'create_note') {
-        const r = await createNoteTool(ctx, { title: a.title, yaml: a.yaml, content: a.content });
+        const r = await createNoteTool(ctx, { title: a.title, yaml: a.yaml, content: a.content, sections: a.sections });
         return 'error' in r ? `ERROR: ${r.error}` : `已创建：${r.result.path}`;
       }
       if (name === 'update_note_yaml') {

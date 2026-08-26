@@ -33,6 +33,37 @@ export interface YamlRule {
  * `toolOverrides.yamlRules` is intentionally NOT supported (per v0.5.0
  * decision) — yaml rules always come from `settings.yamlRules`.
  */
+/**
+ * One configurable frontmatter property rule for the `update_note_yaml` tool
+ * (v0.7.0). Unlike `YamlRule` there is **no default** — updating an existing
+ * attribute needs no default value. `values` empty = any value allowed (no
+ * validation).
+ */
+export interface UpdateYamlRule {
+  /** Frontmatter property name. */
+  key: string;
+  /** Human explanation (may be long; shown to the AI in the tool description). */
+  desc: string;
+  /** Allowed values; empty array = arbitrary (no validation). */
+  values: string[];
+}
+
+/**
+ * One template heading for the `create_note` body (v0.7.0). `allowAi` marks a
+ * heading the AI may write beneath; every other heading is emitted verbatim by
+ * the template. The body is assembled in template order.
+ */
+export interface NoteTemplateEntry {
+  /** Heading text (e.g. 「大标题」「简介」). */
+  title: string;
+  /** Heading level: 1 = `#`, 2 = `##`, 3 = `###` … */
+  level: number;
+  /** Whether the AI may write content under this heading. */
+  allowAi: boolean;
+  /** Explanation; sent to the AI when `allowAi` (also used in the UI). */
+  desc: string;
+}
+
 export interface ToolPreset {
   /** Unique id (uuid/timestamp). */
   id: string;
@@ -106,6 +137,10 @@ export interface KnowledgeSystemSettings {
   activePresetId: string;
   /** Global switch: expose update_note_yaml to the AI (default off). */
   updateYamlToolEnabled: boolean;
+  /** Allowed frontmatter property rules for update_note_yaml (v0.7.0). */
+  updateYamlRules: UpdateYamlRule[];
+  /** create_note body template headings (v0.7.0); empty = free-text content. */
+  noteTemplate: NoteTemplateEntry[];
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -132,4 +167,6 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   toolPresets: [],
   activePresetId: '',
   updateYamlToolEnabled: false,
+  updateYamlRules: [],
+  noteTemplate: [],
 };

@@ -1,11 +1,14 @@
 import { App, DropdownComponent, Notice, PluginSettingTab, Setting, setIcon } from 'obsidian';
-import { KnowledgeSystemSettings, ToolPreset } from './settings';
+import { KnowledgeSystemSettings, ToolPreset, UpdateYamlRule, NoteTemplateEntry } from './settings';
 import { FolderSuggest } from './folderSuggest';
 import { countRecentFiles, outputLatestContent } from './core';
 import type KnowledgeSystemPlugin from './main';
 
 /** The settings tabs; `test` is the 5th (test tools), `preset` the 6th (v0.5.0). */
 export type TabId = 'connection' | 'folder' | 'time' | 'output' | 'test' | 'preset';
+
+/** Stable tool order for the preset tool-config editors (v0.7.0 B.2). */
+const TOOL_NAMES = ['list_recent_notes', 'read_note', 'create_note', 'update_note_yaml', 'search_output_notes'];
 
 /**
  * Render the full settings UI (tab bar + search + active tab) into
@@ -38,6 +41,10 @@ class SettingsRenderer {
   private activePresetDropdown: DropdownComponent | null = null;
   private groupEls: HTMLElement[] = [];
   private groupCollapsed = new Map<HTMLElement, boolean>();
+  /** Expanded preset item ids (v0.7.0 B.1); default a preset is collapsed. */
+  private presetExpanded = new Set<string>();
+  /** Expanded per-tool config group keys `${presetId}:${toolName}` (B.2). */
+  private toolExpanded = new Set<string>();
 
   constructor(app: App, plugin: KnowledgeSystemPlugin) {
     this.app = app;
@@ -350,6 +357,14 @@ class SettingsRenderer {
     const yamlRulesBody = this.createGroup(containerEl, 'AI 创建属性规则（create_note 默认值与约束）', false);
     this.renderYamlRules(yamlRulesBody);
 
+    // v0.7.0：AI 修改属性规则（update_note_yaml 阉割版）——可配置「允许修改的属性 + 可选值约束」，解释用大文本框。
+    const updateYamlBody = this.createGroup(containerEl, 'AI 修改属性规则（update_note_yaml）', false);
+    this.renderUpdateYamlRules(updateYamlBody);
+
+    // v0.7.0：AI 创建模板（create_note 正文结构）——标题模板 + 各标题是否允许 AI 写。
+    const templateBody = this.createGroup(containerEl, 'AI 创建模板（create_note 正文结构）', false);
+    this.renderNoteTemplate(templateBody);
+
     const bodyEl = this.createGroup(containerEl, '输出属性', false);
 
     const timestampProp = new Setting(bodyEl)
@@ -566,6 +581,210 @@ class SettingsRenderer {
     renderChips();
   }
 
+  /**
+   * Render the "AI 修改属性规则（update_note_yaml）" group (v0.7.0 B.3): one
+   * row per rule = key (single line) + 解释 (**multi-line textarea**, because
+   * the explanation explains every allowed value) + 可选值 tag input + delete.
+   * Only effective when the global "暴露 update_note_yaml 工具" switch is on;
+   * the AI may only modify these attributes and values must be within the
+   * allowed set (out-of-range is rejected).
+   */
+  private renderUpdateYamlRules(containerEl: HTMLElement): void {
+    containerEl.empty();
+
+    const info = new Setting(containerEl)
+      .setName('')
+      .setDesc('控制 AI 使用 update_note_yaml 工具时可修改的 frontmatter 属性：属性名 + 解释（用文本框写清该属性及各可选值的含义）+ 可选值（回车逐个添加，显示为 chip；留空 = 任意）。仅当全局开关「暴露 update_note_yaml 工具」开启时生效；AI 只能修改这些属性，值必须在可选值内，越界会被拒绝。');
+    this.markSearchable(info, 'AI 修改属性规则 update_note_yaml 属性 解释 可选值');
+
+    const list = this.plugin.settings.updateYamlRules || [];
+    list.forEach((rule, index) => {
+      const hay = `AI 修改属性规则 ${rule.key} ${rule.desc} ${rule.values.join(' ')}`;
+      const row = new Setting(containerEl)
+        .setName('')
+        .setDesc('')
+        .addText((text) =>
+          text
+            .setPlaceholder('属性名，如 status')
+            .setValue(rule.key)
+            .onChange((value) => {
+              rule.key = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addTextArea((text) =>
+          text
+            .setPlaceholder('解释该属性及各可选值的含义，将随工具描述传给 AI')
+            .setValue(rule.desc)
+            .onChange((value) => {
+              rule.desc = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addButton((btn) =>
+          btn
+            .setIcon('trash-2')
+            .setTooltip('删除')
+            .onClick(() => {
+              const a = this.plugin.settings.updateYamlRules;
+              a.splice(index, 1);
+              void this.plugin.saveSettings();
+              this.renderUpdateYamlRules(containerEl);
+            })
+        );
+      // addClass 只接受单个 token；含空格的类名需用 addClasses（Obsidian 接口）一次传入数组。
+      row.settingEl.addClasses(['ks-yaml-rule-row', 'ks-update-yaml-rule-row']);
+      this.markSearchable(row, hay);
+
+      const valuesEl = containerEl.createDiv({ cls: 'ks-yaml-values setting-item' });
+      valuesEl.setAttribute('data-search', hay);
+      this.renderYamlValues(valuesEl, rule);
+    });
+
+    const addBtn = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setButtonText('+ 添加规则').onClick(() => {
+          this.plugin.settings.updateYamlRules.push({ key: '', desc: '', values: [] });
+          void this.plugin.saveSettings();
+          this.renderUpdateYamlRules(containerEl);
+        })
+      );
+    this.markSearchable(addBtn, 'AI 修改属性规则 添加规则 增加 添加');
+  }
+
+  /**
+   * Render the "AI 创建模板（create_note 正文结构）" group (v0.7.0 B.4): one
+   * row per template heading = level dropdown + title text + "允许 AI 写" toggle
+   * + 解释 (multi-line textarea) + up/down/delete, plus a live preview. The body
+   * is assembled in template order; the AI may only write under `allowAi`
+   * headings. At least one allowAi heading is required for the template to take
+   * effect; an empty template keeps the v0.5.0 free `content` behaviour.
+   */
+  private renderNoteTemplate(containerEl: HTMLElement): void {
+    containerEl.empty();
+
+    const info = new Setting(containerEl)
+      .setName('')
+      .setDesc('定义 create_note 输出的正文模板结构：标题文本 + 级别（H1/H2/H3…）+「允许 AI 写」+ 解释。AI 只能在标注「允许 AI 写」的标题下写内容（sections 参数）；不允许 AI 写的标题由模板固定输出。模板按此顺序组装正文；至少一个「允许 AI 写」标题才生效，未配置模板则保持原样（自由正文）。');
+    this.markSearchable(info, 'AI 创建模板 create_note 正文 标题 级别 允许AI写 模板');
+
+    const list = this.plugin.settings.noteTemplate || [];
+    const rowsEl = containerEl.createDiv({ cls: 'ks-template-rows' });
+    const previewEl = containerEl.createDiv({ cls: 'ks-template-preview' });
+    let renderPreview: () => void;
+
+    const renderRows = () => {
+      rowsEl.empty();
+      list.forEach((entry, index) => {
+        const rowEl = rowsEl.createDiv({ cls: 'ks-template-row' });
+        const levelSel = rowEl.createEl('select', { cls: 'ks-template-level' });
+        for (let lvl = 1; lvl <= 6; lvl++) {
+          const opt = levelSel.createEl('option');
+          opt.value = String(lvl);
+          opt.text = 'H' + lvl;
+          if (entry.level === lvl) opt.selected = true;
+        }
+        levelSel.addEventListener('change', () => {
+          entry.level = parseInt(levelSel.value, 10) || 1;
+          void this.plugin.saveSettings();
+          renderPreview();
+        });
+        const titleInput = rowEl.createEl('input', { cls: 'ks-template-title' });
+        titleInput.type = 'text';
+        titleInput.placeholder = '标题文本，如「简介」';
+        titleInput.value = entry.title;
+        titleInput.addEventListener('input', () => {
+          entry.title = titleInput.value;
+          void this.plugin.saveSettings();
+          renderPreview();
+        });
+        const toggleWrap = rowEl.createDiv({ cls: 'ks-template-allow' });
+        const cb = toggleWrap.createEl('input', { cls: 'ks-template-allow-cb' });
+        cb.type = 'checkbox';
+        cb.checked = entry.allowAi;
+        toggleWrap.createSpan({ cls: 'ks-template-allow-label', text: '允许 AI 写' });
+        cb.addEventListener('change', () => {
+          entry.allowAi = cb.checked;
+          void this.plugin.saveSettings();
+          renderPreview();
+        });
+        const descInput = rowEl.createEl('textarea', { cls: 'ks-template-desc' });
+        descInput.placeholder = '解释该标题下的内容要求（AI 可见）';
+        descInput.value = entry.desc;
+        descInput.rows = 2;
+        descInput.addEventListener('input', () => {
+          entry.desc = descInput.value;
+          void this.plugin.saveSettings();
+        });
+        const opts = rowEl.createDiv({ cls: 'ks-template-ops' });
+        this.addIconBtn(opts, 'chevron-up', '上移', () => this.moveTemplateEntry(containerEl, index, -1));
+        this.addIconBtn(opts, 'chevron-down', '下移', () => this.moveTemplateEntry(containerEl, index, 1));
+        this.addIconBtn(opts, 'trash-2', '删除', () => {
+          list.splice(index, 1);
+          void this.plugin.saveSettings();
+          renderRows();
+          renderPreview();
+        });
+      });
+    };
+    renderPreview = () => this.renderNoteTemplatePreview(previewEl, list);
+    renderRows();
+    renderPreview();
+
+    const addBtn = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setButtonText('+ 添加标题').onClick(() => {
+          this.plugin.settings.noteTemplate.push({ title: '', level: 2, allowAi: true, desc: '' });
+          void this.plugin.saveSettings();
+          renderRows();
+          renderPreview();
+        })
+      );
+    this.markSearchable(addBtn, 'AI 创建模板 添加标题 增加 添加');
+  }
+
+  /** Live preview of the assemble template body (H1/H2… heading + AI-fills note). */
+  private renderNoteTemplatePreview(el: HTMLElement, list: NoteTemplateEntry[]): void {
+    el.empty();
+    el.createDiv({ cls: 'ks-template-preview-title', text: '模板预览（正文将按此结构组装）' });
+    const lines: string[] = [];
+    for (const e of list) {
+      const h = '#'.repeat(Math.max(1, Math.min(6, e.level))) + ' ' + (e.title || '').trim();
+      lines.push(e.allowAi ? `${h}\n（AI 填写）` : h);
+    }
+    if (lines.length === 0) {
+      el.createDiv({ cls: 'ks-template-preview-body', text: '（未配置标题）' });
+      return;
+    }
+    const pre = el.createEl('pre', { cls: 'ks-template-preview-body' });
+    pre.setText(lines.join('\n\n'));
+  }
+
+  /** Move a template entry by `delta` (±1) then re-render the whole template group. */
+  private moveTemplateEntry(containerEl: HTMLElement, index: number, delta: number): void {
+    const list = this.plugin.settings.noteTemplate || [];
+    const to = index + delta;
+    if (to < 0 || to >= list.length) return;
+    const tmp = list[index];
+    list[index] = list[to];
+    list[to] = tmp;
+    void this.plugin.saveSettings();
+    this.renderNoteTemplate(containerEl);
+  }
+
+  /** Small lucide icon button (no emoji) for the template row operations. */
+  private addIconBtn(parent: HTMLElement, icon: string, tooltip: string, onClick: () => void): void {
+    const btn = parent.createEl('button', { cls: 'ks-template-op' });
+    btn.setAttribute('aria-label', tooltip);
+    btn.setAttribute('title', tooltip);
+    setIcon(btn, icon);
+    btn.addEventListener('click', onClick);
+  }
+
   // -------------------------------------------------------------------------
   // test tools (execute the two commands without the command palette)
   // -------------------------------------------------------------------------
@@ -666,26 +885,34 @@ class SettingsRenderer {
     index: number,
     parentEl: HTMLElement
   ): void {
-    const groupEl = containerEl.createDiv({ cls: 'ks-group ks-preset-row' });
-    const headingEl = groupEl.createDiv({ cls: 'ks-group-heading' });
-    const iconEl = headingEl.createSpan({ cls: 'ks-group-icon' });
-    setIcon(iconEl, 'settings');
-    headingEl.createSpan({ cls: 'ks-group-title', text: preset.name || '未命名预设' });
-    const bodyEl = groupEl.createDiv({ cls: 'ks-group-body' });
+    // B.1：每个预设一个可折叠项（默认收起），头部=名称输入+展开 chevron+删除。
+    const itemEl = containerEl.createDiv({ cls: 'ks-preset-item' });
+    const expanded = this.presetExpanded.has(preset.id);
+    if (!expanded) itemEl.addClass('ks-preset-item-collapsed');
 
-    const nameSetting = new Setting(bodyEl)
-      .setName('名称')
-      .setDesc('')
-      .addText((text) =>
-        text
-          .setValue(preset.name)
-          .onChange((value) => {
-            preset.name = value;
-            void this.plugin.saveSettings();
-            headingEl.querySelector('.ks-group-title')?.setText(value || '未命名预设');
-          })
-      );
-    this.markSearchable(nameSetting, '预设 名称 ' + preset.name);
+    const headEl = itemEl.createDiv({ cls: 'ks-preset-item-head' });
+    const nameInput = headEl.createEl('input', { cls: 'ks-preset-item-name' });
+    nameInput.type = 'text';
+    nameInput.value = preset.name || '';
+    nameInput.placeholder = '未命名预设';
+    nameInput.addEventListener('input', () => {
+      preset.name = nameInput.value;
+      void this.plugin.saveSettings();
+    });
+    const chev = headEl.createSpan({ cls: 'ks-preset-item-chev' });
+    setIcon(chev, expanded ? 'chevron-down' : 'chevron-right');
+    chev.addEventListener('click', () => this.togglePresetItem(itemEl, chev, preset.id));
+    const delBtn = headEl.createEl('button', { cls: 'ks-preset-item-del' });
+    delBtn.setAttribute('aria-label', '删除此预设');
+    delBtn.setAttribute('title', '删除此预设');
+    setIcon(delBtn, 'trash-2');
+    delBtn.addEventListener('click', () => {
+      this.plugin.settings.toolPresets.splice(index, 1);
+      void this.plugin.saveSettings();
+      this.renderPresetGroup(parentEl);
+    });
+
+    const bodyEl = itemEl.createDiv({ cls: 'ks-preset-item-body' });
 
     const sysSetting = new Setting(bodyEl)
       .setName('系统提示词')
@@ -701,92 +928,156 @@ class SettingsRenderer {
       );
     this.markSearchable(sysSetting, '预设 系统提示词 systemPrompt');
 
-    const toolsSetting = new Setting(bodyEl)
-      .setName('启用工具')
-      .setDesc('勾选允许 AI 使用的工具；全部不勾 = 使用默认（全部工具）。');
-    this.markSearchable(toolsSetting, '预设 启用工具 工具 白名单 enabledTools');
-    const toolNames = ['list_recent_notes', 'read_note', 'create_note', 'update_note_yaml', 'search_output_notes'];
-    for (const name of toolNames) {
-      const row = bodyEl.createDiv({ cls: 'ks-preset-tool-row' });
-      const cb = row.createEl('input', { cls: 'ks-preset-tool-cb' });
-      cb.type = 'checkbox';
-      cb.checked = (preset.enabledTools || []).includes(name);
-      row.createSpan({ cls: 'ks-preset-tool-label', text: name });
-      cb.addEventListener('change', () => {
-        const list = preset.enabledTools || (preset.enabledTools = []);
-        if (cb.checked && !list.includes(name)) list.push(name);
-        else if (!cb.checked) preset.enabledTools = list.filter((x) => x !== name);
-        void this.plugin.saveSettings();
+    // B.2：每个工具一个可折叠分组（默认收起），标题/说明向用户解释该工具的参数。
+    const toolArea = bodyEl.createDiv({ cls: 'ks-preset-tools' });
+
+    this.renderToolConfigGroup(toolArea, preset, 'list_recent_notes',
+      '列出源文件夹最近 N 天笔记（参数：days 回看天数，默认=全局最近 N 天）', (body) => {
+        this.renderToolEnableToggle(body, preset, 'list_recent_notes');
+        const daysSetting = new Setting(body)
+          .setName('回看天数')
+          .setDesc('覆写 list_recent_notes 的 days；留空 = 用设置里「最近 N 天」。')
+          .addText((text) => {
+            text.inputEl.type = 'number';
+            text.setValue(String(preset.toolOverrides.listRecentDays ?? ''));
+            text.onChange((value) => {
+              const n = parseInt(value, 10);
+              preset.toolOverrides.listRecentDays = value.trim() === '' || Number.isNaN(n) ? undefined : n;
+              void this.plugin.saveSettings();
+            });
+          });
+        this.markSearchable(daysSetting, '预设 listRecentDays 天数 覆写 回看天数');
       });
-    }
 
-    const daysSetting = new Setting(bodyEl)
-      .setName('list_recent_notes 天数')
-      .setDesc('覆写 list_recent_notes 的 days；留空 = 用设置里「最近 N 天」。')
-      .addText((text) => {
-        text.inputEl.type = 'number';
-        text.setValue(String(preset.toolOverrides.listRecentDays ?? ''));
-        text.onChange((value) => {
-          const n = parseInt(value, 10);
-          preset.toolOverrides.listRecentDays = value.trim() === '' || Number.isNaN(n) ? undefined : n;
-          void this.plugin.saveSettings();
-        });
+    this.renderToolConfigGroup(toolArea, preset, 'read_note',
+      '读取源文件夹笔记正文（无参数）', (body) => {
+        this.renderToolEnableToggle(body, preset, 'read_note');
+        const info = new Setting(body)
+          .setName('参数')
+          .setDesc('读取源文件夹内某篇笔记的正文（去除 YAML frontmatter）；参数：name（笔记文件名，可带或不带 .md 后缀）。');
+        this.markSearchable(info, '预设 read_note 参数 说明');
       });
-    this.markSearchable(daysSetting, '预设 listRecentDays 天数 覆写');
 
-    const createSetting = new Setting(bodyEl)
-      .setName('create_note')
-      .setDesc('false = 从暴露列表移除 create_note（AI 无法创建）。')
-      .addDropdown((drop) => {
-        drop.addOptions({ '': '默认（启用）', true: '启用', false: '禁用' });
-        drop.setValue(preset.toolOverrides.createNoteEnabled === false ? 'false' : preset.toolOverrides.createNoteEnabled === true ? 'true' : '');
-        drop.onChange((v) => {
-          preset.toolOverrides.createNoteEnabled = v === '' ? undefined : v === 'true';
-          void this.plugin.saveSettings();
-        });
+    this.renderToolConfigGroup(toolArea, preset, 'create_note',
+      '创建新笔记（参数：title 文件名 / yaml 属性规则 / 模板正文）', (body) => {
+        this.renderToolEnableToggle(body, preset, 'create_note');
+        const info = new Setting(body)
+          .setName('说明')
+          .setDesc('描述「创建新笔记」。允许 AI 创建新笔记；正文结构与 frontmatter 属性规则由设置页「输出属性」的「AI 创建模板 / AI 创建属性规则」配置。');
+        this.markSearchable(info, '预设 create_note 说明 创建 新建');
       });
-    this.markSearchable(createSetting, '预设 createNoteEnabled create_note 禁用');
 
-    const updateSetting = new Setting(bodyEl)
-      .setName('update_note_yaml')
-      .setDesc('全局开关已开启时，false = 从暴露列表移除 update_note_yaml。')
-      .addDropdown((drop) => {
-        drop.addOptions({ '': '默认', true: '启用', false: '禁用' });
-        drop.setValue(preset.toolOverrides.updateYamlEnabled === false ? 'false' : preset.toolOverrides.updateYamlEnabled === true ? 'true' : '');
-        drop.onChange((v) => {
-          preset.toolOverrides.updateYamlEnabled = v === '' ? undefined : v === 'true';
-          void this.plugin.saveSettings();
-        });
+    this.renderToolConfigGroup(toolArea, preset, 'update_note_yaml',
+      '修改源文件 frontmatter 属性（需全局开关暴露）', (body) => {
+        this.renderToolEnableToggle(body, preset, 'update_note_yaml');
+        const info = new Setting(body)
+          .setName('说明')
+          .setDesc('描述「修改源文件 frontmatter 属性」。实际对 AI 暴露还须开启全局开关「暴露 update_note_yaml 工具」；只能修改设置页配置的属性（值须在允许范围内）。');
+        this.markSearchable(info, '预设 update_note_yaml 说明 修改 frontmatter');
       });
-    this.markSearchable(updateSetting, '预设 updateYamlEnabled update_note_yaml');
 
-    const searchSetting = new Setting(bodyEl)
-      .setName('search_output_notes 模式')
-      .setDesc('完整版 = AI 按任意键搜索；阉割版 = 只能按下方限定键搜索。')
-      .addDropdown((drop) => {
-        drop.addOptions({ full: '完整版（任意键搜索）', restricted: '阉割版（仅限定键）' });
-        drop.setValue(preset.toolOverrides.searchMode ?? 'full');
-        drop.onChange((v) => {
-          preset.toolOverrides.searchMode = v as 'full' | 'restricted';
-          void this.plugin.saveSettings();
-        });
+    this.renderToolConfigGroup(toolArea, preset, 'search_output_notes',
+      '搜索输出文件夹（参数：模式 完整/阉割）', (body) => {
+        this.renderToolEnableToggle(body, preset, 'search_output_notes');
+        const searchSetting = new Setting(body)
+          .setName('搜索模式')
+          .setDesc('完整版 = AI 按任意键搜索；阉割版 = 只能按下方限定键搜索。')
+          .addDropdown((drop) => {
+            drop.addOptions({ full: '完整版（任意键搜索）', restricted: '阉割版（仅限定键）' });
+            drop.setValue(preset.toolOverrides.searchMode ?? 'full');
+            drop.onChange((v) => {
+              preset.toolOverrides.searchMode = v as 'full' | 'restricted';
+              void this.plugin.saveSettings();
+            });
+          });
+        this.markSearchable(searchSetting, '预设 searchMode search_output_notes 模式 完整 阉割');
+        const restrEl = body.createDiv({ cls: 'ks-preset-restrictions' });
+        this.renderSearchRestrictions(restrEl, preset);
       });
-    this.markSearchable(searchSetting, '预设 searchMode search_output_notes 模式 完整 阉割');
+    void toolArea;
+  }
 
-    const restrEl = bodyEl.createDiv({ cls: 'ks-preset-restrictions' });
-    this.renderSearchRestrictions(restrEl, preset);
+  /** Render one collapsible per-tool config group (B.2): header = tool name +
+   *  one-line parameter explanation; body = the tool's config (collapsed by
+   *  default, restored across re-renders via `toolExpanded`). */
+  private renderToolConfigGroup(
+    parentEl: HTMLElement,
+    preset: ToolPreset,
+    name: string,
+    explanation: string,
+    renderBody: (bodyEl: HTMLElement) => void
+  ): void {
+    const key = `${preset.id}:${name}`;
+    const groupEl = parentEl.createDiv({ cls: 'ks-group ks-tool-config' });
+    const headEl = groupEl.createDiv({ cls: 'ks-tool-config-head' });
+    const chev = headEl.createSpan({ cls: 'ks-group-icon' });
+    const expanded = this.toolExpanded.has(key);
+    setIcon(chev, expanded ? 'chevron-down' : 'chevron-right');
+    headEl.createSpan({ cls: 'ks-preset-tool-label', text: name });
+    headEl.createSpan({ cls: 'ks-tool-config-desc', text: explanation });
+    const bodyEl = groupEl.createDiv({ cls: 'ks-group-body' });
+    if (!expanded) groupEl.addClass('ks-collapsed');
+    headEl.addEventListener('click', () => {
+      const isCollapsed = groupEl.hasClass('ks-collapsed');
+      groupEl.toggleClass('ks-collapsed', !isCollapsed);
+      setIcon(chev, isCollapsed ? 'chevron-down' : 'chevron-right');
+      if (isCollapsed) this.toolExpanded.add(key);
+      else this.toolExpanded.delete(key);
+    });
+    renderBody(bodyEl);
+  }
 
-    const delSetting = new Setting(bodyEl)
-      .setName('')
-      .setDesc('')
-      .addButton((btn) =>
-        btn.setButtonText('删除此预设').onClick(() => {
-          this.plugin.settings.toolPresets.splice(index, 1);
-          void this.plugin.saveSettings();
-          this.renderPresetGroup(parentEl);
-        })
+  /** 「启用该工具」toggle at the top of each tool config group; it maps to the
+   *  preset `enabledTools` whitelist. Legacy data compat: when `enabledTools` is
+   *  non-empty it seeds the toggle state; toggling writes back `enabledTools`. */
+  private renderToolEnableToggle(bodyEl: HTMLElement, preset: ToolPreset, name: string): void {
+    const label: Record<string, string> = {
+      list_recent_notes: '启用该工具（list_recent_notes）',
+      read_note: '启用该工具（read_note）',
+      create_note: '允许 AI 创建文件（create_note）',
+      update_note_yaml: '启用该工具（update_note_yaml）',
+      search_output_notes: '启用该工具（search_output_notes）',
+    };
+    const s = new Setting(bodyEl)
+      .setName(label[name] || name)
+      .setDesc('开关是否把该工具纳入本预设；关闭 = 从本预设的工具白名单移除。')
+      .addToggle((t) =>
+        t.setValue(this.isToolEnabled(preset, name)).onChange((v) => this.setToolEnabled(preset, name, v))
       );
-    this.markSearchable(delSetting, '预设 删除 删除预设');
+    this.markSearchable(s, `预设 工具 ${name} 启用 禁用`);
+  }
+
+  private togglePresetItem(itemEl: HTMLElement, chev: HTMLElement, id: string): void {
+    const collapsed = itemEl.hasClass('ks-preset-item-collapsed');
+    itemEl.toggleClass('ks-preset-item-collapsed', !collapsed);
+    setIcon(chev, collapsed ? 'chevron-down' : 'chevron-right');
+    if (collapsed) this.presetExpanded.add(id);
+    else this.presetExpanded.delete(id);
+  }
+
+  /** Whether tool `name` is enabled in the preset (empty enabledTools = all on). */
+  private isToolEnabled(preset: ToolPreset, name: string): boolean {
+    const list = preset.enabledTools || [];
+    if (list.length === 0) return true; // 空 = 全部启用（默认）
+    return list.includes(name);
+  }
+
+  /** Toggle tool `name` in the preset, writing back `enabledTools`. Empty list
+   *  means all-enabled; turning one off materialises the whitelist explicitly. */
+  private setToolEnabled(preset: ToolPreset, name: string, on: boolean): void {
+    const list = preset.enabledTools || [];
+    if (list.length === 0) {
+      // 空 = 全部启用；要关某工具才写出「除它之外的全部」
+      preset.enabledTools = on ? [] : TOOL_NAMES.filter((x) => x !== name);
+    } else {
+      if (on) {
+        if (!list.includes(name)) preset.enabledTools = list.concat(name);
+      } else {
+        const next = list.filter((x) => x !== name);
+        preset.enabledTools = next.length === 0 ? [] : next; // 关到空 = 回退默认全部（同 v0.5.0）
+      }
+    }
+    void this.plugin.saveSettings();
   }
 
   private renderSearchRestrictions(containerEl: HTMLElement, preset: ToolPreset): void {

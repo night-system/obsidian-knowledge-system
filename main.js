@@ -53,7 +53,9 @@ var DEFAULT_SETTINGS = {
   yamlRules: [],
   toolPresets: [],
   activePresetId: "",
-  updateYamlToolEnabled: false
+  updateYamlToolEnabled: false,
+  updateYamlRules: [],
+  noteTemplate: []
 };
 
 // src/settingsTab.ts
@@ -597,6 +599,7 @@ async function extractResponseText(res) {
 }
 
 // src/settingsTab.ts
+var TOOL_NAMES = ["list_recent_notes", "read_note", "create_note", "update_note_yaml", "search_output_notes"];
 function renderSettings(app, plugin, containerEl) {
   new SettingsRenderer(app, plugin).render(containerEl);
 }
@@ -607,6 +610,10 @@ var SettingsRenderer = class {
     this.activePresetDropdown = null;
     this.groupEls = [];
     this.groupCollapsed = /* @__PURE__ */ new Map();
+    /** Expanded preset item ids (v0.7.0 B.1); default a preset is collapsed. */
+    this.presetExpanded = /* @__PURE__ */ new Set();
+    /** Expanded per-tool config group keys `${presetId}:${toolName}` (B.2). */
+    this.toolExpanded = /* @__PURE__ */ new Set();
     this.app = app;
     this.plugin = plugin;
     this.currentModels = Array.isArray(plugin.settings.models) ? plugin.settings.models.slice() : [];
@@ -808,6 +815,10 @@ var SettingsRenderer = class {
   renderOutputGroup(containerEl) {
     const yamlRulesBody = this.createGroup(containerEl, "AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219\uFF08create_note \u9ED8\u8BA4\u503C\u4E0E\u7EA6\u675F\uFF09", false);
     this.renderYamlRules(yamlRulesBody);
+    const updateYamlBody = this.createGroup(containerEl, "AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219\uFF08update_note_yaml\uFF09", false);
+    this.renderUpdateYamlRules(updateYamlBody);
+    const templateBody = this.createGroup(containerEl, "AI \u521B\u5EFA\u6A21\u677F\uFF08create_note \u6B63\u6587\u7ED3\u6784\uFF09", false);
+    this.renderNoteTemplate(templateBody);
     const bodyEl = this.createGroup(containerEl, "\u8F93\u51FA\u5C5E\u6027", false);
     const timestampProp = new import_obsidian3.Setting(bodyEl).setName("\u65F6\u95F4\u6233\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u5F53\u524D\u65F6\u95F4\u6233\u5C5E\u6027\u540D\uFF1B\u503C\u6309\u300C\u65F6\u95F4\u300D\u9875\u7684\u65F6\u95F4\u6233\u683C\u5F0F\u751F\u6210\u3002").addText(
       (text) => text.setPlaceholder("created").setValue(this.plugin.settings.timestampProperty).onChange((value) => this.updateSetting("timestampProperty", value))
@@ -955,6 +966,173 @@ var SettingsRenderer = class {
     });
     renderChips();
   }
+  /**
+   * Render the "AI 修改属性规则（update_note_yaml）" group (v0.7.0 B.3): one
+   * row per rule = key (single line) + 解释 (**multi-line textarea**, because
+   * the explanation explains every allowed value) + 可选值 tag input + delete.
+   * Only effective when the global "暴露 update_note_yaml 工具" switch is on;
+   * the AI may only modify these attributes and values must be within the
+   * allowed set (out-of-range is rejected).
+   */
+  renderUpdateYamlRules(containerEl) {
+    containerEl.empty();
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u63A7\u5236 AI \u4F7F\u7528 update_note_yaml \u5DE5\u5177\u65F6\u53EF\u4FEE\u6539\u7684 frontmatter \u5C5E\u6027\uFF1A\u5C5E\u6027\u540D + \u89E3\u91CA\uFF08\u7528\u6587\u672C\u6846\u5199\u6E05\u8BE5\u5C5E\u6027\u53CA\u5404\u53EF\u9009\u503C\u7684\u542B\u4E49\uFF09+ \u53EF\u9009\u503C\uFF08\u56DE\u8F66\u9010\u4E2A\u6DFB\u52A0\uFF0C\u663E\u793A\u4E3A chip\uFF1B\u7559\u7A7A = \u4EFB\u610F\uFF09\u3002\u4EC5\u5F53\u5168\u5C40\u5F00\u5173\u300C\u66B4\u9732 update_note_yaml \u5DE5\u5177\u300D\u5F00\u542F\u65F6\u751F\u6548\uFF1BAI \u53EA\u80FD\u4FEE\u6539\u8FD9\u4E9B\u5C5E\u6027\uFF0C\u503C\u5FC5\u987B\u5728\u53EF\u9009\u503C\u5185\uFF0C\u8D8A\u754C\u4F1A\u88AB\u62D2\u7EDD\u3002");
+    this.markSearchable(info, "AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219 update_note_yaml \u5C5E\u6027 \u89E3\u91CA \u53EF\u9009\u503C");
+    const list = this.plugin.settings.updateYamlRules || [];
+    list.forEach((rule, index) => {
+      const hay = `AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219 ${rule.key} ${rule.desc} ${rule.values.join(" ")}`;
+      const row = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addText(
+        (text) => text.setPlaceholder("\u5C5E\u6027\u540D\uFF0C\u5982 status").setValue(rule.key).onChange((value) => {
+          rule.key = value;
+          void this.plugin.saveSettings();
+        })
+      ).addTextArea(
+        (text) => text.setPlaceholder("\u89E3\u91CA\u8BE5\u5C5E\u6027\u53CA\u5404\u53EF\u9009\u503C\u7684\u542B\u4E49\uFF0C\u5C06\u968F\u5DE5\u5177\u63CF\u8FF0\u4F20\u7ED9 AI").setValue(rule.desc).onChange((value) => {
+          rule.desc = value;
+          void this.plugin.saveSettings();
+        })
+      ).addButton(
+        (btn) => btn.setIcon("trash-2").setTooltip("\u5220\u9664").onClick(() => {
+          const a = this.plugin.settings.updateYamlRules;
+          a.splice(index, 1);
+          void this.plugin.saveSettings();
+          this.renderUpdateYamlRules(containerEl);
+        })
+      );
+      row.settingEl.addClasses(["ks-yaml-rule-row", "ks-update-yaml-rule-row"]);
+      this.markSearchable(row, hay);
+      const valuesEl = containerEl.createDiv({ cls: "ks-yaml-values setting-item" });
+      valuesEl.setAttribute("data-search", hay);
+      this.renderYamlValues(valuesEl, rule);
+    });
+    const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setButtonText("+ \u6DFB\u52A0\u89C4\u5219").onClick(() => {
+        this.plugin.settings.updateYamlRules.push({ key: "", desc: "", values: [] });
+        void this.plugin.saveSettings();
+        this.renderUpdateYamlRules(containerEl);
+      })
+    );
+    this.markSearchable(addBtn, "AI \u4FEE\u6539\u5C5E\u6027\u89C4\u5219 \u6DFB\u52A0\u89C4\u5219 \u589E\u52A0 \u6DFB\u52A0");
+  }
+  /**
+   * Render the "AI 创建模板（create_note 正文结构）" group (v0.7.0 B.4): one
+   * row per template heading = level dropdown + title text + "允许 AI 写" toggle
+   * + 解释 (multi-line textarea) + up/down/delete, plus a live preview. The body
+   * is assembled in template order; the AI may only write under `allowAi`
+   * headings. At least one allowAi heading is required for the template to take
+   * effect; an empty template keeps the v0.5.0 free `content` behaviour.
+   */
+  renderNoteTemplate(containerEl) {
+    containerEl.empty();
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u5B9A\u4E49 create_note \u8F93\u51FA\u7684\u6B63\u6587\u6A21\u677F\u7ED3\u6784\uFF1A\u6807\u9898\u6587\u672C + \u7EA7\u522B\uFF08H1/H2/H3\u2026\uFF09+\u300C\u5141\u8BB8 AI \u5199\u300D+ \u89E3\u91CA\u3002AI \u53EA\u80FD\u5728\u6807\u6CE8\u300C\u5141\u8BB8 AI \u5199\u300D\u7684\u6807\u9898\u4E0B\u5199\u5185\u5BB9\uFF08sections \u53C2\u6570\uFF09\uFF1B\u4E0D\u5141\u8BB8 AI \u5199\u7684\u6807\u9898\u7531\u6A21\u677F\u56FA\u5B9A\u8F93\u51FA\u3002\u6A21\u677F\u6309\u6B64\u987A\u5E8F\u7EC4\u88C5\u6B63\u6587\uFF1B\u81F3\u5C11\u4E00\u4E2A\u300C\u5141\u8BB8 AI \u5199\u300D\u6807\u9898\u624D\u751F\u6548\uFF0C\u672A\u914D\u7F6E\u6A21\u677F\u5219\u4FDD\u6301\u539F\u6837\uFF08\u81EA\u7531\u6B63\u6587\uFF09\u3002");
+    this.markSearchable(info, "AI \u521B\u5EFA\u6A21\u677F create_note \u6B63\u6587 \u6807\u9898 \u7EA7\u522B \u5141\u8BB8AI\u5199 \u6A21\u677F");
+    const list = this.plugin.settings.noteTemplate || [];
+    const rowsEl = containerEl.createDiv({ cls: "ks-template-rows" });
+    const previewEl = containerEl.createDiv({ cls: "ks-template-preview" });
+    let renderPreview;
+    const renderRows = () => {
+      rowsEl.empty();
+      list.forEach((entry, index) => {
+        const rowEl = rowsEl.createDiv({ cls: "ks-template-row" });
+        const levelSel = rowEl.createEl("select", { cls: "ks-template-level" });
+        for (let lvl = 1; lvl <= 6; lvl++) {
+          const opt = levelSel.createEl("option");
+          opt.value = String(lvl);
+          opt.text = "H" + lvl;
+          if (entry.level === lvl) opt.selected = true;
+        }
+        levelSel.addEventListener("change", () => {
+          entry.level = parseInt(levelSel.value, 10) || 1;
+          void this.plugin.saveSettings();
+          renderPreview();
+        });
+        const titleInput = rowEl.createEl("input", { cls: "ks-template-title" });
+        titleInput.type = "text";
+        titleInput.placeholder = "\u6807\u9898\u6587\u672C\uFF0C\u5982\u300C\u7B80\u4ECB\u300D";
+        titleInput.value = entry.title;
+        titleInput.addEventListener("input", () => {
+          entry.title = titleInput.value;
+          void this.plugin.saveSettings();
+          renderPreview();
+        });
+        const toggleWrap = rowEl.createDiv({ cls: "ks-template-allow" });
+        const cb = toggleWrap.createEl("input", { cls: "ks-template-allow-cb" });
+        cb.type = "checkbox";
+        cb.checked = entry.allowAi;
+        toggleWrap.createSpan({ cls: "ks-template-allow-label", text: "\u5141\u8BB8 AI \u5199" });
+        cb.addEventListener("change", () => {
+          entry.allowAi = cb.checked;
+          void this.plugin.saveSettings();
+          renderPreview();
+        });
+        const descInput = rowEl.createEl("textarea", { cls: "ks-template-desc" });
+        descInput.placeholder = "\u89E3\u91CA\u8BE5\u6807\u9898\u4E0B\u7684\u5185\u5BB9\u8981\u6C42\uFF08AI \u53EF\u89C1\uFF09";
+        descInput.value = entry.desc;
+        descInput.rows = 2;
+        descInput.addEventListener("input", () => {
+          entry.desc = descInput.value;
+          void this.plugin.saveSettings();
+        });
+        const opts = rowEl.createDiv({ cls: "ks-template-ops" });
+        this.addIconBtn(opts, "chevron-up", "\u4E0A\u79FB", () => this.moveTemplateEntry(containerEl, index, -1));
+        this.addIconBtn(opts, "chevron-down", "\u4E0B\u79FB", () => this.moveTemplateEntry(containerEl, index, 1));
+        this.addIconBtn(opts, "trash-2", "\u5220\u9664", () => {
+          list.splice(index, 1);
+          void this.plugin.saveSettings();
+          renderRows();
+          renderPreview();
+        });
+      });
+    };
+    renderPreview = () => this.renderNoteTemplatePreview(previewEl, list);
+    renderRows();
+    renderPreview();
+    const addBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setButtonText("+ \u6DFB\u52A0\u6807\u9898").onClick(() => {
+        this.plugin.settings.noteTemplate.push({ title: "", level: 2, allowAi: true, desc: "" });
+        void this.plugin.saveSettings();
+        renderRows();
+        renderPreview();
+      })
+    );
+    this.markSearchable(addBtn, "AI \u521B\u5EFA\u6A21\u677F \u6DFB\u52A0\u6807\u9898 \u589E\u52A0 \u6DFB\u52A0");
+  }
+  /** Live preview of the assemble template body (H1/H2… heading + AI-fills note). */
+  renderNoteTemplatePreview(el, list) {
+    el.empty();
+    el.createDiv({ cls: "ks-template-preview-title", text: "\u6A21\u677F\u9884\u89C8\uFF08\u6B63\u6587\u5C06\u6309\u6B64\u7ED3\u6784\u7EC4\u88C5\uFF09" });
+    const lines = [];
+    for (const e of list) {
+      const h = "#".repeat(Math.max(1, Math.min(6, e.level))) + " " + (e.title || "").trim();
+      lines.push(e.allowAi ? `${h}
+\uFF08AI \u586B\u5199\uFF09` : h);
+    }
+    if (lines.length === 0) {
+      el.createDiv({ cls: "ks-template-preview-body", text: "\uFF08\u672A\u914D\u7F6E\u6807\u9898\uFF09" });
+      return;
+    }
+    const pre = el.createEl("pre", { cls: "ks-template-preview-body" });
+    pre.setText(lines.join("\n\n"));
+  }
+  /** Move a template entry by `delta` (±1) then re-render the whole template group. */
+  moveTemplateEntry(containerEl, index, delta) {
+    const list = this.plugin.settings.noteTemplate || [];
+    const to = index + delta;
+    if (to < 0 || to >= list.length) return;
+    const tmp = list[index];
+    list[index] = list[to];
+    list[to] = tmp;
+    void this.plugin.saveSettings();
+    this.renderNoteTemplate(containerEl);
+  }
+  /** Small lucide icon button (no emoji) for the template row operations. */
+  addIconBtn(parent, icon, tooltip, onClick) {
+    const btn = parent.createEl("button", { cls: "ks-template-op" });
+    btn.setAttribute("aria-label", tooltip);
+    btn.setAttribute("title", tooltip);
+    (0, import_obsidian3.setIcon)(btn, icon);
+    btn.addEventListener("click", onClick);
+  }
   // -------------------------------------------------------------------------
   // test tools (execute the two commands without the command palette)
   // -------------------------------------------------------------------------
@@ -1022,21 +1200,31 @@ var SettingsRenderer = class {
     drop.setValue(presets.some((p) => p.id === keep) ? keep : "");
   }
   renderPresetRow(containerEl, preset, index, parentEl) {
-    const groupEl = containerEl.createDiv({ cls: "ks-group ks-preset-row" });
-    const headingEl = groupEl.createDiv({ cls: "ks-group-heading" });
-    const iconEl = headingEl.createSpan({ cls: "ks-group-icon" });
-    (0, import_obsidian3.setIcon)(iconEl, "settings");
-    headingEl.createSpan({ cls: "ks-group-title", text: preset.name || "\u672A\u547D\u540D\u9884\u8BBE" });
-    const bodyEl = groupEl.createDiv({ cls: "ks-group-body" });
-    const nameSetting = new import_obsidian3.Setting(bodyEl).setName("\u540D\u79F0").setDesc("").addText(
-      (text) => text.setValue(preset.name).onChange((value) => {
-        var _a;
-        preset.name = value;
-        void this.plugin.saveSettings();
-        (_a = headingEl.querySelector(".ks-group-title")) == null ? void 0 : _a.setText(value || "\u672A\u547D\u540D\u9884\u8BBE");
-      })
-    );
-    this.markSearchable(nameSetting, "\u9884\u8BBE \u540D\u79F0 " + preset.name);
+    const itemEl = containerEl.createDiv({ cls: "ks-preset-item" });
+    const expanded = this.presetExpanded.has(preset.id);
+    if (!expanded) itemEl.addClass("ks-preset-item-collapsed");
+    const headEl = itemEl.createDiv({ cls: "ks-preset-item-head" });
+    const nameInput = headEl.createEl("input", { cls: "ks-preset-item-name" });
+    nameInput.type = "text";
+    nameInput.value = preset.name || "";
+    nameInput.placeholder = "\u672A\u547D\u540D\u9884\u8BBE";
+    nameInput.addEventListener("input", () => {
+      preset.name = nameInput.value;
+      void this.plugin.saveSettings();
+    });
+    const chev = headEl.createSpan({ cls: "ks-preset-item-chev" });
+    (0, import_obsidian3.setIcon)(chev, expanded ? "chevron-down" : "chevron-right");
+    chev.addEventListener("click", () => this.togglePresetItem(itemEl, chev, preset.id));
+    const delBtn = headEl.createEl("button", { cls: "ks-preset-item-del" });
+    delBtn.setAttribute("aria-label", "\u5220\u9664\u6B64\u9884\u8BBE");
+    delBtn.setAttribute("title", "\u5220\u9664\u6B64\u9884\u8BBE");
+    (0, import_obsidian3.setIcon)(delBtn, "trash-2");
+    delBtn.addEventListener("click", () => {
+      this.plugin.settings.toolPresets.splice(index, 1);
+      void this.plugin.saveSettings();
+      this.renderPresetGroup(parentEl);
+    });
+    const bodyEl = itemEl.createDiv({ cls: "ks-preset-item-body" });
     const sysSetting = new import_obsidian3.Setting(bodyEl).setName("\u7CFB\u7EDF\u63D0\u793A\u8BCD").setDesc("\u968F\u9884\u8BBE\u7ED1\u5B9A\u7684\u81EA\u5B9A\u4E49\u7CFB\u7EDF\u63D0\u793A\uFF1B\u7559\u7A7A = \u9ED8\u8BA4\uFF08\u4E0D\u53D1\u9001 system\uFF09\u3002").addTextArea(
       (text) => text.setPlaceholder("\u4F8B\u5982\uFF1A\u4F60\u662F\u4E00\u540D\u4E25\u683C\u7684\u5206\u7C7B\u52A9\u624B\u2026").setValue(preset.systemPrompt).onChange((value) => {
         preset.systemPrompt = value;
@@ -1044,71 +1232,149 @@ var SettingsRenderer = class {
       })
     );
     this.markSearchable(sysSetting, "\u9884\u8BBE \u7CFB\u7EDF\u63D0\u793A\u8BCD systemPrompt");
-    const toolsSetting = new import_obsidian3.Setting(bodyEl).setName("\u542F\u7528\u5DE5\u5177").setDesc("\u52FE\u9009\u5141\u8BB8 AI \u4F7F\u7528\u7684\u5DE5\u5177\uFF1B\u5168\u90E8\u4E0D\u52FE = \u4F7F\u7528\u9ED8\u8BA4\uFF08\u5168\u90E8\u5DE5\u5177\uFF09\u3002");
-    this.markSearchable(toolsSetting, "\u9884\u8BBE \u542F\u7528\u5DE5\u5177 \u5DE5\u5177 \u767D\u540D\u5355 enabledTools");
-    const toolNames = ["list_recent_notes", "read_note", "create_note", "update_note_yaml", "search_output_notes"];
-    for (const name of toolNames) {
-      const row = bodyEl.createDiv({ cls: "ks-preset-tool-row" });
-      const cb = row.createEl("input", { cls: "ks-preset-tool-cb" });
-      cb.type = "checkbox";
-      cb.checked = (preset.enabledTools || []).includes(name);
-      row.createSpan({ cls: "ks-preset-tool-label", text: name });
-      cb.addEventListener("change", () => {
-        const list = preset.enabledTools || (preset.enabledTools = []);
-        if (cb.checked && !list.includes(name)) list.push(name);
-        else if (!cb.checked) preset.enabledTools = list.filter((x) => x !== name);
-        void this.plugin.saveSettings();
-      });
-    }
-    const daysSetting = new import_obsidian3.Setting(bodyEl).setName("list_recent_notes \u5929\u6570").setDesc("\u8986\u5199 list_recent_notes \u7684 days\uFF1B\u7559\u7A7A = \u7528\u8BBE\u7F6E\u91CC\u300C\u6700\u8FD1 N \u5929\u300D\u3002").addText((text) => {
-      var _a;
-      text.inputEl.type = "number";
-      text.setValue(String((_a = preset.toolOverrides.listRecentDays) != null ? _a : ""));
-      text.onChange((value) => {
-        const n = parseInt(value, 10);
-        preset.toolOverrides.listRecentDays = value.trim() === "" || Number.isNaN(n) ? void 0 : n;
-        void this.plugin.saveSettings();
-      });
-    });
-    this.markSearchable(daysSetting, "\u9884\u8BBE listRecentDays \u5929\u6570 \u8986\u5199");
-    const createSetting = new import_obsidian3.Setting(bodyEl).setName("create_note").setDesc("false = \u4ECE\u66B4\u9732\u5217\u8868\u79FB\u9664 create_note\uFF08AI \u65E0\u6CD5\u521B\u5EFA\uFF09\u3002").addDropdown((drop) => {
-      drop.addOptions({ "": "\u9ED8\u8BA4\uFF08\u542F\u7528\uFF09", true: "\u542F\u7528", false: "\u7981\u7528" });
-      drop.setValue(preset.toolOverrides.createNoteEnabled === false ? "false" : preset.toolOverrides.createNoteEnabled === true ? "true" : "");
-      drop.onChange((v) => {
-        preset.toolOverrides.createNoteEnabled = v === "" ? void 0 : v === "true";
-        void this.plugin.saveSettings();
-      });
-    });
-    this.markSearchable(createSetting, "\u9884\u8BBE createNoteEnabled create_note \u7981\u7528");
-    const updateSetting = new import_obsidian3.Setting(bodyEl).setName("update_note_yaml").setDesc("\u5168\u5C40\u5F00\u5173\u5DF2\u5F00\u542F\u65F6\uFF0Cfalse = \u4ECE\u66B4\u9732\u5217\u8868\u79FB\u9664 update_note_yaml\u3002").addDropdown((drop) => {
-      drop.addOptions({ "": "\u9ED8\u8BA4", true: "\u542F\u7528", false: "\u7981\u7528" });
-      drop.setValue(preset.toolOverrides.updateYamlEnabled === false ? "false" : preset.toolOverrides.updateYamlEnabled === true ? "true" : "");
-      drop.onChange((v) => {
-        preset.toolOverrides.updateYamlEnabled = v === "" ? void 0 : v === "true";
-        void this.plugin.saveSettings();
-      });
-    });
-    this.markSearchable(updateSetting, "\u9884\u8BBE updateYamlEnabled update_note_yaml");
-    const searchSetting = new import_obsidian3.Setting(bodyEl).setName("search_output_notes \u6A21\u5F0F").setDesc("\u5B8C\u6574\u7248 = AI \u6309\u4EFB\u610F\u952E\u641C\u7D22\uFF1B\u9609\u5272\u7248 = \u53EA\u80FD\u6309\u4E0B\u65B9\u9650\u5B9A\u952E\u641C\u7D22\u3002").addDropdown((drop) => {
-      var _a;
-      drop.addOptions({ full: "\u5B8C\u6574\u7248\uFF08\u4EFB\u610F\u952E\u641C\u7D22\uFF09", restricted: "\u9609\u5272\u7248\uFF08\u4EC5\u9650\u5B9A\u952E\uFF09" });
-      drop.setValue((_a = preset.toolOverrides.searchMode) != null ? _a : "full");
-      drop.onChange((v) => {
-        preset.toolOverrides.searchMode = v;
-        void this.plugin.saveSettings();
-      });
-    });
-    this.markSearchable(searchSetting, "\u9884\u8BBE searchMode search_output_notes \u6A21\u5F0F \u5B8C\u6574 \u9609\u5272");
-    const restrEl = bodyEl.createDiv({ cls: "ks-preset-restrictions" });
-    this.renderSearchRestrictions(restrEl, preset);
-    const delSetting = new import_obsidian3.Setting(bodyEl).setName("").setDesc("").addButton(
-      (btn) => btn.setButtonText("\u5220\u9664\u6B64\u9884\u8BBE").onClick(() => {
-        this.plugin.settings.toolPresets.splice(index, 1);
-        void this.plugin.saveSettings();
-        this.renderPresetGroup(parentEl);
-      })
+    const toolArea = bodyEl.createDiv({ cls: "ks-preset-tools" });
+    this.renderToolConfigGroup(
+      toolArea,
+      preset,
+      "list_recent_notes",
+      "\u5217\u51FA\u6E90\u6587\u4EF6\u5939\u6700\u8FD1 N \u5929\u7B14\u8BB0\uFF08\u53C2\u6570\uFF1Adays \u56DE\u770B\u5929\u6570\uFF0C\u9ED8\u8BA4=\u5168\u5C40\u6700\u8FD1 N \u5929\uFF09",
+      (body) => {
+        this.renderToolEnableToggle(body, preset, "list_recent_notes");
+        const daysSetting = new import_obsidian3.Setting(body).setName("\u56DE\u770B\u5929\u6570").setDesc("\u8986\u5199 list_recent_notes \u7684 days\uFF1B\u7559\u7A7A = \u7528\u8BBE\u7F6E\u91CC\u300C\u6700\u8FD1 N \u5929\u300D\u3002").addText((text) => {
+          var _a;
+          text.inputEl.type = "number";
+          text.setValue(String((_a = preset.toolOverrides.listRecentDays) != null ? _a : ""));
+          text.onChange((value) => {
+            const n = parseInt(value, 10);
+            preset.toolOverrides.listRecentDays = value.trim() === "" || Number.isNaN(n) ? void 0 : n;
+            void this.plugin.saveSettings();
+          });
+        });
+        this.markSearchable(daysSetting, "\u9884\u8BBE listRecentDays \u5929\u6570 \u8986\u5199 \u56DE\u770B\u5929\u6570");
+      }
     );
-    this.markSearchable(delSetting, "\u9884\u8BBE \u5220\u9664 \u5220\u9664\u9884\u8BBE");
+    this.renderToolConfigGroup(
+      toolArea,
+      preset,
+      "read_note",
+      "\u8BFB\u53D6\u6E90\u6587\u4EF6\u5939\u7B14\u8BB0\u6B63\u6587\uFF08\u65E0\u53C2\u6570\uFF09",
+      (body) => {
+        this.renderToolEnableToggle(body, preset, "read_note");
+        const info = new import_obsidian3.Setting(body).setName("\u53C2\u6570").setDesc("\u8BFB\u53D6\u6E90\u6587\u4EF6\u5939\u5185\u67D0\u7BC7\u7B14\u8BB0\u7684\u6B63\u6587\uFF08\u53BB\u9664 YAML frontmatter\uFF09\uFF1B\u53C2\u6570\uFF1Aname\uFF08\u7B14\u8BB0\u6587\u4EF6\u540D\uFF0C\u53EF\u5E26\u6216\u4E0D\u5E26 .md \u540E\u7F00\uFF09\u3002");
+        this.markSearchable(info, "\u9884\u8BBE read_note \u53C2\u6570 \u8BF4\u660E");
+      }
+    );
+    this.renderToolConfigGroup(
+      toolArea,
+      preset,
+      "create_note",
+      "\u521B\u5EFA\u65B0\u7B14\u8BB0\uFF08\u53C2\u6570\uFF1Atitle \u6587\u4EF6\u540D / yaml \u5C5E\u6027\u89C4\u5219 / \u6A21\u677F\u6B63\u6587\uFF09",
+      (body) => {
+        this.renderToolEnableToggle(body, preset, "create_note");
+        const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u521B\u5EFA\u65B0\u7B14\u8BB0\u300D\u3002\u5141\u8BB8 AI \u521B\u5EFA\u65B0\u7B14\u8BB0\uFF1B\u6B63\u6587\u7ED3\u6784\u4E0E frontmatter \u5C5E\u6027\u89C4\u5219\u7531\u8BBE\u7F6E\u9875\u300C\u8F93\u51FA\u5C5E\u6027\u300D\u7684\u300CAI \u521B\u5EFA\u6A21\u677F / AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219\u300D\u914D\u7F6E\u3002");
+        this.markSearchable(info, "\u9884\u8BBE create_note \u8BF4\u660E \u521B\u5EFA \u65B0\u5EFA");
+      }
+    );
+    this.renderToolConfigGroup(
+      toolArea,
+      preset,
+      "update_note_yaml",
+      "\u4FEE\u6539\u6E90\u6587\u4EF6 frontmatter \u5C5E\u6027\uFF08\u9700\u5168\u5C40\u5F00\u5173\u66B4\u9732\uFF09",
+      (body) => {
+        this.renderToolEnableToggle(body, preset, "update_note_yaml");
+        const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u4FEE\u6539\u6E90\u6587\u4EF6 frontmatter \u5C5E\u6027\u300D\u3002\u5B9E\u9645\u5BF9 AI \u66B4\u9732\u8FD8\u987B\u5F00\u542F\u5168\u5C40\u5F00\u5173\u300C\u66B4\u9732 update_note_yaml \u5DE5\u5177\u300D\uFF1B\u53EA\u80FD\u4FEE\u6539\u8BBE\u7F6E\u9875\u914D\u7F6E\u7684\u5C5E\u6027\uFF08\u503C\u987B\u5728\u5141\u8BB8\u8303\u56F4\u5185\uFF09\u3002");
+        this.markSearchable(info, "\u9884\u8BBE update_note_yaml \u8BF4\u660E \u4FEE\u6539 frontmatter");
+      }
+    );
+    this.renderToolConfigGroup(
+      toolArea,
+      preset,
+      "search_output_notes",
+      "\u641C\u7D22\u8F93\u51FA\u6587\u4EF6\u5939\uFF08\u53C2\u6570\uFF1A\u6A21\u5F0F \u5B8C\u6574/\u9609\u5272\uFF09",
+      (body) => {
+        this.renderToolEnableToggle(body, preset, "search_output_notes");
+        const searchSetting = new import_obsidian3.Setting(body).setName("\u641C\u7D22\u6A21\u5F0F").setDesc("\u5B8C\u6574\u7248 = AI \u6309\u4EFB\u610F\u952E\u641C\u7D22\uFF1B\u9609\u5272\u7248 = \u53EA\u80FD\u6309\u4E0B\u65B9\u9650\u5B9A\u952E\u641C\u7D22\u3002").addDropdown((drop) => {
+          var _a;
+          drop.addOptions({ full: "\u5B8C\u6574\u7248\uFF08\u4EFB\u610F\u952E\u641C\u7D22\uFF09", restricted: "\u9609\u5272\u7248\uFF08\u4EC5\u9650\u5B9A\u952E\uFF09" });
+          drop.setValue((_a = preset.toolOverrides.searchMode) != null ? _a : "full");
+          drop.onChange((v) => {
+            preset.toolOverrides.searchMode = v;
+            void this.plugin.saveSettings();
+          });
+        });
+        this.markSearchable(searchSetting, "\u9884\u8BBE searchMode search_output_notes \u6A21\u5F0F \u5B8C\u6574 \u9609\u5272");
+        const restrEl = body.createDiv({ cls: "ks-preset-restrictions" });
+        this.renderSearchRestrictions(restrEl, preset);
+      }
+    );
+  }
+  /** Render one collapsible per-tool config group (B.2): header = tool name +
+   *  one-line parameter explanation; body = the tool's config (collapsed by
+   *  default, restored across re-renders via `toolExpanded`). */
+  renderToolConfigGroup(parentEl, preset, name, explanation, renderBody) {
+    const key = `${preset.id}:${name}`;
+    const groupEl = parentEl.createDiv({ cls: "ks-group ks-tool-config" });
+    const headEl = groupEl.createDiv({ cls: "ks-tool-config-head" });
+    const chev = headEl.createSpan({ cls: "ks-group-icon" });
+    const expanded = this.toolExpanded.has(key);
+    (0, import_obsidian3.setIcon)(chev, expanded ? "chevron-down" : "chevron-right");
+    headEl.createSpan({ cls: "ks-preset-tool-label", text: name });
+    headEl.createSpan({ cls: "ks-tool-config-desc", text: explanation });
+    const bodyEl = groupEl.createDiv({ cls: "ks-group-body" });
+    if (!expanded) groupEl.addClass("ks-collapsed");
+    headEl.addEventListener("click", () => {
+      const isCollapsed = groupEl.hasClass("ks-collapsed");
+      groupEl.toggleClass("ks-collapsed", !isCollapsed);
+      (0, import_obsidian3.setIcon)(chev, isCollapsed ? "chevron-down" : "chevron-right");
+      if (isCollapsed) this.toolExpanded.add(key);
+      else this.toolExpanded.delete(key);
+    });
+    renderBody(bodyEl);
+  }
+  /** 「启用该工具」toggle at the top of each tool config group; it maps to the
+   *  preset `enabledTools` whitelist. Legacy data compat: when `enabledTools` is
+   *  non-empty it seeds the toggle state; toggling writes back `enabledTools`. */
+  renderToolEnableToggle(bodyEl, preset, name) {
+    const label = {
+      list_recent_notes: "\u542F\u7528\u8BE5\u5DE5\u5177\uFF08list_recent_notes\uFF09",
+      read_note: "\u542F\u7528\u8BE5\u5DE5\u5177\uFF08read_note\uFF09",
+      create_note: "\u5141\u8BB8 AI \u521B\u5EFA\u6587\u4EF6\uFF08create_note\uFF09",
+      update_note_yaml: "\u542F\u7528\u8BE5\u5DE5\u5177\uFF08update_note_yaml\uFF09",
+      search_output_notes: "\u542F\u7528\u8BE5\u5DE5\u5177\uFF08search_output_notes\uFF09"
+    };
+    const s = new import_obsidian3.Setting(bodyEl).setName(label[name] || name).setDesc("\u5F00\u5173\u662F\u5426\u628A\u8BE5\u5DE5\u5177\u7EB3\u5165\u672C\u9884\u8BBE\uFF1B\u5173\u95ED = \u4ECE\u672C\u9884\u8BBE\u7684\u5DE5\u5177\u767D\u540D\u5355\u79FB\u9664\u3002").addToggle(
+      (t) => t.setValue(this.isToolEnabled(preset, name)).onChange((v) => this.setToolEnabled(preset, name, v))
+    );
+    this.markSearchable(s, `\u9884\u8BBE \u5DE5\u5177 ${name} \u542F\u7528 \u7981\u7528`);
+  }
+  togglePresetItem(itemEl, chev, id) {
+    const collapsed = itemEl.hasClass("ks-preset-item-collapsed");
+    itemEl.toggleClass("ks-preset-item-collapsed", !collapsed);
+    (0, import_obsidian3.setIcon)(chev, collapsed ? "chevron-down" : "chevron-right");
+    if (collapsed) this.presetExpanded.add(id);
+    else this.presetExpanded.delete(id);
+  }
+  /** Whether tool `name` is enabled in the preset (empty enabledTools = all on). */
+  isToolEnabled(preset, name) {
+    const list = preset.enabledTools || [];
+    if (list.length === 0) return true;
+    return list.includes(name);
+  }
+  /** Toggle tool `name` in the preset, writing back `enabledTools`. Empty list
+   *  means all-enabled; turning one off materialises the whitelist explicitly. */
+  setToolEnabled(preset, name, on) {
+    const list = preset.enabledTools || [];
+    if (list.length === 0) {
+      preset.enabledTools = on ? [] : TOOL_NAMES.filter((x) => x !== name);
+    } else {
+      if (on) {
+        if (!list.includes(name)) preset.enabledTools = list.concat(name);
+      } else {
+        const next = list.filter((x) => x !== name);
+        preset.enabledTools = next.length === 0 ? [] : next;
+      }
+    }
+    void this.plugin.saveSettings();
   }
   renderSearchRestrictions(containerEl, preset) {
     containerEl.empty();
@@ -1334,23 +1600,8 @@ ${body}`;
 // src/utils/tools.ts
 var DAY_MS2 = 864e5;
 var FALLBACK_FORMATS2 = ["YYYY-MM-DD", "YYYY.MM.DD", "YYYY/MM/DD"];
-function buildAnthropicTools(yamlRules) {
+function buildAnthropicTools(yamlRules, noteTemplate) {
   const rules = Array.isArray(yamlRules) ? yamlRules : [];
-  const exposedRules = rules.filter((r) => r.key && r.values && r.values.length > 0);
-  const yamlDesc = "frontmatter \u952E\u503C\u5BF9\u5BF9\u8C61\uFF08YAML frontmatter \u533A\uFF09\u3002\u9879\u76EE\u5DF2\u914D\u7F6E\u4EE5\u4E0B\u5C5E\u6027\u89C4\u5219\uFF1A" + exposedRules.map((r) => `- ${r.key}\uFF1A${r.desc}\uFF08\u53EF\u9009\u503C\uFF1A${r.values.join("/")}\uFF09`).join("\n") + "\n\u89C4\u5219\u672A\u5217\u51FA\u7684\u952E\u540D\u53EF\u4EE5\u968F\u610F\u6DFB\u52A0\uFF1B\u89C4\u5219\u5185\u952E\u540D\u8BF7\u4E25\u683C\u9075\u5B88\u53EF\u9009\u503C\uFF0C\u5426\u5219\u521B\u5EFA\u4F1A\u88AB\u62D2\u7EDD\u3002";
-  const yamlSchema = { type: "object", description: yamlDesc };
-  if (exposedRules.length > 0) {
-    const props = {};
-    for (const r of exposedRules) {
-      props[r.key] = {
-        type: "string",
-        description: r.desc,
-        ...r.values.length ? { enum: r.values } : {}
-      };
-    }
-    yamlSchema.properties = props;
-    yamlSchema.required = [];
-  }
   return [
     {
       name: "list_recent_notes",
@@ -1370,20 +1621,63 @@ function buildAnthropicTools(yamlRules) {
         required: ["name"]
       }
     },
-    {
-      name: "create_note",
-      description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u521B\u5EFA\u4E00\u7BC7\u65B0\u7B14\u8BB0\u3002",
-      input_schema: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "\u6587\u4EF6\u540D\uFF08\u4E0D\u542B .md \u540E\u7F00\uFF09" },
-          yaml: yamlSchema,
-          content: { type: "string", description: "\u6B63\u6587" }
-        },
-        required: ["title"]
-      }
-    }
+    buildCreateNoteTool(rules, noteTemplate)
   ];
+}
+function buildCreateNoteTool(yamlRules, noteTemplate) {
+  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  const exposedRules = rules.filter((r) => r.key && r.values && r.values.length > 0);
+  const yamlDesc = "frontmatter \u952E\u503C\u5BF9\u5BF9\u8C61\uFF08YAML frontmatter \u533A\uFF09\u3002\u9879\u76EE\u5DF2\u914D\u7F6E\u4EE5\u4E0B\u5C5E\u6027\u89C4\u5219\uFF1A" + exposedRules.map((r) => `- ${r.key}\uFF1A${r.desc}\uFF08\u53EF\u9009\u503C\uFF1A${r.values.join("/")}\uFF09`).join("\n") + "\n\u89C4\u5219\u672A\u5217\u51FA\u7684\u952E\u540D\u53EF\u4EE5\u968F\u610F\u6DFB\u52A0\uFF1B\u89C4\u5219\u5185\u952E\u540D\u8BF7\u4E25\u683C\u9075\u5B88\u53EF\u9009\u503C\uFF0C\u5426\u5219\u521B\u5EFA\u4F1A\u88AB\u62D2\u7EDD\u3002";
+  const yamlSchema = { type: "object", description: yamlDesc };
+  if (exposedRules.length > 0) {
+    const props2 = {};
+    for (const r of exposedRules) {
+      props2[r.key] = {
+        type: "string",
+        description: r.desc,
+        ...r.values.length ? { enum: r.values } : {}
+      };
+    }
+    yamlSchema.properties = props2;
+    yamlSchema.required = [];
+  }
+  const template = (noteTemplate || []).filter((e) => e && e.title && e.title.trim()).map((e) => ({ ...e, title: e.title.trim() }));
+  const allowAi = template.filter((e) => e.allowAi);
+  const hasTemplate = template.length > 0 && allowAi.length > 0;
+  const props = {
+    title: { type: "string", description: "\u6587\u4EF6\u540D\uFF08\u4E0D\u542B .md \u540E\u7F00\uFF09" },
+    yaml: yamlSchema
+  };
+  const required = ["title"];
+  let description = "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u521B\u5EFA\u4E00\u7BC7\u65B0\u7B14\u8BB0\u3002";
+  if (hasTemplate) {
+    const lines = template.map((e) => {
+      const heading = "#".repeat(Math.max(1, Math.min(6, e.level))) + " " + e.title;
+      return e.allowAi ? `- ${heading}\uFF08\u53EF\u586B\u5199\uFF0CAI \u5728\u6B64\u6807\u9898\u4E0B\u5199\u5185\u5BB9\uFF09` : `- ${heading}\uFF08\u7531\u6A21\u677F\u56FA\u5B9A\uFF0C\u52FF\u5199\uFF09`;
+    });
+    description += "\n\u6B63\u6587\u6309\u4EE5\u4E0B\u6A21\u677F\u7ED3\u6784\u7EC4\u88C5\uFF0CAI \u53EA\u80FD\u5728\u6807\u6CE8\u300C\u53EF\u586B\u5199\u300D\u7684\u6807\u9898\u4E0B\u5199\u5185\u5BB9\uFF08sections \u53C2\u6570\uFF09\uFF1A\n" + lines.join("\n");
+    const secProps = {};
+    for (const e of allowAi) {
+      secProps[e.title] = {
+        type: "string",
+        description: e.desc ? e.desc : `\u5728\u300C${e.title}\u300D\u4E0B\u5199\u5185\u5BB9`
+      };
+    }
+    props.sections = {
+      type: "object",
+      description: "\u6309\u6A21\u677F\u6807\u9898\u586B\u5199\u7684\u6B63\u6587\u5185\u5BB9\uFF1B\u6BCF\u4E2A\u952E\u662F\u6A21\u677F\u91CC\u5141\u8BB8 AI \u5199\u7684\u6807\u9898\uFF0C\u503C\u4E3A\u8BE5\u6807\u9898\u4E0B\u7684\u6587\u5B57\u3002",
+      properties: secProps,
+      required: allowAi.map((e) => e.title)
+    };
+    required.push("sections");
+  } else {
+    props.content = { type: "string", description: "\u6B63\u6587" };
+  }
+  return {
+    name: "create_note",
+    description,
+    input_schema: { type: "object", properties: props, required }
+  };
 }
 var ANTHROPIC_TOOLS = buildAnthropicTools([]);
 function stripExt(name) {
@@ -1480,7 +1774,7 @@ async function readNoteTool(ctx, args) {
   return { result: { title: stripExt((_h = (_g = match.basename) != null ? _g : match.name) != null ? _h : match.path), content: stripFrontmatter(raw) } };
 }
 async function createNoteTool(ctx, args) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d, _e;
   const settings = ctx.settings;
   const title = ((args == null ? void 0 : args.title) || "").trim();
   if (!isValidFilename(title)) return { error: "ERROR: \u975E\u6CD5\u6587\u4EF6\u540D" };
@@ -1490,11 +1784,30 @@ async function createNoteTool(ctx, args) {
   if (err) return { error: err };
   const moment = (_b = ctx.moment) != null ? _b : typeof window !== "undefined" ? window.moment : null;
   const filled = applyDefaults(obj, rules, { moment, now: ctx.now });
+  const template = ((_c = settings.noteTemplate) != null ? _c : []).filter((e) => e && e.title && e.title.trim()).map((e) => ({ ...e, title: e.title.trim() }));
+  const allowAi = template.filter((e) => e.allowAi);
+  const sections = (_d = args == null ? void 0 : args.sections) != null ? _d : {};
+  let body;
+  if (template.length > 0 && allowAi.length > 0) {
+    const parts = [];
+    for (const e of template) {
+      const heading = "#".repeat(Math.max(1, Math.min(6, e.level))) + " " + e.title;
+      if (e.allowAi) {
+        const text = typeof sections[e.title] === "string" ? String(sections[e.title]) : "";
+        if (!text.trim()) continue;
+        parts.push(heading + "\n" + text);
+      } else {
+        parts.push(heading);
+      }
+    }
+    body = parts.join("\n\n");
+  } else {
+    body = `${(_e = args == null ? void 0 : args.content) != null ? _e : ""}`;
+  }
   const folder = (settings.outputFolder || "/").trim();
   const name = title.toLowerCase().endsWith(".md") ? title : title + ".md";
   const path = joinVaultPath(folder, name);
   const yamlStr = serializeYamlFromObj(filled);
-  const body = `${(_c = args == null ? void 0 : args.content) != null ? _c : ""}`;
   const full = yamlStr ? `---
 ${yamlStr}
 ---
@@ -1504,20 +1817,34 @@ ${body}`;
   await ctx.app.vault.create(path, full);
   return { result: { path } };
 }
-function buildUpdateNoteYamlTool() {
+function buildUpdateNoteYamlTool(updateRules) {
+  const rules = (Array.isArray(updateRules) ? updateRules : []).filter((r) => r && r.key && r.key.trim());
+  let description = "\u66F4\u65B0\u6E90\u6587\u4EF6\u5939\u5185\u7B14\u8BB0\u7684 frontmatter \u5C5E\u6027\u503C\uFF08\u4FDD\u7559\u5176\u4F59\u5C5E\u6027\u4E0D\u53D8\uFF09\u3002";
+  let updatesDesc = "\u8981\u66F4\u65B0\u7684 frontmatter \u952E\u503C\u5BF9\u5217\u8868\uFF1B\u53EA\u6539\u8FD9\u4E9B\u952E\uFF0C\u5176\u4F59\u952E\u4FDD\u6301\u4E0D\u53D8\u3002";
+  let itemsProps;
+  if (rules.length > 0) {
+    const ruleLines = rules.map((r) => `- ${r.key}\uFF1A${r.desc || "\uFF08\u65E0\u89E3\u91CA\uFF09"}${r.values && r.values.length > 0 ? `\uFF08\u53EF\u9009\u503C\uFF1A${r.values.join("/")}\uFF09` : ""}`).join("\n");
+    description = "\u66F4\u65B0\u6E90\u6587\u4EF6\u5939\u5185\u7B14\u8BB0\u7684 frontmatter \u5C5E\u6027\u503C\uFF08\u4FDD\u7559\u5176\u4F59\u5C5E\u6027\u4E0D\u53D8\uFF09\u3002\n\u53EA\u80FD\u4FEE\u6539\u5DF2\u914D\u7F6E\u7684\u5C5E\u6027\uFF0C\u503C\u5FC5\u987B\u5728\u5141\u8BB8\u8303\u56F4\u5185\uFF1A\n" + ruleLines;
+    itemsProps = {
+      key: { type: "string", enum: rules.map((r) => r.key), description: "\u53EA\u5141\u8BB8\u8FD9\u4E9B\u5C5E\u6027\u952E\uFF1A" + rules.map((r) => r.key).join("/") },
+      value: { type: "string", description: "\u8981\u5199\u5165\u7684\u503C\uFF08\u987B\u5728\u5BF9\u5E94\u5C5E\u6027\u7684\u5141\u8BB8\u8303\u56F4\u5185\uFF09" }
+    };
+  } else {
+    itemsProps = { key: { type: "string" }, value: { type: "string" } };
+  }
   return {
     name: "update_note_yaml",
-    description: "\u66F4\u65B0\u6E90\u6587\u4EF6\u5939\u5185\u7B14\u8BB0\u7684 frontmatter \u5C5E\u6027\u503C\uFF08\u4FDD\u7559\u5176\u4F59\u5C5E\u6027\u4E0D\u53D8\uFF09\u3002",
+    description,
     input_schema: {
       type: "object",
       properties: {
         name: { type: "string", description: "\u7B14\u8BB0\u6587\u4EF6\u540D\uFF08\u53EF\u5E26\u6216\u4E0D\u5E26 .md \u540E\u7F00\uFF09" },
         updates: {
           type: "array",
-          description: "\u8981\u66F4\u65B0\u7684 frontmatter \u952E\u503C\u5BF9\u5217\u8868\uFF1B\u53EA\u6539\u8FD9\u4E9B\u952E\uFF0C\u5176\u4F59\u952E\u4FDD\u6301\u4E0D\u53D8\u3002",
+          description: updatesDesc,
           items: {
             type: "object",
-            properties: { key: { type: "string" }, value: { type: "string" } },
+            properties: itemsProps,
             required: ["key", "value"]
           }
         }
@@ -1565,7 +1892,7 @@ function buildSearchOutputNotesTool(searchMode, restrictions) {
   };
 }
 async function updateNoteYamlTool(ctx, args) {
-  var _a, _b, _c, _d, _e, _f, _g;
+  var _a, _b, _c, _d, _e, _f, _g, _h;
   const settings = ctx.settings;
   const zeit = (_a = ctx.moment) != null ? _a : typeof window !== "undefined" ? window.moment : null;
   const folder = (settings.sourceFolder || "/").trim();
@@ -1573,7 +1900,21 @@ async function updateNoteYamlTool(ctx, args) {
   if (!target) return { error: "ERROR: \u672A\u63D0\u4F9B\u6587\u4EF6\u540D" };
   const updates = ((_b = args == null ? void 0 : args.updates) != null ? _b : []).filter((u) => u && u != null && typeof (u == null ? void 0 : u.key) === "string" && typeof (u == null ? void 0 : u.value) === "string");
   if (updates.length === 0) return { error: "ERROR: \u672A\u63D0\u4F9B\u8981\u66F4\u65B0\u7684\u952E\u503C\u5BF9" };
-  const files = (_e = (_d = (_c = ctx.app.vault).getMarkdownFiles) == null ? void 0 : _d.call(_c)) != null ? _e : [];
+  const rules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
+  const ruleMap = new Map(rules.filter((r) => r && r.key).map((r) => [r.key, r]));
+  if (ruleMap.size > 0) {
+    for (const u of updates) {
+      const rule = ruleMap.get(u.key);
+      if (!rule) {
+        return { error: `ERROR: \u4E0D\u5141\u8BB8\u4FEE\u6539\u5C5E\u6027"${u.key}"\uFF08\u53EA\u5141\u8BB8\uFF1A[${[...ruleMap.keys()].join(", ")}]\uFF09` };
+      }
+      const v = String((_c = u.value) != null ? _c : "").trim();
+      if (rule.values && rule.values.length > 0 && !rule.values.includes(v)) {
+        return { error: `ERROR: \u5C5E\u6027"${u.key}"\u7684\u503C"${v}"\u4E0D\u5728\u53EF\u9009\u503C[${rule.values.join(" / ")}]\u5185\uFF08${rule.desc}\uFF09` };
+      }
+    }
+  }
+  const files = (_f = (_e = (_d = ctx.app.vault).getMarkdownFiles) == null ? void 0 : _e.call(_d)) != null ? _f : [];
   const match = files.find(
     (f) => {
       var _a2, _b2;
@@ -1582,7 +1923,7 @@ async function updateNoteYamlTool(ctx, args) {
   );
   if (!match) return { error: "ERROR: \u672A\u627E\u5230\u7B14\u8BB0" };
   const ts = fileTimestamp(match, ctx);
-  const earliest = parseEarliest((_f = settings.earliestTime) != null ? _f : "", (_g = settings.timeFormat) != null ? _g : "", zeit);
+  const earliest = parseEarliest((_g = settings.earliestTime) != null ? _g : "", (_h = settings.timeFormat) != null ? _h : "", zeit);
   if (earliest != null && ts < earliest) return { error: `ERROR: \u7B14\u8BB0\u65E9\u4E8E\u6700\u65E9\u65F6\u95F4 ${settings.earliestTime}` };
   const raw = await ctx.app.vault.read(match);
   const fm = parseFrontmatterObj(raw);
@@ -1659,7 +2000,9 @@ function resolveToolConfig(settings) {
   var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
   const preset = findActivePreset(settings);
   const yamlRules = Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
-  const baseTools = buildAnthropicTools(yamlRules);
+  const noteTemplate = Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
+  const updateYamlRules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
+  const baseTools = buildAnthropicTools(yamlRules, noteTemplate);
   let names = ["list_recent_notes", "read_note", "create_note"];
   if (settings.updateYamlToolEnabled) names.push("update_note_yaml");
   names.push("search_output_notes");
@@ -1676,7 +2019,7 @@ function resolveToolConfig(settings) {
       const t = findBase(n);
       if (t) tools.push(t);
     } else if (n === "update_note_yaml") {
-      tools.push(buildUpdateNoteYamlTool());
+      tools.push(buildUpdateNoteYamlTool(updateYamlRules));
     } else if (n === "search_output_notes") {
       tools.push(
         buildSearchOutputNotesTool(
@@ -1693,7 +2036,9 @@ function resolveToolConfig(settings) {
     yamlRules,
     listRecentDays: (_i = (_h = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _h.listRecentDays) != null ? _i : settings.recentDays,
     searchMode,
-    searchRestrictions: (_j = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _j.searchRestrictions
+    searchRestrictions: (_j = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _j.searchRestrictions,
+    updateYamlRules,
+    noteTemplate
   };
 }
 
@@ -2590,13 +2935,15 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
   // -------------------------------------------------------------------------
   /** 打包全部诊断字段；apiKey 脱敏。字段来自 view 成员，缺失则显示「无」。 */
   buildDiagnosticLog() {
+    var _a, _b;
     const settings = this.plugin.settings;
     const stream = this.lastStreamLog;
     const render = this.lastRenderCheck;
     const err = this.lastErrorText;
     const lines = [];
     lines.push("[Knowledge System \u8BCA\u65AD\u65E5\u5FD7]");
-    lines.push("\u7248\u672C: 0.6.0");
+    const version = (_b = (_a = this.plugin.manifest) == null ? void 0 : _a.version) != null ? _b : "\u672A\u77E5";
+    lines.push(`\u7248\u672C: ${version}`);
     const model = (settings.model || "").trim();
     lines.push(`\u6A21\u578B: ${model || "\uFF08\u672A\u8BBE\u7F6E\uFF09"}${(stream == null ? void 0 : stream.toolsCount) != null ? `\uFF08toolsCount: ${stream.toolsCount}\uFF09` : ""}`);
     lines.push(`\u5E73\u53F0: ${import_obsidian5.Platform.isMobile ? "\u79FB\u52A8\u7AEF" : "\u684C\u9762"}`);
@@ -2629,7 +2976,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
         return "error" in r ? `ERROR: ${r.error}` : r.result.content;
       }
       if (name === "create_note") {
-        const r = await createNoteTool(ctx, { title: a.title, yaml: a.yaml, content: a.content });
+        const r = await createNoteTool(ctx, { title: a.title, yaml: a.yaml, content: a.content, sections: a.sections });
         return "error" in r ? `ERROR: ${r.error}` : `\u5DF2\u521B\u5EFA\uFF1A${r.result.path}`;
       }
       if (name === "update_note_yaml") {

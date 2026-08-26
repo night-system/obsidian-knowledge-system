@@ -218,18 +218,20 @@
   border: none;
   border-radius: 28px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-muted, var(--text-normal, #888));
   cursor: pointer;
 }
 
 .ks-chat-action:hover {
   background: var(--background-modifier-hover);
-  color: var(--text-normal);
+  color: var(--text-normal, #222);
 }
 
 .ks-chat-action svg {
   width: 16px;
   height: 16px;
+  stroke: currentColor;
+  fill: none;
 }
 
 /* 消息时间戳（清单第 10 条）：font 14/24、--text-faint，hover 才显现（80ms），
@@ -357,7 +359,8 @@
   height: 34px;
   border-radius: 999px;
   background: var(--interactive-accent);
-  color: var(--text-on-accent);
+  /* 主题变量可能未定义/低对比 → 回退 #fff（dsh accent 底白 icon）。 */
+  color: var(--text-on-accent, #fff);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -377,11 +380,16 @@
   background: var(--interactive-accent);
 }
 
+/* 统一所有聊天 icon：显式 `color`（带主题回退）+ `stroke: currentColor` +
+   `fill: none`（lucide 默认），避免任何主题下不可见。Obsidian 基础 `.svg-icon`
+   只设 size/stroke-width，不设 stroke/fill；lucide svg 自带
+   `stroke="currentColor"`，因此 `color` 才是决定 icon 可见性的真正开关。 */
 .ks-chat-send svg {
   width: 18px;
   height: 18px;
   stroke: currentColor;
-  color: var(--text-on-accent);
+  fill: none;
+  color: var(--text-on-accent, #fff);
 }
 
 /* Busy → square stop button (dsh: rounded square, not a circle). */
@@ -391,7 +399,8 @@
 
 .ks-chat-send-stop svg {
   fill: currentColor;
-  color: var(--text-on-accent);
+  stroke: currentColor;
+  color: var(--text-on-accent, #fff);
 }
 
 /* Collapsible thinking block（dsh ReasoningRow 复刻）. */
@@ -418,6 +427,12 @@
 .ks-think-icon {
   display: inline-flex;
   flex-shrink: 0;
+  color: var(--text-muted, var(--text-normal, #888));
+}
+
+.ks-think-icon svg {
+  stroke: currentColor;
+  fill: none;
 }
 
 .ks-think-title {
@@ -521,7 +536,12 @@
 
 .ks-tool-icon {
   display: inline-flex;
-  color: var(--text-muted);
+  color: var(--text-muted, var(--text-normal, #888));
+}
+
+.ks-tool-icon svg {
+  stroke: currentColor;
+  fill: none;
 }
 
 .ks-tool-input {
@@ -781,4 +801,265 @@
   line-height: 20px;
   font-weight: 500;
   outline: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Preset item (v0.7.0 B.1): collapsible preset, default collapsed      */
+/* ------------------------------------------------------------------ */
+
+.ks-preset-item {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  margin-bottom: var(--size-2-2);
+  background: var(--background-secondary);
+}
+
+.ks-preset-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-2-1) var(--size-2-2);
+}
+
+.ks-preset-item-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+  padding: var(--size-2-1) 0;
+  outline: none;
+  font-family: var(--font-interface);
+}
+
+.ks-preset-item-name:focus {
+  border-bottom-color: var(--interactive-accent);
+}
+
+.ks-preset-item-chev {
+  display: inline-flex;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: var(--size-2-1);
+  border-radius: var(--radius-s);
+}
+
+.ks-preset-item-chev:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ks-preset-item-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ks-preset-item-del:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-error);
+}
+
+.ks-preset-item-del svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ks-preset-item-body {
+  padding: var(--size-2-1) var(--size-2-2) var(--size-2-2);
+}
+
+.ks-preset-item-collapsed .ks-preset-item-body {
+  display: none;
+}
+
+.ks-preset-tools {
+  margin-top: var(--size-2-1);
+}
+
+/* Per-tool config group (v0.7.0 B.2): collapsible, collapsed by default. */
+.ks-tool-config {
+  margin-bottom: var(--size-2-2);
+}
+
+.ks-tool-config-head {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-2-1) var(--size-2-2);
+  cursor: pointer;
+  color: var(--text-normal);
+  border-radius: var(--radius-s);
+}
+
+.ks-tool-config-head:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ks-tool-config-head .ks-preset-tool-label {
+  flex: 0 0 auto;
+  font-weight: var(--font-semibold);
+}
+
+.ks-tool-config-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* update_note_yaml rule row (B.3): multi-line desc textarea. */
+.ks-update-yaml-rule-row .setting-item-control {
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+}
+
+.ks-update-yaml-rule-row .setting-item-control .text-area {
+  min-height: 4em;
+  width: 100%;
+}
+
+/* Template row (v0.7.0 B.4): level select + title + allow toggle + desc + ops. */
+.ks-template-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-2);
+}
+
+.ks-template-row {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: var(--size-2-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--size-2-2);
+  background: var(--background-primary);
+}
+
+.ks-template-level {
+  flex: 0 0 auto;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  color: var(--text-normal);
+  padding: var(--size-2-1) var(--size-2-2);
+  outline: none;
+}
+
+.ks-template-title {
+  flex: 1 1 10em;
+  min-width: 8em;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  color: var(--text-normal);
+  padding: var(--size-2-1) var(--size-2-2);
+  outline: none;
+  font-family: var(--font-interface);
+}
+
+.ks-template-title:focus,
+.ks-template-level:focus,
+.ks-template-desc:focus {
+  border-color: var(--interactive-accent);
+}
+
+.ks-template-allow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  flex: 0 0 auto;
+  padding-top: var(--size-2-1);
+}
+
+.ks-template-allow-cb {
+  margin: 0;
+}
+
+.ks-template-allow-label {
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+.ks-template-desc {
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  color: var(--text-normal);
+  padding: var(--size-2-1) var(--size-2-2);
+  outline: none;
+  resize: vertical;
+  font-family: var(--font-interface);
+}
+
+.ks-template-ops {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  flex: 0 0 auto;
+}
+
+.ks-template-op {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ks-template-op:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ks-template-op svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ks-template-preview {
+  margin-top: var(--size-2-2);
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: var(--size-2-2);
+  background: var(--background-secondary);
+}
+
+.ks-template-preview-title {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin-bottom: var(--size-2-1);
+}
+
+.ks-template-preview-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-family: var(--font-monospace);
 }

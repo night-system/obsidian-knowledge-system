@@ -16,7 +16,7 @@
  * - `listRecentDays` = preset override ?? settings.recentDays.
  * - No active preset (`activePresetId` empty / missing) → default behaviour.
  */
-import type { KnowledgeSystemSettings, ToolPreset, YamlRule } from '../settings';
+import type { KnowledgeSystemSettings, ToolPreset, YamlRule, UpdateYamlRule, NoteTemplateEntry } from '../settings';
 import { buildAnthropicTools, buildSearchOutputNotesTool, buildUpdateNoteYamlTool, AnthropicTool } from './tools';
 
 /** The resolved, effective tool/system configuration for one chat send. */
@@ -33,6 +33,10 @@ export interface ResolvedToolConfig {
   searchMode: 'full' | 'restricted';
   /** Whitelisted keys for the restricted search mode. */
   searchRestrictions?: { key: string; values: string[] }[];
+  /** update_note_yaml allowed-attribute rules (always from settings; v0.7.0). */
+  updateYamlRules: UpdateYamlRule[];
+  /** create_note body template (always from settings; v0.7.0). */
+  noteTemplate: NoteTemplateEntry[];
 }
 
 /** Find the preset referenced by `settings.activePresetId`; null when inactive. */
@@ -52,7 +56,9 @@ export function buildSystemPrompt(preset?: ToolPreset | null): string {
 export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedToolConfig {
   const preset = findActivePreset(settings);
   const yamlRules = Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
-  const baseTools = buildAnthropicTools(yamlRules);
+  const noteTemplate = Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
+  const updateYamlRules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
+  const baseTools = buildAnthropicTools(yamlRules, noteTemplate);
 
   // 1) base tool names in stable order.
   let names = ['list_recent_notes', 'read_note', 'create_note'];
@@ -77,7 +83,7 @@ export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedTo
       const t = findBase(n);
       if (t) tools.push(t);
     } else if (n === 'update_note_yaml') {
-      tools.push(buildUpdateNoteYamlTool());
+      tools.push(buildUpdateNoteYamlTool(updateYamlRules));
     } else if (n === 'search_output_notes') {
       tools.push(
         buildSearchOutputNotesTool(
@@ -96,5 +102,7 @@ export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedTo
     listRecentDays: preset?.toolOverrides?.listRecentDays ?? settings.recentDays,
     searchMode,
     searchRestrictions: preset?.toolOverrides?.searchRestrictions,
+    updateYamlRules,
+    noteTemplate,
   };
 }

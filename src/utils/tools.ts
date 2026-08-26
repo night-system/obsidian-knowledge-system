@@ -1,5 +1,5 @@
 import { stripFrontmatter } from './index';
-import type { YamlRule } from '../settings';
+import type { YamlRule, UpdateYamlRule, NoteTemplateEntry } from '../settings';
 import {
   applyDefaults,
   parseFrontmatterObj,
@@ -28,6 +28,10 @@ export interface ToolCtx {
     recentDays?: number;
     earliestTime?: string;
     yamlRules?: YamlRule[];
+    /** update_note_yaml allowed-attribute rules (v0.7.0). */
+    updateYamlRules?: UpdateYamlRule[];
+    /** create_note body template headings (v0.7.0). */
+    noteTemplate?: NoteTemplateEntry[];
   };
   now?: number;
   moment?: any;
@@ -67,16 +71,48 @@ const FALLBACK_FORMATS = ['YYYY-MM-DD', 'YYYY.MM.DD', 'YYYY/MM/DD'];
  * keys, their explanations, and the optional enum of allowed values. With no
  * rules the output is identical to the legacy static array.
  *
- * v0.6.0 B: 默认值信息完全不对 AI 暴露——AI 输出完 create_note 后，创建文件前由
- * `applyDefaults` 自动补默认值，因此 AI 无需（也不应）知道默认值的存在。
- * 为此：
- * - 描述行只含「键名：解释（可选值：…）」，**不含默认值**；
- * - 仅当某规则 `values` 非空（有可选值约束）时才把该键暴露进 schema properties
- *   （enum 照旧）；「仅默认值」（values 空但 default 非空）与「无约束无默认」
- *   （values 空且 default 空）的键一律不暴露——既不出现在描述，也不出现在
- *   properties，AI 完全不知情，创建时由 applyDefaults 自动追加默认值。
+ * v0.7.0: accepts an optional `noteTemplate` that controls the create_note body
+ * structure (see `buildCreateNoteTool`). `buildAnthropicTools([])` stays
+ * contract-equal to `ANTHROPIC_TOOLS`.
  */
-export function buildAnthropicTools(yamlRules?: YamlRule[]): AnthropicTool[] {
+export function buildAnthropicTools(yamlRules?: YamlRule[], noteTemplate?: NoteTemplateEntry[]): AnthropicTool[] {
+  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  return [
+    {
+      name: 'list_recent_notes',
+      description: '列出源文件夹内最近 N 天的 Markdown 笔记（标题 + 时间）。',
+      input_schema: {
+        type: 'object',
+        properties: { days: { type: 'integer', description: '回看天数；缺省用设置的最近 N 天' } },
+        required: [],
+      },
+    },
+    {
+      name: 'read_note',
+      description: '读取源文件夹内某篇笔记的正文（去除 YAML frontmatter）。',
+      input_schema: {
+        type: 'object',
+        properties: { name: { type: 'string', description: '笔记文件名（可带或不带 .md 后缀）' } },
+        required: ['name'],
+      },
+    },
+    buildCreateNoteTool(rules, noteTemplate),
+  ];
+}
+
+/**
+ * Build the `create_note` schema with the configured YAML rules plus an optional
+ * body template. When a template is present (≥1 allowAi heading) the `content`
+ * free-text param is replaced by a `sections` object: each key is a template
+ * heading the AI may write, each value is the text for that heading, and the
+ * headings are marked required. Non-allowAi headings are listed in the
+ * description but 「由模板固定，勿写」. With no template the free `content`
+ * (v0.5.0) is preserved.
+ */
+export function buildCreateNoteTool(
+  yamlRules?: YamlRule[],
+  noteTemplate?: NoteTemplateEntry[]
+): AnthropicTool {
   const rules = Array.isArray(yamlRules) ? yamlRules : [];
   // 只暴露「有可选值约束」的键；否则该键对 AI 隐藏（未配置约束规则，AI 不该知道）。
   const exposedRules = rules.filter((r) => r.key && r.values && r.values.length > 0);
@@ -99,39 +135,51 @@ export function buildAnthropicTools(yamlRules?: YamlRule[]): AnthropicTool[] {
     yamlSchema.required = []; // 规则键不强制 AI 填写
   }
 
-  return [
-    {
-      name: 'list_recent_notes',
-      description: '列出源文件夹内最近 N 天的 Markdown 笔记（标题 + 时间）。',
-      input_schema: {
-        type: 'object',
-        properties: { days: { type: 'integer', description: '回看天数；缺省用设置的最近 N 天' } },
-        required: [],
-      },
-    },
-    {
-      name: 'read_note',
-      description: '读取源文件夹内某篇笔记的正文（去除 YAML frontmatter）。',
-      input_schema: {
-        type: 'object',
-        properties: { name: { type: 'string', description: '笔记文件名（可带或不带 .md 后缀）' } },
-        required: ['name'],
-      },
-    },
-    {
-      name: 'create_note',
-      description: '在输出文件夹创建一篇新笔记。',
-      input_schema: {
-        type: 'object',
-        properties: {
-          title: { type: 'string', description: '文件名（不含 .md 后缀）' },
-          yaml: yamlSchema,
-          content: { type: 'string', description: '正文' },
-        },
-        required: ['title'],
-      },
-    },
-  ];
+  const template = (noteTemplate || [])
+    .filter((e) => e && e.title && e.title.trim())
+    .map((e) => ({ ...e, title: e.title.trim() }));
+  const allowAi = template.filter((e) => e.allowAi);
+  const hasTemplate = template.length > 0 && allowAi.length > 0;
+
+  const props: Record<string, any> = {
+    title: { type: 'string', description: '文件名（不含 .md 后缀）' },
+    yaml: yamlSchema,
+  };
+  const required = ['title'];
+
+  let description = '在输出文件夹创建一篇新笔记。';
+  if (hasTemplate) {
+    const lines = template.map((e) => {
+      const heading = '#'.repeat(Math.max(1, Math.min(6, e.level))) + ' ' + e.title;
+      return e.allowAi ? `- ${heading}（可填写，AI 在此标题下写内容）` : `- ${heading}（由模板固定，勿写）`;
+    });
+    description +=
+      '\n正文按以下模板结构组装，AI 只能在标注「可填写」的标题下写内容（sections 参数）：\n' +
+      lines.join('\n');
+
+    const secProps: Record<string, any> = {};
+    for (const e of allowAi) {
+      secProps[e.title] = {
+        type: 'string',
+        description: e.desc ? e.desc : `在「${e.title}」下写内容`,
+      };
+    }
+    props.sections = {
+      type: 'object',
+      description: '按模板标题填写的正文内容；每个键是模板里允许 AI 写的标题，值为该标题下的文字。',
+      properties: secProps,
+      required: allowAi.map((e) => e.title),
+    };
+    required.push('sections');
+  } else {
+    props.content = { type: 'string', description: '正文' };
+  }
+
+  return {
+    name: 'create_note',
+    description,
+    input_schema: { type: 'object', properties: props, required },
+  };
 }
 
 /** Anthropic `tools` schema for the chat request (no YAML rules by default). */
@@ -265,7 +313,7 @@ export async function readNoteTool(
 
 export async function createNoteTool(
   ctx: ToolCtx,
-  args: { title?: string; yaml?: unknown; content?: string }
+  args: { title?: string; yaml?: unknown; content?: string; sections?: Record<string, string> }
 ): Promise<{ result: { path: string } } | { error: string }> {
   const settings = ctx.settings;
   const title = (args?.title || '').trim();
@@ -279,11 +327,36 @@ export async function createNoteTool(
   const moment = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
   const filled = applyDefaults(obj, rules, { moment, now: ctx.now });
 
+  // v0.7.0 模板正文：配置了模板（且至少一个 allowAi 标题）时，按模板顺序组装正文。
+  // AI 只能通过 `sections`（{ 标题: 文本 }）填写「允许 AI 写」的标题；不允许 AI 写的
+  // 标题（如大标题）由模板固定输出。AI 未提供某 allowAi 节的文本 → 跳过该节。无模板 → 现状。
+  const template = (settings.noteTemplate ?? [])
+    .filter((e) => e && e.title && e.title.trim())
+    .map((e) => ({ ...e, title: e.title.trim() }));
+  const allowAi = template.filter((e) => e.allowAi);
+  const sections = args?.sections ?? {};
+  let body: string;
+  if (template.length > 0 && allowAi.length > 0) {
+    const parts: string[] = [];
+    for (const e of template) {
+      const heading = '#'.repeat(Math.max(1, Math.min(6, e.level))) + ' ' + e.title;
+      if (e.allowAi) {
+        const text = typeof sections[e.title] === 'string' ? String(sections[e.title]) : '';
+        if (!text.trim()) continue; // AI 未提供 → 跳过该节
+        parts.push(heading + '\n' + text);
+      } else {
+        parts.push(heading); // 模板固定标题（大标题等）
+      }
+    }
+    body = parts.join('\n\n');
+  } else {
+    body = `${args?.content ?? ''}`;
+  }
+
   const folder = (settings.outputFolder || '/').trim();
   const name = title.toLowerCase().endsWith('.md') ? title : title + '.md';
   const path = joinVaultPath(folder, name);
   const yamlStr = serializeYamlFromObj(filled);
-  const body = `${args?.content ?? ''}`;
   const full = yamlStr ? `---\n${yamlStr}\n---\n${body}` : `---\n---\n${body}`;
 
   await ctx.app.vault.create(path, full);
@@ -293,21 +366,44 @@ export async function createNoteTool(
 /**
  * Anthropic schema for `update_note_yaml` (v0.5.0, default NOT exposed). The
  * AI updates a source-folder note's frontmatter keys; other keys are preserved.
+ *
+ * v0.7.0 阉割版：传入 `updateRules`（来自 settings.updateYamlRules）时，`updates`
+ * 的每个 `key` 被约束为规则键（enum），描述含每条规则的解释与可选值；未配置规则
+ * （空数组）→ 维持 v0.5.0 现状「任意键」。规则恒来自全局 settings（预设不覆写）。
  */
-export function buildUpdateNoteYamlTool(): AnthropicTool {
+export function buildUpdateNoteYamlTool(updateRules?: UpdateYamlRule[]): AnthropicTool {
+  const rules = (Array.isArray(updateRules) ? updateRules : []).filter((r) => r && r.key && r.key.trim());
+  let description = '更新源文件夹内笔记的 frontmatter 属性值（保留其余属性不变）。';
+  let updatesDesc = '要更新的 frontmatter 键值对列表；只改这些键，其余键保持不变。';
+  let itemsProps: Record<string, any>;
+  if (rules.length > 0) {
+    const ruleLines = rules
+      .map((r) => `- ${r.key}：${r.desc || '（无解释）'}${r.values && r.values.length > 0 ? `（可选值：${r.values.join('/')}）` : ''}`)
+      .join('\n');
+    description =
+      '更新源文件夹内笔记的 frontmatter 属性值（保留其余属性不变）。\n' +
+      '只能修改已配置的属性，值必须在允许范围内：\n' +
+      ruleLines;
+    itemsProps = {
+      key: { type: 'string', enum: rules.map((r) => r.key), description: '只允许这些属性键：' + rules.map((r) => r.key).join('/') },
+      value: { type: 'string', description: '要写入的值（须在对应属性的允许范围内）' },
+    };
+  } else {
+    itemsProps = { key: { type: 'string' }, value: { type: 'string' } };
+  }
   return {
     name: 'update_note_yaml',
-    description: '更新源文件夹内笔记的 frontmatter 属性值（保留其余属性不变）。',
+    description,
     input_schema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: '笔记文件名（可带或不带 .md 后缀）' },
         updates: {
           type: 'array',
-          description: '要更新的 frontmatter 键值对列表；只改这些键，其余键保持不变。',
+          description: updatesDesc,
           items: {
             type: 'object',
-            properties: { key: { type: 'string' }, value: { type: 'string' } },
+            properties: itemsProps,
             required: ['key', 'value'],
           },
         },
@@ -382,6 +478,23 @@ export async function updateNoteYamlTool(
   const updates = (args?.updates ?? [])
     .filter((u) => u && u != null && typeof (u as { key?: unknown })?.key === 'string' && typeof (u as { value?: unknown })?.value === 'string');
   if (updates.length === 0) return { error: 'ERROR: 未提供要更新的键值对' };
+
+  // v0.7.0 阉割版兜底校验：配置了 updateYamlRules 时，更新键必须在规则键内，
+  // 且值必须在该键的可选值内（可选值空 = 任意）。越界 → {error} 不写盘。
+  const rules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
+  const ruleMap = new Map(rules.filter((r) => r && r.key).map((r) => [r.key, r]));
+  if (ruleMap.size > 0) {
+    for (const u of updates) {
+      const rule = ruleMap.get(u.key);
+      if (!rule) {
+        return { error: `ERROR: 不允许修改属性"${u.key}"（只允许：[${[...ruleMap.keys()].join(', ')}]）` };
+      }
+      const v = String(u.value ?? '').trim();
+      if (rule.values && rule.values.length > 0 && !rule.values.includes(v)) {
+        return { error: `ERROR: 属性"${u.key}"的值"${v}"不在可选值[${rule.values.join(' / ')}]内（${rule.desc}）` };
+      }
+    }
+  }
 
   const files = (ctx.app.vault.getMarkdownFiles?.() ?? []) as VaultFile[];
   const match = files.find(

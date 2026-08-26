@@ -914,21 +914,23 @@ export async function modifyOutputNoteVersionedTool(
   const bodyResult = applySectionsToBody(body, (args?.sections ?? {}) as Record<string, string>);
   if ('error' in bodyResult) return { error: bodyResult.error };
 
-  // 计算下一个版本号：归档文件最新版本 + 1（无归档 → 1）。
+  // 当前文件的「当前版本号」：归档文件最新版本 + 1（无归档 → 1）。
+  // 归档块 = 修改前状态，版本号 = 当前版本；原文件写回 = 当前版本 + 1（下一版本）。
+  // 例：首次调用 → 归档 `# 版本 1`，原文件 version: 2；再次 → 归档 `# 版本 2`，原文件 version: 3。
   const archiveName = target + versionSuffix + '.md';
   const archivePath = joinVaultPath(folder, archiveName);
   const archiveFile = findOutputFile(ctx, folder, target + versionSuffix);
-  let nextVersion = 1;
+  let currentVersion = 1;
   let existingArchiveRaw = '';
   if (archiveFile) {
     existingArchiveRaw = await ctx.app.vault.read(archiveFile);
-    nextVersion = latestVersionFromArchive(existingArchiveRaw) + 1;
+    currentVersion = latestVersionFromArchive(existingArchiveRaw) + 1;
   }
 
-  // 归档：把当前（修改前）原文 yaml 区全部属性 + 全部正文打包为一个版本块；
+  // 归档：把当前（修改前）原文 yaml 区全部属性 + 全部正文打包为一个版本块（版本号=当前版本）；
   // v0.8.1：新版本块插到归档文件【最上面】（最新版本在最上），块内 `# 属性`
   // 强制含当前版本号（versionProperty: N）。
-  const archiveBlock = buildArchiveBlock(nextVersion, originalFM, body, versionProperty);
+  const archiveBlock = buildArchiveBlock(currentVersion, originalFM, body, versionProperty);
   if (archiveFile) {
     const sep = existingArchiveRaw.trimStart() ? '\n\n' : '';
     await ctx.app.vault.adapter.write(archivePath, archiveBlock + sep + existingArchiveRaw);
@@ -936,10 +938,10 @@ export async function modifyOutputNoteVersionedTool(
     await ctx.app.vault.create(archivePath, archiveBlock);
   }
 
-  // 写回原文件：保留原 yaml + AI 改的键 + 自动补默认 + versionProperty=N + archiveProperty=true。
+  // 写回原文件：保留原 yaml + AI 改的键 + 自动补默认 + versionProperty=当前版本+1 + archiveProperty=true。
   const moment = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
   const newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
-  newFM[versionProperty] = nextVersion;
+  newFM[versionProperty] = currentVersion + 1;
   newFM[archiveProperty] = true;
   const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
 

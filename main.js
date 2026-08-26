@@ -2514,13 +2514,13 @@ async function modifyOutputNoteVersionedTool(ctx, args) {
   const archiveName = target + versionSuffix + ".md";
   const archivePath = joinVaultPath(folder, archiveName);
   const archiveFile = findOutputFile(ctx, folder, target + versionSuffix);
-  let nextVersion = 1;
+  let currentVersion = 1;
   let existingArchiveRaw = "";
   if (archiveFile) {
     existingArchiveRaw = await ctx.app.vault.read(archiveFile);
-    nextVersion = latestVersionFromArchive(existingArchiveRaw) + 1;
+    currentVersion = latestVersionFromArchive(existingArchiveRaw) + 1;
   }
-  const archiveBlock = buildArchiveBlock(nextVersion, originalFM, body, versionProperty);
+  const archiveBlock = buildArchiveBlock(currentVersion, originalFM, body, versionProperty);
   if (archiveFile) {
     const sep = existingArchiveRaw.trimStart() ? "\n\n" : "";
     await ctx.app.vault.adapter.write(archivePath, archiveBlock + sep + existingArchiveRaw);
@@ -2529,7 +2529,7 @@ async function modifyOutputNoteVersionedTool(ctx, args) {
   }
   const moment = (_c = ctx.moment) != null ? _c : typeof window !== "undefined" ? window.moment : null;
   const newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
-  newFM[versionProperty] = nextVersion;
+  newFM[versionProperty] = currentVersion + 1;
   newFM[archiveProperty] = true;
   const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
   await ctx.app.vault.adapter.write(match.path, newContent);

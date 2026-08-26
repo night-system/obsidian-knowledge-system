@@ -7,7 +7,8 @@
  *
  * Rules (per v0.5.0 契约 B.4):
  * - Base tool set = [list_recent_notes, read_note, create_note]
- *   + (updateYamlToolEnabled ? [update_note_yaml] : []) + [search_output_notes].
+ *   + (updateYamlToolEnabled ? [update_note_yaml] : []) + [search_output_notes]
+ *   + [modify_output_note, modify_output_note_versioned, read_output_note] (v0.8.0).
  * - A non-empty preset `enabledTools` acts as a whitelist (intersection).
  * - `createNoteEnabled === false` drops create_note; `updateYamlEnabled ===
  *   false` drops update_note_yaml (even when whitelisted).
@@ -17,7 +18,7 @@
  * - No active preset (`activePresetId` empty / missing) → default behaviour.
  */
 import type { KnowledgeSystemSettings, ToolPreset, YamlRule, UpdateYamlRule, NoteTemplateEntry } from '../settings';
-import { buildAnthropicTools, buildSearchOutputNotesTool, buildUpdateNoteYamlTool, AnthropicTool } from './tools';
+import { buildAnthropicTools, buildSearchOutputNotesTool, buildUpdateNoteYamlTool, buildModifyOutputNoteTool, buildModifyOutputNoteVersionedTool, buildReadOutputNoteTool, AnthropicTool } from './tools';
 
 /** The resolved, effective tool/system configuration for one chat send. */
 export interface ResolvedToolConfig {
@@ -58,12 +59,15 @@ export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedTo
   const yamlRules = Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
   const noteTemplate = Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
   const updateYamlRules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
-  const baseTools = buildAnthropicTools(yamlRules, noteTemplate);
+  const createRestrictYaml = settings.createRestrictYaml === true;
+  const baseTools = buildAnthropicTools(yamlRules, noteTemplate, { createRestrictYaml });
 
   // 1) base tool names in stable order.
   let names = ['list_recent_notes', 'read_note', 'create_note'];
   if (settings.updateYamlToolEnabled) names.push('update_note_yaml');
   names.push('search_output_notes');
+  // v0.8.0：三个新的输出库工具进入基础工具集（默认对 AI 暴露）。
+  names.push('modify_output_note', 'modify_output_note_versioned', 'read_output_note');
 
   // 2) enabledTools whitelist (non-empty ⇒ intersection).
   const enabled = preset?.enabledTools;
@@ -91,6 +95,12 @@ export function resolveToolConfig(settings: KnowledgeSystemSettings): ResolvedTo
           preset?.toolOverrides?.searchRestrictions
         )
       );
+    } else if (n === 'modify_output_note') {
+      tools.push(buildModifyOutputNoteTool(yamlRules, { createRestrictYaml }));
+    } else if (n === 'modify_output_note_versioned') {
+      tools.push(buildModifyOutputNoteVersionedTool(yamlRules, { createRestrictYaml }));
+    } else if (n === 'read_output_note') {
+      tools.push(buildReadOutputNoteTool());
     }
   }
 

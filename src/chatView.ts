@@ -9,6 +9,9 @@ import {
   createNoteTool,
   updateNoteYamlTool,
   searchOutputNotesTool,
+  modifyOutputNoteTool,
+  modifyOutputNoteVersionedTool,
+  readOutputNoteTool,
   ToolCtx,
 } from './utils/tools';
 import { resolveToolConfig, ResolvedToolConfig } from './utils/presets';
@@ -403,14 +406,32 @@ export class KnowledgeChatView extends ItemView {
     this.updateSendBtn();
   }
 
-  /** `setIcon` 后兜底：若渲染出的 svg 无可见绘制内容（icon 名不存在/字体缺失），
-   *  退化为文本字形，确保按钮图标始终可见（dsh 风格白描图标）。 */
+  /** `setIcon` 后兜底：若渲染出的 svg 无可见绘制内容（icon 名不存在/字体缺失）
+   *  或 computed color 为 transparent（某些主题下不可见），则退化为文本字形，
+   *  确保按钮图标始终可见（dsh 风格白描图标）。 */
   private setIconWithFallback(btn: HTMLElement, name: string, glyph: string): void {
     btn.empty();
     setIcon(btn, name);
     const svg = btn.querySelector('svg');
-    const hasDrawable = !!svg && !!svg.querySelector('path, rect, circle, polygon, line');
-    if (!hasDrawable) btn.setText(glyph);
+    if (!this.iconVisible(svg)) btn.setText(glyph);
+  }
+
+  /** 校验一个 `setIcon` 产物是否可见：有可绘制子节点（lucide 描边路径）且
+   *  computed color 非透明。供 `setIconWithFallback`/`setIconSafe` 共用。 */
+  private iconVisible(svg: SVGElement | null): boolean {
+    if (!svg) return false;
+    const hasDrawable = !!svg.querySelector('path, rect, circle, polygon, line');
+    if (!hasDrawable) return false;
+    const color = getComputedStyle(svg).color;
+    return color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)';
+  }
+
+  /** 非按钮图标的可见性兜底（思考块 chevron / 工具卡 wrench 等）：同
+   *  `setIconWithFallback`，但传入 `glyph` 为空时不回退文本。 */
+  private setIconSafe(container: HTMLElement, name: string, glyph: string): void {
+    setIcon(container, name);
+    const svg = container.querySelector('svg');
+    if (!this.iconVisible(svg) && glyph) container.setText(glyph);
   }
 
   /** Toggle the send button between arrow-up (send), disabled (empty), and square (stop). */
@@ -882,7 +903,7 @@ export class KnowledgeChatView extends ItemView {
     const wrap = container.createDiv({ cls: 'ks-think is-collapsed' });
     const head = wrap.createDiv({ cls: 'ks-think-head' });
     const chev = head.createSpan({ cls: 'ks-think-icon' });
-    setIcon(chev, 'chevron-right');
+    this.setIconSafe(chev, 'chevron-right', '\u203A');
     head.createSpan({ cls: 'ks-think-title', text: '思考中' }); // 可折叠
     const summary = head.createSpan({ cls: 'ks-think-summary' });
     const body = wrap.createDiv({ cls: 'ks-think-body' });
@@ -891,7 +912,7 @@ export class KnowledgeChatView extends ItemView {
       const collapsed = wrap.hasClass('is-collapsed');
       const newCollapsed = !collapsed;
       wrap.toggleClass('is-collapsed', newCollapsed);
-      setIcon(chev, newCollapsed ? 'chevron-right' : 'chevron-down');
+      this.setIconSafe(chev, newCollapsed ? 'chevron-right' : 'chevron-down', newCollapsed ? '\u203A' : '\u2304');
       this.thinkExpanded[index] = !newCollapsed;
     });
     this.thinkSubs[index] = { wrap, chev, summary, body };
@@ -908,7 +929,7 @@ export class KnowledgeChatView extends ItemView {
     const override = this.thinkExpanded[index];
     const expanded = override != null ? override : streaming;
     sub.wrap.toggleClass('is-collapsed', !expanded);
-    setIcon(sub.chev, expanded ? 'chevron-down' : 'chevron-right');
+    this.setIconSafe(sub.chev, expanded ? 'chevron-down' : 'chevron-right', expanded ? '\u2304' : '\u203A');
     sub.wrap.toggleClass('ks-think-streaming', streaming);
   }
 
@@ -925,7 +946,7 @@ export class KnowledgeChatView extends ItemView {
     if (this.toolSubs[index]?.card.isConnected) return;
     const card = container.createDiv({ cls: 'ks-tool-card' });
     const title = card.createDiv({ cls: 'ks-tool-name' });
-    setIcon(title.createSpan({ cls: 'ks-tool-icon' }), 'wrench');
+    this.setIconSafe(title.createSpan({ cls: 'ks-tool-icon' }), 'wrench', '');
     title.createSpan({ text: block.name || 'tool' });
     const inputEl = card.createDiv({ cls: 'ks-tool-input' });
     const resultEl = card.createDiv({ cls: 'ks-tool-result' });
@@ -1107,6 +1128,18 @@ export class KnowledgeChatView extends ItemView {
         if ('error' in r) return `ERROR: ${r.error}`;
         if (r.result.length === 0) return '未找到匹配的笔记';
         return JSON.stringify(r.result);
+      }
+      if (name === 'modify_output_note') {
+        const r = await modifyOutputNoteTool(ctx, { name: a.name, sections: a.sections, yaml: a.yaml });
+        return 'error' in r ? `ERROR: ${r.error}` : `已修改：${r.result.path}`;
+      }
+      if (name === 'modify_output_note_versioned') {
+        const r = await modifyOutputNoteVersionedTool(ctx, { name: a.name, sections: a.sections, yaml: a.yaml });
+        return 'error' in r ? `ERROR: ${r.error}` : `已修改（已归档）：${r.result.path}`;
+      }
+      if (name === 'read_output_note') {
+        const r = await readOutputNoteTool(ctx, { name: a.name });
+        return 'error' in r ? `ERROR: ${r.error}` : r.result.content;
       }
       return `ERROR: 未知工具 ${name}`;
     } catch (e) {

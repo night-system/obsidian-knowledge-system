@@ -55,7 +55,11 @@ var DEFAULT_SETTINGS = {
   activePresetId: "",
   updateYamlToolEnabled: false,
   updateYamlRules: [],
-  noteTemplate: []
+  noteTemplate: [],
+  createRestrictYaml: false,
+  modifyVersionSuffix: "",
+  modifyVersionProperty: "",
+  modifyArchiveProperty: ""
 };
 
 // src/settingsTab.ts
@@ -599,7 +603,7 @@ async function extractResponseText(res) {
 }
 
 // src/settingsTab.ts
-var TOOL_NAMES = ["list_recent_notes", "read_note", "create_note", "update_note_yaml", "search_output_notes"];
+var TOOL_NAMES = ["list_recent_notes", "read_note", "create_note", "update_note_yaml", "search_output_notes", "modify_output_note", "modify_output_note_versioned", "read_output_note"];
 function renderSettings(app, plugin, containerEl) {
   new SettingsRenderer(app, plugin).render(containerEl);
 }
@@ -678,7 +682,7 @@ var SettingsRenderer = class {
   renderSearch(containerEl) {
     const wrap = containerEl.createDiv({ cls: "ks-search" });
     const iconEl = wrap.createSpan({ cls: "ks-search-icon" });
-    (0, import_obsidian3.setIcon)(iconEl, "search");
+    this.setIconSafe(iconEl, "search", "");
     const input = wrap.createEl("input", { cls: "ks-search-input" });
     input.type = "text";
     input.placeholder = "\u641C\u7D22\u8BBE\u7F6E...";
@@ -688,7 +692,7 @@ var SettingsRenderer = class {
     const groupEl = containerEl.createDiv({ cls: "ks-group" });
     const headingEl = groupEl.createDiv({ cls: "ks-group-heading" });
     const iconEl = headingEl.createSpan({ cls: "ks-group-icon" });
-    (0, import_obsidian3.setIcon)(iconEl, collapsed ? "chevron-right" : "chevron-down");
+    this.setIconSafe(iconEl, collapsed ? "chevron-right" : "chevron-down", collapsed ? "\u203A" : "\u2304");
     headingEl.createSpan({ cls: "ks-group-title", text: title });
     const bodyEl = groupEl.createDiv({ cls: "ks-group-body" });
     if (collapsed) groupEl.addClass("ks-collapsed");
@@ -698,12 +702,23 @@ var SettingsRenderer = class {
       const isCollapsed = groupEl.hasClass("ks-collapsed");
       groupEl.toggleClass("ks-collapsed", !isCollapsed);
       this.groupCollapsed.set(groupEl, !isCollapsed);
-      (0, import_obsidian3.setIcon)(iconEl, isCollapsed ? "chevron-down" : "chevron-right");
+      this.setIconSafe(iconEl, isCollapsed ? "chevron-down" : "chevron-right", isCollapsed ? "\u2304" : "\u203A");
     });
     return bodyEl;
   }
   markSearchable(setting, text) {
     setting.settingEl.setAttribute("data-search", text);
+  }
+  /** `setIcon` 后可见性兜底：若 svg 无可绘制子节点或 computed color 为透明，
+   *  退化为文本字形 `glyph`，保证图标在任何主题下可见（无 emoji）。
+   *  `glyph` 为空时不回退文本。 */
+  setIconSafe(container, name, glyph) {
+    (0, import_obsidian3.setIcon)(container, name);
+    const svg = container.querySelector("svg");
+    const hasDrawable = !!svg && !!svg.querySelector("path, rect, circle, polygon, line");
+    const color = svg ? getComputedStyle(svg).color : "transparent";
+    const visible = hasDrawable && color !== "transparent" && color !== "rgba(0, 0, 0, 0)";
+    if (!visible && glyph) container.setText(glyph);
   }
   updateSetting(key, value) {
     this.plugin.settings[key] = value;
@@ -819,6 +834,8 @@ var SettingsRenderer = class {
     this.renderUpdateYamlRules(updateYamlBody);
     const templateBody = this.createGroup(containerEl, "AI \u521B\u5EFA\u6A21\u677F\uFF08create_note \u6B63\u6587\u7ED3\u6784\uFF09", false);
     this.renderNoteTemplate(templateBody);
+    const modifyBody = this.createGroup(containerEl, "AI \u4FEE\u6539\u8F93\u51FA\u5DE5\u5177\uFF08modify_output_note / modify_output_note_versioned / read_output_note\uFF09", false);
+    this.renderModifyOutputTools(modifyBody);
     const bodyEl = this.createGroup(containerEl, "\u8F93\u51FA\u5C5E\u6027", false);
     const timestampProp = new import_obsidian3.Setting(bodyEl).setName("\u65F6\u95F4\u6233\u5C5E\u6027\u540D").setDesc("\u5199\u5165\u8F93\u51FA\u6587\u4EF6\u7684\u5F53\u524D\u65F6\u95F4\u6233\u5C5E\u6027\u540D\uFF1B\u503C\u6309\u300C\u65F6\u95F4\u300D\u9875\u7684\u65F6\u95F4\u6233\u683C\u5F0F\u751F\u6210\u3002").addText(
       (text) => text.setPlaceholder("created").setValue(this.plugin.settings.timestampProperty).onChange((value) => this.updateSetting("timestampProperty", value))
@@ -838,6 +855,28 @@ var SettingsRenderer = class {
       })
     );
     this.markSearchable(addBtn, "\u8F93\u51FA\u5C5E\u6027 \u6DFB\u52A0\u5C5E\u6027 \u589E\u52A0 \u6DFB\u52A0");
+  }
+  /**
+   * Render the "AI 修改输出工具" group (v0.8.0): 说明 + 归档三配置（版本后缀/版本号属性名/
+   * 归档标记属性名）。modify_output_note / modify_output_note_versioned 与 create_note 一样
+   * 受「AI 创建属性规则 / 限制仅已配置属性」约束；固定 yaml 默认值写回时自动补上。
+   */
+  renderModifyOutputTools(containerEl) {
+    containerEl.empty();
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u63A7\u5236 AI \u4F7F\u7528 modify_output_note / modify_output_note_versioned\uFF08\u8986\u76D6\u4FEE\u6539\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u5DF2\u6709\u7B14\u8BB0\uFF1Asections \u53EA\u80FD\u6539\u539F\u6587\u5DF2\u6709\u6807\u9898\u4E0B\u7684\u5185\u5BB9\uFF0C\u7981\u6B62\u4FEE\u6539/\u65B0\u589E\u6807\u9898\u3001\u7981\u6B62 # \u5F00\u5934\uFF1Byaml \u53D7\u300CAI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 / \u9650\u5236\u4EC5\u5DF2\u914D\u7F6E\u5C5E\u6027\u300D\u7EA6\u675F\uFF0C\u56FA\u5B9A yaml \u9ED8\u8BA4\u503C\u5199\u56DE\u65F6\u81EA\u52A8\u8865\u4E0A\uFF09\u3002read_output_note \u8BFB\u53D6\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u7B14\u8BB0\u5168\u6587\u3002");
+    this.markSearchable(info, "AI \u4FEE\u6539\u8F93\u51FA\u5DE5\u5177 modify_output_note \u8BF4\u660E \u5C5E\u6027 \u5F52\u6863 read_output_note");
+    const suffix = new import_obsidian3.Setting(containerEl).setName("\u7248\u672C\u540E\u7F00\uFF08modify_output_note_versioned\uFF09").setDesc("\u5F52\u6863\u6587\u4EF6\u540E\u7F00\uFF08\u8FFD\u52A0\u5728\u539F\u6587\u540D\u540E\uFF0C\u5982\u300C-\u5F52\u6863\u300D\u2192 \u539F\u6587\u540D-\u5F52\u6863.md\uFF09\uFF1B\u7559\u7A7A = \u8BE5\u5DE5\u5177\u4E0D\u5DE5\u4F5C\uFF08\u62A5\u9519\uFF09\u3002").addText(
+      (text) => text.setPlaceholder("\u5982\uFF1A-\u5F52\u6863").setValue(this.plugin.settings.modifyVersionSuffix).onChange((v) => this.updateSetting("modifyVersionSuffix", v))
+    );
+    this.markSearchable(suffix, "AI \u4FEE\u6539\u8F93\u51FA\u5DE5\u5177 \u7248\u672C\u540E\u7F00 \u5F52\u6863 modifyVersionSuffix");
+    const vprop = new import_obsidian3.Setting(containerEl).setName("\u7248\u672C\u53F7\u5C5E\u6027\u540D\uFF08modify_output_note_versioned\uFF09").setDesc("\u5199\u5165\u539F\u6587\u4EF6\u7684\u7248\u672C\u53F7 yaml \u5C5E\u6027\u540D\uFF08\u6570\u5B57\u9012\u589E\uFF09\uFF1B\u7559\u7A7A = \u8BE5\u5DE5\u5177\u4E0D\u5DE5\u4F5C\uFF08\u62A5\u9519\uFF09\u3002").addText(
+      (text) => text.setPlaceholder("\u5982\uFF1Aversion").setValue(this.plugin.settings.modifyVersionProperty).onChange((v) => this.updateSetting("modifyVersionProperty", v))
+    );
+    this.markSearchable(vprop, "AI \u4FEE\u6539\u8F93\u51FA\u5DE5\u5177 \u7248\u672C\u53F7\u5C5E\u6027 modifyVersionProperty");
+    const aprop = new import_obsidian3.Setting(containerEl).setName("\u5F52\u6863\u6807\u8BB0\u5C5E\u6027\u540D\uFF08modify_output_note_versioned\uFF09").setDesc("\u5199\u5165\u539F\u6587\u4EF6\u7684\u5F52\u6863 bool \u5C5E\u6027\u540D\uFF08\u5982 archived\uFF0C\u5199 true\uFF09\uFF1B\u7559\u7A7A = \u8BE5\u5DE5\u5177\u4E0D\u5DE5\u4F5C\uFF08\u62A5\u9519\uFF09\u3002").addText(
+      (text) => text.setPlaceholder("\u5982\uFF1Aarchived").setValue(this.plugin.settings.modifyArchiveProperty).onChange((v) => this.updateSetting("modifyArchiveProperty", v))
+    );
+    this.markSearchable(aprop, "AI \u4FEE\u6539\u8F93\u51FA\u5DE5\u5177 \u5F52\u6863\u6807\u8BB0\u5C5E\u6027 modifyArchiveProperty");
   }
   /** Render each extra property as a row: key input, value input, delete button. */
   renderExtraProperties(containerEl) {
@@ -877,6 +916,10 @@ var SettingsRenderer = class {
     containerEl.empty();
     const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u63A7\u5236 AI \u4F7F\u7528 create_note \u5DE5\u5177\u65F6\u7684 frontmatter \u952E\u503C\u5BF9\uFF1A\u952E\u540D+\u89E3\u91CA+\u53EF\u9009\u503C\uFF08\u56DE\u8F66\u9010\u4E2A\u6DFB\u52A0\uFF0C\u663E\u793A\u4E3A chip\uFF09+\u9ED8\u8BA4\u503C\uFF1B\u9ED8\u8BA4\u503C\u652F\u6301 {{YYYY.MM.DD}} \u7B49 moment \u6A21\u677F\uFF0C{{}} \u5185\u4E3A moment \u517C\u5BB9\u683C\u5F0F\uFF1B\u53EF\u9009\u503C\u7528\u4E8E\u7EA6\u675F AI \u53EA\u80FD\u9009\u8FD9\u4E9B\u503C\uFF0C\u7559\u7A7A=\u4EFB\u610F\u3002\u9ED8\u8BA4\u503C\u4E0D\u4F1A\u66B4\u9732\u7ED9 AI\u2014\u2014AI \u521B\u5EFA\u6587\u4EF6\u65F6\u81EA\u52A8\u8FFD\u52A0\uFF08AI \u4E0D\u77E5\u60C5\uFF09\uFF1B\u53EA\u914D\u4E86\u9ED8\u8BA4\u503C\u3001\u65E0\u53EF\u9009\u503C\u7EA6\u675F\u7684\u5C5E\u6027\u952E\u4E5F\u4E0D\u5BF9 AI \u663E\u793A\u3002");
     this.markSearchable(info, "AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 \u952E\u540D \u89E3\u91CA \u53EF\u9009\u503C \u9ED8\u8BA4\u503C moment \u6A21\u677F frontmatter");
+    const restrict = new import_obsidian3.Setting(containerEl).setName("\u9650\u5236 AI \u53EA\u80FD\u4F7F\u7528\u5DF2\u914D\u7F6E\u7684\u5C5E\u6027").setDesc("\u5F00\u542F\u540E\uFF0Ccreate_note / modify_output_note / modify_output_note_versioned \u7684 yaml \u952E\u53EA\u80FD\u5728\u300CAI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219\u300D\u91CC\u914D\u7F6E\uFF1B\u89C4\u5219\u5916\u952E\u4F1A\u88AB\u62D2\u7EDD\uFF08\u9ED8\u8BA4\u5173\u95ED\uFF0C\u517C\u5BB9\u73B0\u72B6\uFF09\u3002").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.createRestrictYaml).onChange((v) => this.updateSetting("createRestrictYaml", v))
+    );
+    this.markSearchable(restrict, "AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 \u9650\u5236 \u53EA\u80FD\u4F7F\u7528\u5DF2\u914D\u7F6E\u7684\u5C5E\u6027 createRestrictYaml \u89C4\u5219\u5916\u952E");
     const list = this.plugin.settings.yamlRules || [];
     list.forEach((rule, index) => {
       const hay = `AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 ${rule.key} ${rule.desc} ${rule.values.join(" ")} ${rule.default}`;
@@ -933,7 +976,7 @@ var SettingsRenderer = class {
         const chip = chipWrap.createSpan({ cls: "ks-tag" });
         chip.createSpan({ text: value });
         const x = chip.createSpan({ cls: "ks-tag-x" });
-        (0, import_obsidian3.setIcon)(x, "x");
+        this.setIconSafe(x, "x", "\xD7");
         x.addEventListener("click", () => {
           const idx = holder.values.indexOf(value);
           if (idx >= 0) holder.values.splice(idx, 1);
@@ -1026,6 +1069,8 @@ var SettingsRenderer = class {
     containerEl.empty();
     const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u5B9A\u4E49 create_note \u8F93\u51FA\u7684\u6B63\u6587\u6A21\u677F\u7ED3\u6784\uFF1A\u6807\u9898\u6587\u672C + \u7EA7\u522B\uFF08H1/H2/H3\u2026\uFF09+\u300C\u5141\u8BB8 AI \u5199\u300D+ \u89E3\u91CA\u3002AI \u53EA\u80FD\u5728\u6807\u6CE8\u300C\u5141\u8BB8 AI \u5199\u300D\u7684\u6807\u9898\u4E0B\u5199\u5185\u5BB9\uFF08sections \u53C2\u6570\uFF09\uFF1B\u4E0D\u5141\u8BB8 AI \u5199\u7684\u6807\u9898\u7531\u6A21\u677F\u56FA\u5B9A\u8F93\u51FA\u3002\u6A21\u677F\u6309\u6B64\u987A\u5E8F\u7EC4\u88C5\u6B63\u6587\uFF1B\u81F3\u5C11\u4E00\u4E2A\u300C\u5141\u8BB8 AI \u5199\u300D\u6807\u9898\u624D\u751F\u6548\uFF0C\u672A\u914D\u7F6E\u6A21\u677F\u5219\u4FDD\u6301\u539F\u6837\uFF08\u81EA\u7531\u6B63\u6587\uFF09\u3002");
     this.markSearchable(info, "AI \u521B\u5EFA\u6A21\u677F create_note \u6B63\u6587 \u6807\u9898 \u7EA7\u522B \u5141\u8BB8AI\u5199 \u6A21\u677F");
+    const cfgRow = new import_obsidian3.Setting(containerEl).setName("\u6A21\u677F\u914D\u7F6E\u5BFC\u51FA/\u5BFC\u5165").setDesc("\u300C\u590D\u5236\u914D\u7F6E\u300D\u628A\u5F53\u524D\u6A21\u677F\u914D\u7F6E\u590D\u5236\u4E3A JSON \u5230\u526A\u8D34\u677F\uFF1B\u300C\u7C98\u8D34\u914D\u7F6E\u300D\u4ECE\u526A\u8D34\u677F\u89E3\u6790 JSON \u5E76\u5408\u5E76\uFF08\u6309\u6807\u9898\u6587\u672C\u5408\u5E76\uFF1A\u5DF2\u5B58\u5728\u5219\u66F4\u65B0\u7EA7\u522B/\u5141\u8BB8AI\u5199/\u89E3\u91CA\uFF0C\u5426\u5219\u8FFD\u52A0\uFF09\u3002").addButton((btn) => btn.setButtonText("\u590D\u5236\u914D\u7F6E").onClick(() => this.copyTemplateConfig())).addButton((btn) => btn.setButtonText("\u7C98\u8D34\u914D\u7F6E").onClick(async () => this.pasteTemplateConfig(containerEl)));
+    this.markSearchable(cfgRow, "AI \u521B\u5EFA\u6A21\u677F \u6A21\u677F\u914D\u7F6E \u5BFC\u51FA \u5BFC\u5165 \u590D\u5236 \u7C98\u8D34");
     const list = this.plugin.settings.noteTemplate || [];
     const rowsEl = containerEl.createDiv({ cls: "ks-template-rows" });
     const previewEl = containerEl.createDiv({ cls: "ks-template-preview" });
@@ -1125,12 +1170,91 @@ var SettingsRenderer = class {
     void this.plugin.saveSettings();
     this.renderNoteTemplate(containerEl);
   }
+  /** 复制模板配置（noteTemplate 的 JSON）到剪贴板。 */
+  copyTemplateConfig() {
+    const text = JSON.stringify(this.plugin.settings.noteTemplate || [], null, 2);
+    this.writeClipboard(text, "\u5DF2\u590D\u5236\u6A21\u677F\u914D\u7F6E");
+  }
+  /** 从剪贴板解析 JSON 并合并到 noteTemplate（按标题合并），然后重绘模板分组。 */
+  async pasteTemplateConfig(bodyEl) {
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (e) {
+      text = "";
+    }
+    if (!text.trim()) {
+      new import_obsidian3.Notice("\u526A\u8D34\u677F\u4E3A\u7A7A\u6216\u65E0\u6CD5\u8BFB\u53D6");
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      new import_obsidian3.Notice("\u7C98\u8D34\u5185\u5BB9\u4E0D\u662F\u5408\u6CD5\u7684 JSON");
+      return;
+    }
+    if (!Array.isArray(parsed)) {
+      new import_obsidian3.Notice("\u7C98\u8D34\u7684 JSON \u5FC5\u987B\u662F\u6570\u7EC4\uFF08\u6BCF\u4E2A\u5143\u7D20 = \u4E00\u4E2A\u6807\u9898\u914D\u7F6E\uFF09");
+      return;
+    }
+    const list = this.plugin.settings.noteTemplate || (this.plugin.settings.noteTemplate = []);
+    for (const raw of parsed) {
+      const e = raw != null ? raw : {};
+      if (!e || typeof e.title !== "string") continue;
+      const title = e.title.trim();
+      if (!title) continue;
+      const existing = list.find((x) => x.title.trim() === title);
+      if (existing) {
+        existing.level = typeof e.level === "number" ? Math.max(1, Math.min(6, e.level)) : existing.level;
+        existing.allowAi = !!e.allowAi;
+        existing.desc = typeof e.desc === "string" ? e.desc : existing.desc;
+      } else {
+        list.push({
+          title,
+          level: typeof e.level === "number" ? Math.max(1, Math.min(6, e.level)) : 2,
+          allowAi: !!e.allowAi,
+          desc: typeof e.desc === "string" ? e.desc : ""
+        });
+      }
+    }
+    void this.plugin.saveSettings();
+    this.renderNoteTemplate(bodyEl);
+    new import_obsidian3.Notice("\u5DF2\u7C98\u8D34\u5E76\u5408\u5E76\u6A21\u677F\u914D\u7F6E");
+  }
+  /** 写入剪贴板（navigator.clipboard 优先，失败走 execCommand 兜底）。 */
+  writeClipboard(text, onSuccess) {
+    const done = () => {
+      if (onSuccess) new import_obsidian3.Notice(onSuccess);
+    };
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      navigator.clipboard.writeText(text).then(done, () => this.clipboardFallback(text, done));
+    } else {
+      this.clipboardFallback(text, done);
+    }
+  }
+  /** textarea + execCommand 兜底复制（Obsidian 里剪贴板 API 不可用时）。 */
+  clipboardFallback(text, done) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      done();
+    } catch (e) {
+      new import_obsidian3.Notice("\u590D\u5236\u5931\u8D25");
+    }
+  }
   /** Small lucide icon button (no emoji) for the template row operations. */
   addIconBtn(parent, icon, tooltip, onClick) {
     const btn = parent.createEl("button", { cls: "ks-template-op" });
     btn.setAttribute("aria-label", tooltip);
     btn.setAttribute("title", tooltip);
-    (0, import_obsidian3.setIcon)(btn, icon);
+    this.setIconSafe(btn, icon, tooltip === "\u5220\u9664" ? "\xD7" : "\u203A");
     btn.addEventListener("click", onClick);
   }
   // -------------------------------------------------------------------------
@@ -1204,6 +1328,9 @@ var SettingsRenderer = class {
     const expanded = this.presetExpanded.has(preset.id);
     if (!expanded) itemEl.addClass("ks-preset-item-collapsed");
     const headEl = itemEl.createDiv({ cls: "ks-preset-item-head" });
+    const chev = headEl.createSpan({ cls: "ks-preset-item-chev" });
+    this.setIconSafe(chev, expanded ? "chevron-down" : "chevron-right", expanded ? "\u2304" : "\u203A");
+    chev.addEventListener("click", () => this.togglePresetItem(itemEl, chev, preset.id));
     const nameInput = headEl.createEl("input", { cls: "ks-preset-item-name" });
     nameInput.type = "text";
     nameInput.value = preset.name || "";
@@ -1212,13 +1339,10 @@ var SettingsRenderer = class {
       preset.name = nameInput.value;
       void this.plugin.saveSettings();
     });
-    const chev = headEl.createSpan({ cls: "ks-preset-item-chev" });
-    (0, import_obsidian3.setIcon)(chev, expanded ? "chevron-down" : "chevron-right");
-    chev.addEventListener("click", () => this.togglePresetItem(itemEl, chev, preset.id));
     const delBtn = headEl.createEl("button", { cls: "ks-preset-item-del" });
     delBtn.setAttribute("aria-label", "\u5220\u9664\u6B64\u9884\u8BBE");
     delBtn.setAttribute("title", "\u5220\u9664\u6B64\u9884\u8BBE");
-    (0, import_obsidian3.setIcon)(delBtn, "trash-2");
+    this.setIconSafe(delBtn, "trash-2", "\xD7");
     delBtn.addEventListener("click", () => {
       this.plugin.settings.toolPresets.splice(index, 1);
       void this.plugin.saveSettings();
@@ -1239,7 +1363,6 @@ var SettingsRenderer = class {
       "list_recent_notes",
       "\u5217\u51FA\u6E90\u6587\u4EF6\u5939\u6700\u8FD1 N \u5929\u7B14\u8BB0\uFF08\u53C2\u6570\uFF1Adays \u56DE\u770B\u5929\u6570\uFF0C\u9ED8\u8BA4=\u5168\u5C40\u6700\u8FD1 N \u5929\uFF09",
       (body) => {
-        this.renderToolEnableToggle(body, preset, "list_recent_notes");
         const daysSetting = new import_obsidian3.Setting(body).setName("\u56DE\u770B\u5929\u6570").setDesc("\u8986\u5199 list_recent_notes \u7684 days\uFF1B\u7559\u7A7A = \u7528\u8BBE\u7F6E\u91CC\u300C\u6700\u8FD1 N \u5929\u300D\u3002").addText((text) => {
           var _a;
           text.inputEl.type = "number";
@@ -1259,7 +1382,6 @@ var SettingsRenderer = class {
       "read_note",
       "\u8BFB\u53D6\u6E90\u6587\u4EF6\u5939\u7B14\u8BB0\u6B63\u6587\uFF08\u65E0\u53C2\u6570\uFF09",
       (body) => {
-        this.renderToolEnableToggle(body, preset, "read_note");
         const info = new import_obsidian3.Setting(body).setName("\u53C2\u6570").setDesc("\u8BFB\u53D6\u6E90\u6587\u4EF6\u5939\u5185\u67D0\u7BC7\u7B14\u8BB0\u7684\u6B63\u6587\uFF08\u53BB\u9664 YAML frontmatter\uFF09\uFF1B\u53C2\u6570\uFF1Aname\uFF08\u7B14\u8BB0\u6587\u4EF6\u540D\uFF0C\u53EF\u5E26\u6216\u4E0D\u5E26 .md \u540E\u7F00\uFF09\u3002");
         this.markSearchable(info, "\u9884\u8BBE read_note \u53C2\u6570 \u8BF4\u660E");
       }
@@ -1270,7 +1392,6 @@ var SettingsRenderer = class {
       "create_note",
       "\u521B\u5EFA\u65B0\u7B14\u8BB0\uFF08\u53C2\u6570\uFF1Atitle \u6587\u4EF6\u540D / yaml \u5C5E\u6027\u89C4\u5219 / \u6A21\u677F\u6B63\u6587\uFF09",
       (body) => {
-        this.renderToolEnableToggle(body, preset, "create_note");
         const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u521B\u5EFA\u65B0\u7B14\u8BB0\u300D\u3002\u5141\u8BB8 AI \u521B\u5EFA\u65B0\u7B14\u8BB0\uFF1B\u6B63\u6587\u7ED3\u6784\u4E0E frontmatter \u5C5E\u6027\u89C4\u5219\u7531\u8BBE\u7F6E\u9875\u300C\u8F93\u51FA\u5C5E\u6027\u300D\u7684\u300CAI \u521B\u5EFA\u6A21\u677F / AI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219\u300D\u914D\u7F6E\u3002");
         this.markSearchable(info, "\u9884\u8BBE create_note \u8BF4\u660E \u521B\u5EFA \u65B0\u5EFA");
       }
@@ -1281,7 +1402,6 @@ var SettingsRenderer = class {
       "update_note_yaml",
       "\u4FEE\u6539\u6E90\u6587\u4EF6 frontmatter \u5C5E\u6027\uFF08\u9700\u5168\u5C40\u5F00\u5173\u66B4\u9732\uFF09",
       (body) => {
-        this.renderToolEnableToggle(body, preset, "update_note_yaml");
         const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u4FEE\u6539\u6E90\u6587\u4EF6 frontmatter \u5C5E\u6027\u300D\u3002\u5B9E\u9645\u5BF9 AI \u66B4\u9732\u8FD8\u987B\u5F00\u542F\u5168\u5C40\u5F00\u5173\u300C\u66B4\u9732 update_note_yaml \u5DE5\u5177\u300D\uFF1B\u53EA\u80FD\u4FEE\u6539\u8BBE\u7F6E\u9875\u914D\u7F6E\u7684\u5C5E\u6027\uFF08\u503C\u987B\u5728\u5141\u8BB8\u8303\u56F4\u5185\uFF09\u3002");
         this.markSearchable(info, "\u9884\u8BBE update_note_yaml \u8BF4\u660E \u4FEE\u6539 frontmatter");
       }
@@ -1292,7 +1412,6 @@ var SettingsRenderer = class {
       "search_output_notes",
       "\u641C\u7D22\u8F93\u51FA\u6587\u4EF6\u5939\uFF08\u53C2\u6570\uFF1A\u6A21\u5F0F \u5B8C\u6574/\u9609\u5272\uFF09",
       (body) => {
-        this.renderToolEnableToggle(body, preset, "search_output_notes");
         const searchSetting = new import_obsidian3.Setting(body).setName("\u641C\u7D22\u6A21\u5F0F").setDesc("\u5B8C\u6574\u7248 = AI \u6309\u4EFB\u610F\u952E\u641C\u7D22\uFF1B\u9609\u5272\u7248 = \u53EA\u80FD\u6309\u4E0B\u65B9\u9650\u5B9A\u952E\u641C\u7D22\u3002").addDropdown((drop) => {
           var _a;
           drop.addOptions({ full: "\u5B8C\u6574\u7248\uFF08\u4EFB\u610F\u952E\u641C\u7D22\uFF09", restricted: "\u9609\u5272\u7248\uFF08\u4EC5\u9650\u5B9A\u952E\uFF09" });
@@ -1307,50 +1426,73 @@ var SettingsRenderer = class {
         this.renderSearchRestrictions(restrEl, preset);
       }
     );
+    this.renderToolConfigGroup(
+      toolArea,
+      preset,
+      "modify_output_note",
+      "\u8986\u76D6\u4FEE\u6539\u8F93\u51FA\u6587\u4EF6\u5939\u7B14\u8BB0\uFF08\u53C2\u6570\uFF1Aname / sections / yaml\uFF09",
+      (body) => {
+        const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u8986\u76D6\u4FEE\u6539\u8F93\u51FA\u6587\u4EF6\u5939\u7B14\u8BB0\u300D\u3002sections \u7684\u952E\u5FC5\u987B\u662F\u539F\u6587\u4E2D\u5DF2\u5B58\u5728\u7684\u6807\u9898\u6587\u672C\uFF0C\u53EA\u80FD\u4FEE\u6539\u6807\u9898\u4E0B\u7684\u6587\u5B57\uFF08\u4E0D\u80FD\u4FEE\u6539\u6807\u9898\u6216\u65B0\u589E\u6807\u9898\uFF0C\u7981\u6B62 # \u5F00\u5934\uFF09\uFF1Byaml \u53D7\u300CAI \u521B\u5EFA\u5C5E\u6027\u89C4\u5219 / \u9650\u5236\u4EC5\u5DF2\u914D\u7F6E\u5C5E\u6027\u300D\u7EA6\u675F\u3002");
+        this.markSearchable(info, "\u9884\u8BBE modify_output_note \u8BF4\u660E \u4FEE\u6539 \u8F93\u51FA \u8986\u76D6");
+      }
+    );
+    this.renderToolConfigGroup(
+      toolArea,
+      preset,
+      "modify_output_note_versioned",
+      "\u8986\u76D6\u4FEE\u6539\u8F93\u51FA\u6587\u4EF6\u5939\u7B14\u8BB0\u5E76\u81EA\u52A8\u5F52\u6863\uFF08\u53C2\u6570\uFF1Aname / sections / yaml\uFF09",
+      (body) => {
+        const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u8986\u76D6\u4FEE\u6539\u5E76\u81EA\u52A8\u5F52\u6863\u300D\u3002\u63A5\u53E3\u540C modify_output_note\uFF08{name, sections, yaml}\uFF09\uFF0C\u6BCF\u6B21\u4FEE\u6539\u524D\u81EA\u52A8\u628A\u5F53\u524D\u7248\u672C\u8FFD\u52A0\u5230\u5F52\u6863\u6587\u4EF6\u5E76\u5199\u5165\u65B0\u7248\u672C\u53F7/\u5F52\u6863\u6807\u8BB0\uFF1B\u9700\u5728\u8F93\u51FA\u5C5E\u6027\u9875\u914D\u7F6E\u5F52\u6863\u540E\u7F00/\u7248\u672C\u5C5E\u6027/\u5F52\u6863\u5C5E\u6027\uFF08\u7F3A\u5931\u5219\u62A5\u9519\u4E0D\u5DE5\u4F5C\uFF09\u3002");
+        this.markSearchable(info, "\u9884\u8BBE modify_output_note_versioned \u8BF4\u660E \u4FEE\u6539 \u5F52\u6863");
+      }
+    );
+    this.renderToolConfigGroup(
+      toolArea,
+      preset,
+      "read_output_note",
+      "\u8BFB\u53D6\u8F93\u51FA\u6587\u4EF6\u5939\u7B14\u8BB0\u5168\u6587\uFF08\u53C2\u6570\uFF1Aname\uFF09",
+      (body) => {
+        const info = new import_obsidian3.Setting(body).setName("\u8BF4\u660E").setDesc("\u63CF\u8FF0\u300C\u8BFB\u53D6\u8F93\u51FA\u6587\u4EF6\u5939\u7B14\u8BB0\u5168\u6587\u300D\u3002\u8FD4\u56DE\u542B YAML frontmatter \u4E0E\u6B63\u6587\u7684\u5168\u6587\uFF1B\u914D\u5408 search_output_notes\uFF08\u53EA\u8FD4\u56DE\u6807\u9898\uFF09\u83B7\u53D6\u6B63\u6587\u3002");
+        this.markSearchable(info, "\u9884\u8BBE read_output_note \u8BF4\u660E \u8BFB\u53D6 \u8F93\u51FA \u5168\u6587");
+      }
+    );
   }
-  /** Render one collapsible per-tool config group (B.2): header = tool name +
-   *  one-line parameter explanation; body = the tool's config (collapsed by
-   *  default, restored across re-renders via `toolExpanded`). */
+  /** Render one collapsible per-tool config group (B.2): header = chevron + tool
+   *  name + 「启用」toggle (right, outside the collapsible body so it can be
+   *  toggled without expanding); body = the tool's config (collapsed by default,
+   *  restored across re-renders via `toolExpanded`). */
   renderToolConfigGroup(parentEl, preset, name, explanation, renderBody) {
     const key = `${preset.id}:${name}`;
     const groupEl = parentEl.createDiv({ cls: "ks-group ks-tool-config" });
     const headEl = groupEl.createDiv({ cls: "ks-tool-config-head" });
     const chev = headEl.createSpan({ cls: "ks-group-icon" });
     const expanded = this.toolExpanded.has(key);
-    (0, import_obsidian3.setIcon)(chev, expanded ? "chevron-down" : "chevron-right");
+    this.setIconSafe(chev, expanded ? "chevron-down" : "chevron-right", expanded ? "\u2304" : "\u203A");
     headEl.createSpan({ cls: "ks-preset-tool-label", text: name });
     headEl.createSpan({ cls: "ks-tool-config-desc", text: explanation });
+    this.renderToolHeaderToggle(headEl, preset, name);
     const bodyEl = groupEl.createDiv({ cls: "ks-group-body" });
     if (!expanded) groupEl.addClass("ks-collapsed");
     headEl.addEventListener("click", () => {
       const isCollapsed = groupEl.hasClass("ks-collapsed");
       groupEl.toggleClass("ks-collapsed", !isCollapsed);
-      (0, import_obsidian3.setIcon)(chev, isCollapsed ? "chevron-down" : "chevron-right");
+      this.setIconSafe(chev, isCollapsed ? "chevron-down" : "chevron-right", isCollapsed ? "\u2304" : "\u203A");
       if (isCollapsed) this.toolExpanded.add(key);
       else this.toolExpanded.delete(key);
     });
     renderBody(bodyEl);
   }
-  /** 「启用该工具」toggle at the top of each tool config group; it maps to the
-   *  preset `enabledTools` whitelist. Legacy data compat: when `enabledTools` is
-   *  non-empty it seeds the toggle state; toggling writes back `enabledTools`. */
-  renderToolEnableToggle(bodyEl, preset, name) {
-    const label = {
-      list_recent_notes: "\u542F\u7528\u8BE5\u5DE5\u5177\uFF08list_recent_notes\uFF09",
-      read_note: "\u542F\u7528\u8BE5\u5DE5\u5177\uFF08read_note\uFF09",
-      create_note: "\u5141\u8BB8 AI \u521B\u5EFA\u6587\u4EF6\uFF08create_note\uFF09",
-      update_note_yaml: "\u542F\u7528\u8BE5\u5DE5\u5177\uFF08update_note_yaml\uFF09",
-      search_output_notes: "\u542F\u7528\u8BE5\u5DE5\u5177\uFF08search_output_notes\uFF09"
-    };
-    const s = new import_obsidian3.Setting(bodyEl).setName(label[name] || name).setDesc("\u5F00\u5173\u662F\u5426\u628A\u8BE5\u5DE5\u5177\u7EB3\u5165\u672C\u9884\u8BBE\uFF1B\u5173\u95ED = \u4ECE\u672C\u9884\u8BBE\u7684\u5DE5\u5177\u767D\u540D\u5355\u79FB\u9664\u3002").addToggle(
-      (t) => t.setValue(this.isToolEnabled(preset, name)).onChange((v) => this.setToolEnabled(preset, name, v))
-    );
-    this.markSearchable(s, `\u9884\u8BBE \u5DE5\u5177 ${name} \u542F\u7528 \u7981\u7528`);
+  /** 折叠头部右侧的「启用该工具」开关（v0.8.0，折叠区外）。映射到 preset
+   *  `enabledTools` 白名单；语义与 v0.5.0 完全一致（空 = 全部启用）。 */
+  renderToolHeaderToggle(headEl, preset, name) {
+    const toggleWrap = headEl.createSpan({ cls: "ks-tool-config-toggle" });
+    toggleWrap.addEventListener("click", (ev) => ev.stopPropagation());
+    new import_obsidian3.ToggleComponent(toggleWrap).setValue(this.isToolEnabled(preset, name)).setTooltip(`\u542F\u7528\u8BE5\u5DE5\u5177\uFF08${name}\uFF09`).onChange((v) => this.setToolEnabled(preset, name, v));
   }
   togglePresetItem(itemEl, chev, id) {
     const collapsed = itemEl.hasClass("ks-preset-item-collapsed");
     itemEl.toggleClass("ks-preset-item-collapsed", !collapsed);
-    (0, import_obsidian3.setIcon)(chev, collapsed ? "chevron-down" : "chevron-right");
+    this.setIconSafe(chev, collapsed ? "chevron-down" : "chevron-right", collapsed ? "\u2304" : "\u203A");
     if (collapsed) this.presetExpanded.add(id);
     else this.presetExpanded.delete(id);
   }
@@ -1600,7 +1742,7 @@ ${body}`;
 // src/utils/tools.ts
 var DAY_MS2 = 864e5;
 var FALLBACK_FORMATS2 = ["YYYY-MM-DD", "YYYY.MM.DD", "YYYY/MM/DD"];
-function buildAnthropicTools(yamlRules, noteTemplate) {
+function buildAnthropicTools(yamlRules, noteTemplate, options) {
   const rules = Array.isArray(yamlRules) ? yamlRules : [];
   return [
     {
@@ -1621,26 +1763,33 @@ function buildAnthropicTools(yamlRules, noteTemplate) {
         required: ["name"]
       }
     },
-    buildCreateNoteTool(rules, noteTemplate)
+    buildCreateNoteTool(rules, noteTemplate, options)
   ];
 }
-function buildCreateNoteTool(yamlRules, noteTemplate) {
-  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+function buildYamlSchema(rules, restrictYaml, rejectWord) {
   const exposedRules = rules.filter((r) => r.key && r.values && r.values.length > 0);
-  const yamlDesc = "frontmatter \u952E\u503C\u5BF9\u5BF9\u8C61\uFF08YAML frontmatter \u533A\uFF09\u3002\u9879\u76EE\u5DF2\u914D\u7F6E\u4EE5\u4E0B\u5C5E\u6027\u89C4\u5219\uFF1A" + exposedRules.map((r) => `- ${r.key}\uFF1A${r.desc}\uFF08\u53EF\u9009\u503C\uFF1A${r.values.join("/")}\uFF09`).join("\n") + "\n\u89C4\u5219\u672A\u5217\u51FA\u7684\u952E\u540D\u53EF\u4EE5\u968F\u610F\u6DFB\u52A0\uFF1B\u89C4\u5219\u5185\u952E\u540D\u8BF7\u4E25\u683C\u9075\u5B88\u53EF\u9009\u503C\uFF0C\u5426\u5219\u521B\u5EFA\u4F1A\u88AB\u62D2\u7EDD\u3002";
+  const yamlDesc = "frontmatter \u952E\u503C\u5BF9\u5BF9\u8C61\uFF08YAML frontmatter \u533A\uFF09\u3002" + (restrictYaml ? "\u53EA\u80FD\u4F7F\u7528\u5DF2\u914D\u7F6E\u7684\u5C5E\u6027\uFF08\u4E0B\u9762\u7684\u5C5E\u6027\u89C4\u5219\uFF09\u2014\u2014\u89C4\u5219\u672A\u5217\u51FA\u7684\u952E\u540D\u4E0D\u5141\u8BB8\u4F7F\u7528\u3002" : "\u9879\u76EE\u5DF2\u914D\u7F6E\u4EE5\u4E0B\u5C5E\u6027\u89C4\u5219\uFF1A") + exposedRules.map((r) => `- ${r.key}\uFF1A${r.desc}\uFF08\u53EF\u9009\u503C\uFF1A${r.values.join("/")}\uFF09`).join("\n") + (restrictYaml ? exposedRules.length > 0 ? `
+\u89C4\u5219\u5185\u952E\u540D\u8BF7\u4E25\u683C\u9075\u5B88\u53EF\u9009\u503C\uFF0C\u5426\u5219\u4F1A\u88AB\u62D2\u7EDD\u3002` : "" : `
+\u89C4\u5219\u672A\u5217\u51FA\u7684\u952E\u540D\u53EF\u4EE5\u968F\u610F\u6DFB\u52A0\uFF1B\u89C4\u5219\u5185\u952E\u540D\u8BF7\u4E25\u683C\u9075\u5B88\u53EF\u9009\u503C\uFF0C\u5426\u5219${rejectWord}\u4F1A\u88AB\u62D2\u7EDD\u3002`);
   const yamlSchema = { type: "object", description: yamlDesc };
   if (exposedRules.length > 0) {
-    const props2 = {};
+    const props = {};
     for (const r of exposedRules) {
-      props2[r.key] = {
+      props[r.key] = {
         type: "string",
         description: r.desc,
         ...r.values.length ? { enum: r.values } : {}
       };
     }
-    yamlSchema.properties = props2;
+    yamlSchema.properties = props;
     yamlSchema.required = [];
   }
+  return { yamlSchema, yamlDesc };
+}
+function buildCreateNoteTool(yamlRules, noteTemplate, options) {
+  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  const restrictYaml = (options == null ? void 0 : options.createRestrictYaml) === true;
+  const { yamlSchema } = buildYamlSchema(rules, restrictYaml, "\u521B\u5EFA");
   const template = (noteTemplate || []).filter((e) => e && e.title && e.title.trim()).map((e) => ({ ...e, title: e.title.trim() }));
   const allowAi = template.filter((e) => e.allowAi);
   const hasTemplate = template.length > 0 && allowAi.length > 0;
@@ -1651,11 +1800,12 @@ function buildCreateNoteTool(yamlRules, noteTemplate) {
   const required = ["title"];
   let description = "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u521B\u5EFA\u4E00\u7BC7\u65B0\u7B14\u8BB0\u3002";
   if (hasTemplate) {
-    const lines = template.map((e) => {
+    description += "\n\u6B63\u6587\u7ED3\u6784\u7531\u7CFB\u7EDF\u6A21\u677F\u56FA\u5B9A\uFF0CAI \u53EA\u9700\u586B\u5199\u4EE5\u4E0B\u5404\u8282\u5185\u5BB9\uFF0C\u7981\u6B62\u4EE5 # \u7B26\u53F7\u521B\u5EFA\u4EFB\u4F55\u6807\u9898\u3002";
+    const lines = allowAi.map((e) => {
       const heading = "#".repeat(Math.max(1, Math.min(6, e.level))) + " " + e.title;
-      return e.allowAi ? `- ${heading}\uFF08\u53EF\u586B\u5199\uFF0CAI \u5728\u6B64\u6807\u9898\u4E0B\u5199\u5185\u5BB9\uFF09` : `- ${heading}\uFF08\u7531\u6A21\u677F\u56FA\u5B9A\uFF0C\u52FF\u5199\uFF09`;
+      return `- ${heading}\uFF08\u53EF\u586B\u5199\uFF0CAI \u5728\u6B64\u6807\u9898\u4E0B\u5199\u5185\u5BB9\uFF09`;
     });
-    description += "\n\u6B63\u6587\u6309\u4EE5\u4E0B\u6A21\u677F\u7ED3\u6784\u7EC4\u88C5\uFF0CAI \u53EA\u80FD\u5728\u6807\u6CE8\u300C\u53EF\u586B\u5199\u300D\u7684\u6807\u9898\u4E0B\u5199\u5185\u5BB9\uFF08sections \u53C2\u6570\uFF09\uFF1A\n" + lines.join("\n");
+    description += "\n\u53EF\u586B\u5199\u7684\u5404\u8282\uFF08sections \u53C2\u6570\uFF09\uFF1A\n" + lines.join("\n");
     const secProps = {};
     for (const e of allowAi) {
       secProps[e.title] = {
@@ -1773,14 +1923,111 @@ async function readNoteTool(ctx, args) {
   const raw = await ctx.app.vault.read(match);
   return { result: { title: stripExt((_h = (_g = match.basename) != null ? _g : match.name) != null ? _h : match.path), content: stripFrontmatter(raw) } };
 }
+function hasHeadingStart(text) {
+  return /^#\s/m.test(text || "");
+}
+function validateAiYaml(obj, rules, restrictYaml) {
+  if (restrictYaml) {
+    const ruleKeys = (rules || []).filter((r) => r && r.key).map((r) => r.key);
+    const allowed = new Set(ruleKeys);
+    for (const k of Object.keys(obj)) {
+      if (!allowed.has(k)) {
+        return `ERROR: \u4E0D\u5141\u8BB8\u4F7F\u7528\u672A\u914D\u7F6E\u7684\u5C5E\u6027"${k}"\uFF08\u53EA\u80FD\u4F7F\u7528\uFF1A[${ruleKeys.join(", ")}]\uFF09`;
+      }
+    }
+  }
+  return validateYamlRules(obj, rules);
+}
+function findOutputFile(ctx, folder, target) {
+  var _a, _b, _c, _d;
+  const files = (_c = (_b = (_a = ctx.app.vault).getMarkdownFiles) == null ? void 0 : _b.call(_a)) != null ? _c : [];
+  return (_d = files.find(
+    (f) => {
+      var _a2, _b2;
+      return inFolder(f.path, folder) && stripExt((_b2 = (_a2 = f.basename) != null ? _a2 : f.name) != null ? _b2 : f.path) === target;
+    }
+  )) != null ? _d : null;
+}
+function parseBodyHeadings(body) {
+  const lines = body.split("\n");
+  const headings = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(#{1,6})\s+(.*)$/);
+    if (m) headings.push({ lineIndex: i, level: m[1].length, text: (m[2] || "").trim() });
+  }
+  return headings;
+}
+function applySectionsToBody(body, sections) {
+  const keys = Object.keys(sections || {});
+  if (keys.length === 0) return { result: body };
+  const lines = body.split("\n");
+  const headings = parseBodyHeadings(body);
+  const firstByText = /* @__PURE__ */ new Map();
+  for (const h of headings) if (!firstByText.has(h.text)) firstByText.set(h.text, h.lineIndex);
+  const replacements = [];
+  for (const [key, value] of Object.entries(sections)) {
+    if (typeof value !== "string") return { error: `ERROR: \u8282"${key}"\u7684\u5185\u5BB9\u5FC5\u987B\u662F\u5B57\u7B26\u4E32` };
+    if (hasHeadingStart(value)) return { error: "ERROR: \u7981\u6B62\u5728\u6B63\u6587\u4E2D\u521B\u5EFA\u6807\u9898\uFF08# \u5F00\u5934\uFF09" };
+    const start = firstByText.get(key);
+    if (start == null) {
+      return { error: `ERROR: \u539F\u6587\u4E2D\u4E0D\u5B58\u5728\u6B64\u6807\u9898"${key}"\uFF0C\u53EA\u80FD\u4FEE\u6539\u5DF2\u5B58\u5728\u7684\u6807\u9898\u4E0B\u7684\u5185\u5BB9` };
+    }
+    const level = headings.find((h) => h.lineIndex === start).level;
+    let end = lines.length;
+    for (let j = start + 1; j < lines.length; j++) {
+      const m = lines[j].match(/^(#{1,6})\s+(.*)$/);
+      if (m && m[1].length <= level) {
+        end = j;
+        break;
+      }
+    }
+    replacements.push({ start, end, text: value, key });
+  }
+  replacements.sort((a, b) => b.start - a.start);
+  let out = lines;
+  for (const r of replacements) {
+    const before = out.slice(0, r.start + 1);
+    const after = out.slice(r.end);
+    const valueLines = r.text === "" ? [] : r.text.split("\n");
+    out = [...before, ...valueLines, ...after];
+  }
+  return { result: out.join("\n") };
+}
+function buildArchiveBlock(version, fm, body) {
+  const yamlStr = serializeYamlFromObj(fm);
+  const fmSection = yamlStr ? `---
+${yamlStr}
+---` : "---\n---";
+  return `## \u7248\u672C ${version}
+
+${fmSection}
+
+${body}`;
+}
+function latestVersionFromArchive(content) {
+  const lines = (content || "").split("\n");
+  let max = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^## 版本[ \t]+(\d+)[ \t]*$/);
+    if (!m) continue;
+    let j = i + 1;
+    while (j < lines.length && lines[j].trim() === "") j++;
+    if (j < lines.length && lines[j].trim() === "---") {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n) && n > max) max = n;
+    }
+  }
+  return max;
+}
 async function createNoteTool(ctx, args) {
   var _a, _b, _c, _d, _e;
   const settings = ctx.settings;
   const title = ((args == null ? void 0 : args.title) || "").trim();
   if (!isValidFilename(title)) return { error: "ERROR: \u975E\u6CD5\u6587\u4EF6\u540D" };
   const rules = (_a = settings.yamlRules) != null ? _a : [];
+  const restrictYaml = settings.createRestrictYaml === true;
   const obj = parseYamlObject(args == null ? void 0 : args.yaml);
-  const err = validateYamlRules(obj, rules);
+  const err = validateAiYaml(obj, rules, restrictYaml);
   if (err) return { error: err };
   const moment = (_b = ctx.moment) != null ? _b : typeof window !== "undefined" ? window.moment : null;
   const filled = applyDefaults(obj, rules, { moment, now: ctx.now });
@@ -1789,6 +2036,10 @@ async function createNoteTool(ctx, args) {
   const sections = (_d = args == null ? void 0 : args.sections) != null ? _d : {};
   let body;
   if (template.length > 0 && allowAi.length > 0) {
+    for (const e of allowAi) {
+      const text = typeof sections[e.title] === "string" ? String(sections[e.title]) : "";
+      if (hasHeadingStart(text)) return { error: "ERROR: \u7981\u6B62\u5728\u6B63\u6587\u4E2D\u521B\u5EFA\u6807\u9898\uFF08# \u5F00\u5934\uFF09" };
+    }
     const parts = [];
     for (const e of template) {
       const heading = "#".repeat(Math.max(1, Math.min(6, e.level))) + " " + e.title;
@@ -1887,7 +2138,7 @@ function buildSearchOutputNotesTool(searchMode, restrictions) {
   properties.limit = { type: "integer", description: "\u8FD4\u56DE\u6761\u6570\u4E0A\u9650\uFF0C\u9ED8\u8BA4 20\uFF0C\u6700\u5927 100\u3002" };
   return {
     name: "search_output_notes",
-    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u641C\u7D22\u7B14\u8BB0\uFF1Bfilters \u7684\u503C\u4E3A\u5305\u542B\u5339\u914D\uFF08\u5B50\u4E32\u3001\u5927\u5C0F\u5199\u4E0D\u654F\u611F\uFF09\uFF1Bquery \u4E3A\u6B63\u6587/\u6587\u4EF6\u540D\u5B50\u4E32\uFF1Blimit \u9ED8\u8BA4 20 \u6700\u5927 100\u3002",
+    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u641C\u7D22\u7B14\u8BB0\uFF0C\u53EA\u8FD4\u56DE\u5339\u914D\u7684\u6807\u9898\uFF08path + title\uFF09\uFF1B\u9700\u8981\u6B63\u6587\u5168\u6587\u8BF7\u7528 read_output_note\u3002filters \u7684\u503C\u4E3A\u5305\u542B\u5339\u914D\uFF08\u5B50\u4E32\u3001\u5927\u5C0F\u5199\u4E0D\u654F\u611F\uFF09\uFF1Bquery \u4E3A\u6B63\u6587/\u6587\u4EF6\u540D\u5B50\u4E32\uFF1Blimit \u9ED8\u8BA4 20 \u6700\u5927 100\u3002",
     input_schema: { type: "object", properties, required: [] }
   };
 }
@@ -1975,13 +2226,161 @@ async function searchOutputNotesTool(ctx, args) {
     }
     results.push({
       path: f.path,
-      title: stripExt((_h = (_g = f.basename) != null ? _g : f.name) != null ? _h : f.path),
-      frontmatter: fm,
-      summary: [...body].slice(0, 200).join("")
+      title: stripExt((_h = (_g = f.basename) != null ? _g : f.name) != null ? _h : f.path)
     });
     if (results.length >= limit) break;
   }
   return { result: results };
+}
+function buildModifyOutputNoteTool(yamlRules, options) {
+  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  const restrictYaml = (options == null ? void 0 : options.createRestrictYaml) === true;
+  const { yamlSchema } = buildYamlSchema(rules, restrictYaml, "\u4FEE\u6539");
+  return {
+    name: "modify_output_note",
+    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u8986\u76D6\u4FEE\u6539\u4E00\u7BC7\u5DF2\u6709\u7B14\u8BB0\u7684\u6B63\u6587\u4E0E frontmatter\u3002sections \u7684\u952E\u5FC5\u987B\u662F\u539F\u6587\u4E2D\u5DF2\u5B58\u5728\u7684\u6807\u9898\u6587\u672C\uFF08\u503C=\u8BE5\u6807\u9898\u4E0B\u8981\u5199\u5165\u7684\u65B0\u5185\u5BB9\uFF09\uFF1A\u53EA\u80FD\u4FEE\u6539\u6807\u9898\u4E0B\u7684\u6587\u5B57\uFF0C\u4E0D\u80FD\u4FEE\u6539\u6807\u9898\u6587\u5B57\u6216\u65B0\u589E\u6807\u9898\uFF0C\u7981\u6B62\u4EE5 # \u7B26\u53F7\u521B\u5EFA\u4EFB\u4F55\u6807\u9898\u3002frontmatter \u53EA\u80FD\u4F7F\u7528\u5DF2\u914D\u7F6E\u7684\u5C5E\u6027\uFF08\u82E5\u5F00\u542F\u9650\u5236\uFF09\u3002",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u7B14\u8BB0\u6587\u4EF6\u540D\uFF08\u53EF\u5E26\u6216\u4E0D\u5E26 .md \u540E\u7F00\uFF09" },
+        sections: {
+          type: "object",
+          description: "\u8981\u4FEE\u6539\u7684\u6B63\u6587\u5404\u8282\uFF1A\u952E=\u539F\u6587\u4E2D\u5DF2\u5B58\u5728\u7684\u6807\u9898\u6587\u672C\uFF0C\u503C=\u8BE5\u6807\u9898\u4E0B\u8981\u5199\u5165\u7684\u65B0\u5185\u5BB9\uFF1B\u952E\u5FC5\u987B\u4E0E\u539F\u6587\u6807\u9898\u5B8C\u5168\u4E00\u81F4\uFF0C\u5426\u5219\u4F1A\u88AB\u62D2\u7EDD\u3002",
+          additionalProperties: { type: "string" },
+          required: []
+        },
+        yaml: yamlSchema
+      },
+      required: ["name"]
+    }
+  };
+}
+function buildModifyOutputNoteVersionedTool(yamlRules, options) {
+  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  const restrictYaml = (options == null ? void 0 : options.createRestrictYaml) === true;
+  const { yamlSchema } = buildYamlSchema(rules, restrictYaml, "\u4FEE\u6539");
+  return {
+    name: "modify_output_note_versioned",
+    description: "\u5728\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u8986\u76D6\u4FEE\u6539\u4E00\u7BC7\u5DF2\u6709\u7B14\u8BB0\u5E76\u81EA\u52A8\u5F52\u6863\uFF08\u4E0E modify_output_note \u76F8\u540C\u7684\u53C2\u6570\uFF0C\u7248\u672C/\u5F52\u6863\u81EA\u52A8\u5904\u7406\uFF09\u3002sections \u7684\u952E\u5FC5\u987B\u662F\u539F\u6587\u4E2D\u5DF2\u5B58\u5728\u7684\u6807\u9898\u6587\u672C\uFF08\u503C=\u8BE5\u6807\u9898\u4E0B\u8981\u5199\u5165\u7684\u65B0\u5185\u5BB9\uFF09\uFF1A\u53EA\u80FD\u4FEE\u6539\u6807\u9898\u4E0B\u7684\u6587\u5B57\uFF0C\u4E0D\u80FD\u4FEE\u6539\u6807\u9898\u6587\u5B57\u6216\u65B0\u589E\u6807\u9898\uFF0C\u7981\u6B62\u4EE5 # \u7B26\u53F7\u521B\u5EFA\u4EFB\u4F55\u6807\u9898\u3002\u6BCF\u6B21\u4FEE\u6539\u524D\u628A\u5F53\u524D\u6587\u4EF6\u7248\u672C\u81EA\u52A8\u8FFD\u52A0\u5230\u8BE5\u6587\u4EF6\u7684\u5F52\u6863\u6587\u4EF6\uFF08\u539F\u6587\u540D+\u5F52\u6863\u540E\u7F00.md\uFF09\uFF0C\u5E76\u5199\u5165\u65B0\u7248\u672C\u53F7\u4E0E\u5F52\u6863\u6807\u8BB0\u3002",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u7B14\u8BB0\u6587\u4EF6\u540D\uFF08\u53EF\u5E26\u6216\u4E0D\u5E26 .md \u540E\u7F00\uFF09" },
+        sections: {
+          type: "object",
+          description: "\u8981\u4FEE\u6539\u7684\u6B63\u6587\u5404\u8282\uFF1A\u952E=\u539F\u6587\u4E2D\u5DF2\u5B58\u5728\u7684\u6807\u9898\u6587\u672C\uFF0C\u503C=\u8BE5\u6807\u9898\u4E0B\u8981\u5199\u5165\u7684\u65B0\u5185\u5BB9\uFF1B\u952E\u5FC5\u987B\u4E0E\u539F\u6587\u6807\u9898\u5B8C\u5168\u4E00\u81F4\uFF0C\u5426\u5219\u4F1A\u88AB\u62D2\u7EDD\u3002",
+          additionalProperties: { type: "string" },
+          required: []
+        },
+        yaml: yamlSchema
+      },
+      required: ["name"]
+    }
+  };
+}
+function buildReadOutputNoteTool() {
+  return {
+    name: "read_output_note",
+    description: "\u8BFB\u53D6\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u67D0\u7BC7\u7B14\u8BB0\u7684\u5168\u6587\uFF08\u542B YAML frontmatter \u4E0E\u6B63\u6587\uFF09\u3002",
+    input_schema: {
+      type: "object",
+      properties: { name: { type: "string", description: "\u8F93\u51FA\u6587\u4EF6\u5939\u5185\u7B14\u8BB0\u6587\u4EF6\u540D\uFF08\u53EF\u5E26\u6216\u4E0D\u5E26 .md \u540E\u7F00\uFF09" } },
+      required: ["name"]
+    }
+  };
+}
+async function readOutputNoteTool(ctx, args) {
+  var _a, _b;
+  const settings = ctx.settings;
+  const folder = (settings.outputFolder || "/").trim();
+  const target = stripExt(((args == null ? void 0 : args.name) || "").trim());
+  if (!target) return { error: "ERROR: \u672A\u63D0\u4F9B\u6587\u4EF6\u540D" };
+  if (!isValidFilename(target)) return { error: "ERROR: \u975E\u6CD5\u6587\u4EF6\u540D" };
+  const match = findOutputFile(ctx, folder, target);
+  if (!match) return { error: "ERROR: \u672A\u627E\u5230\u7B14\u8BB0" };
+  const raw = await ctx.app.vault.read(match);
+  return {
+    result: {
+      path: match.path,
+      title: stripExt((_b = (_a = match.basename) != null ? _a : match.name) != null ? _b : match.path),
+      content: raw
+      // 含 frontmatter 与正文的全文
+    }
+  };
+}
+async function modifyOutputNoteTool(ctx, args) {
+  var _a, _b, _c;
+  const settings = ctx.settings;
+  const folder = (settings.outputFolder || "/").trim();
+  const target = stripExt(((args == null ? void 0 : args.name) || "").trim());
+  if (!target) return { error: "ERROR: \u672A\u63D0\u4F9B\u6587\u4EF6\u540D" };
+  if (!isValidFilename(target)) return { error: "ERROR: \u975E\u6CD5\u6587\u4EF6\u540D" };
+  const match = findOutputFile(ctx, folder, target);
+  if (!match) return { error: "ERROR: \u672A\u627E\u5230\u7B14\u8BB0" };
+  const raw = await ctx.app.vault.read(match);
+  const originalFM = parseFrontmatterObj(raw);
+  const body = stripFrontmatter(raw);
+  const rules = (_a = settings.yamlRules) != null ? _a : [];
+  const restrictYaml = settings.createRestrictYaml === true;
+  const aiYaml = parseYamlObject(args == null ? void 0 : args.yaml);
+  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml);
+  if (yamlErr) return { error: yamlErr };
+  const bodyResult = applySectionsToBody(body, (_b = args == null ? void 0 : args.sections) != null ? _b : {});
+  if ("error" in bodyResult) return { error: bodyResult.error };
+  const moment = (_c = ctx.moment) != null ? _c : typeof window !== "undefined" ? window.moment : null;
+  const newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
+  const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
+  await ctx.app.vault.adapter.write(match.path, newContent);
+  return { result: { path: match.path } };
+}
+async function modifyOutputNoteVersionedTool(ctx, args) {
+  var _a, _b, _c;
+  const settings = ctx.settings;
+  const folder = (settings.outputFolder || "/").trim();
+  const target = stripExt(((args == null ? void 0 : args.name) || "").trim());
+  if (!target) return { error: "ERROR: \u672A\u63D0\u4F9B\u6587\u4EF6\u540D" };
+  if (!isValidFilename(target)) return { error: "ERROR: \u975E\u6CD5\u6587\u4EF6\u540D" };
+  const versionSuffix = (settings.modifyVersionSuffix || "").trim();
+  const versionProperty = (settings.modifyVersionProperty || "").trim();
+  const archiveProperty = (settings.modifyArchiveProperty || "").trim();
+  if (!versionSuffix || !versionProperty || !archiveProperty) {
+    return { error: "ERROR: \u5F52\u6863\u5DE5\u5177\u672A\u914D\u7F6E\uFF08\u7248\u672C\u540E\u7F00/\u7248\u672C\u5C5E\u6027/\u5F52\u6863\u5C5E\u6027\uFF09" };
+  }
+  const match = findOutputFile(ctx, folder, target);
+  if (!match) return { error: "ERROR: \u672A\u627E\u5230\u7B14\u8BB0" };
+  const raw = await ctx.app.vault.read(match);
+  const originalFM = parseFrontmatterObj(raw);
+  const body = stripFrontmatter(raw);
+  const rules = (_a = settings.yamlRules) != null ? _a : [];
+  const restrictYaml = settings.createRestrictYaml === true;
+  const aiYaml = parseYamlObject(args == null ? void 0 : args.yaml);
+  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml);
+  if (yamlErr) return { error: yamlErr };
+  const bodyResult = applySectionsToBody(body, (_b = args == null ? void 0 : args.sections) != null ? _b : {});
+  if ("error" in bodyResult) return { error: bodyResult.error };
+  const archiveName = target + versionSuffix + ".md";
+  const archivePath = joinVaultPath(folder, archiveName);
+  const archiveFile = findOutputFile(ctx, folder, target + versionSuffix);
+  let nextVersion = 1;
+  let existingArchiveRaw = "";
+  if (archiveFile) {
+    existingArchiveRaw = await ctx.app.vault.read(archiveFile);
+    nextVersion = latestVersionFromArchive(existingArchiveRaw) + 1;
+  }
+  const archiveBlock = buildArchiveBlock(nextVersion, originalFM, body);
+  if (archiveFile) {
+    const sep = existingArchiveRaw.trimEnd() ? "\n\n" : "";
+    await ctx.app.vault.adapter.write(archivePath, existingArchiveRaw + sep + archiveBlock);
+  } else {
+    await ctx.app.vault.create(archivePath, archiveBlock);
+  }
+  const moment = (_c = ctx.moment) != null ? _c : typeof window !== "undefined" ? window.moment : null;
+  const newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
+  newFM[versionProperty] = nextVersion;
+  newFM[archiveProperty] = true;
+  const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
+  await ctx.app.vault.adapter.write(match.path, newContent);
+  return { result: { path: match.path } };
 }
 
 // src/utils/presets.ts
@@ -2002,10 +2401,12 @@ function resolveToolConfig(settings) {
   const yamlRules = Array.isArray(settings.yamlRules) ? settings.yamlRules : [];
   const noteTemplate = Array.isArray(settings.noteTemplate) ? settings.noteTemplate : [];
   const updateYamlRules = Array.isArray(settings.updateYamlRules) ? settings.updateYamlRules : [];
-  const baseTools = buildAnthropicTools(yamlRules, noteTemplate);
+  const createRestrictYaml = settings.createRestrictYaml === true;
+  const baseTools = buildAnthropicTools(yamlRules, noteTemplate, { createRestrictYaml });
   let names = ["list_recent_notes", "read_note", "create_note"];
   if (settings.updateYamlToolEnabled) names.push("update_note_yaml");
   names.push("search_output_notes");
+  names.push("modify_output_note", "modify_output_note_versioned", "read_output_note");
   const enabled = preset == null ? void 0 : preset.enabledTools;
   if (Array.isArray(enabled) && enabled.length > 0) {
     names = names.filter((n) => enabled.includes(n));
@@ -2027,6 +2428,12 @@ function resolveToolConfig(settings) {
           (_e = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _e.searchRestrictions
         )
       );
+    } else if (n === "modify_output_note") {
+      tools.push(buildModifyOutputNoteTool(yamlRules, { createRestrictYaml }));
+    } else if (n === "modify_output_note_versioned") {
+      tools.push(buildModifyOutputNoteVersionedTool(yamlRules, { createRestrictYaml }));
+    } else if (n === "read_output_note") {
+      tools.push(buildReadOutputNoteTool());
     }
   }
   const searchMode = (_g = (_f = preset == null ? void 0 : preset.toolOverrides) == null ? void 0 : _f.searchMode) != null ? _g : "full";
@@ -2345,14 +2752,30 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
     this.updateSendBtn();
   }
-  /** `setIcon` 后兜底：若渲染出的 svg 无可见绘制内容（icon 名不存在/字体缺失），
-   *  退化为文本字形，确保按钮图标始终可见（dsh 风格白描图标）。 */
+  /** `setIcon` 后兜底：若渲染出的 svg 无可见绘制内容（icon 名不存在/字体缺失）
+   *  或 computed color 为 transparent（某些主题下不可见），则退化为文本字形，
+   *  确保按钮图标始终可见（dsh 风格白描图标）。 */
   setIconWithFallback(btn, name, glyph) {
     btn.empty();
     (0, import_obsidian5.setIcon)(btn, name);
     const svg = btn.querySelector("svg");
-    const hasDrawable = !!svg && !!svg.querySelector("path, rect, circle, polygon, line");
-    if (!hasDrawable) btn.setText(glyph);
+    if (!this.iconVisible(svg)) btn.setText(glyph);
+  }
+  /** 校验一个 `setIcon` 产物是否可见：有可绘制子节点（lucide 描边路径）且
+   *  computed color 非透明。供 `setIconWithFallback`/`setIconSafe` 共用。 */
+  iconVisible(svg) {
+    if (!svg) return false;
+    const hasDrawable = !!svg.querySelector("path, rect, circle, polygon, line");
+    if (!hasDrawable) return false;
+    const color = getComputedStyle(svg).color;
+    return color !== "transparent" && color !== "rgba(0, 0, 0, 0)";
+  }
+  /** 非按钮图标的可见性兜底（思考块 chevron / 工具卡 wrench 等）：同
+   *  `setIconWithFallback`，但传入 `glyph` 为空时不回退文本。 */
+  setIconSafe(container, name, glyph) {
+    (0, import_obsidian5.setIcon)(container, name);
+    const svg = container.querySelector("svg");
+    if (!this.iconVisible(svg) && glyph) container.setText(glyph);
   }
   /** Toggle the send button between arrow-up (send), disabled (empty), and square (stop). */
   updateSendBtn() {
@@ -2779,7 +3202,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     const wrap = container.createDiv({ cls: "ks-think is-collapsed" });
     const head = wrap.createDiv({ cls: "ks-think-head" });
     const chev = head.createSpan({ cls: "ks-think-icon" });
-    (0, import_obsidian5.setIcon)(chev, "chevron-right");
+    this.setIconSafe(chev, "chevron-right", "\u203A");
     head.createSpan({ cls: "ks-think-title", text: "\u601D\u8003\u4E2D" });
     const summary = head.createSpan({ cls: "ks-think-summary" });
     const body = wrap.createDiv({ cls: "ks-think-body" });
@@ -2788,7 +3211,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
       const collapsed = wrap.hasClass("is-collapsed");
       const newCollapsed = !collapsed;
       wrap.toggleClass("is-collapsed", newCollapsed);
-      (0, import_obsidian5.setIcon)(chev, newCollapsed ? "chevron-right" : "chevron-down");
+      this.setIconSafe(chev, newCollapsed ? "chevron-right" : "chevron-down", newCollapsed ? "\u203A" : "\u2304");
       this.thinkExpanded[index] = !newCollapsed;
     });
     this.thinkSubs[index] = { wrap, chev, summary, body };
@@ -2802,7 +3225,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     const override = this.thinkExpanded[index];
     const expanded = override != null ? override : streaming;
     sub.wrap.toggleClass("is-collapsed", !expanded);
-    (0, import_obsidian5.setIcon)(sub.chev, expanded ? "chevron-down" : "chevron-right");
+    this.setIconSafe(sub.chev, expanded ? "chevron-down" : "chevron-right", expanded ? "\u2304" : "\u203A");
     sub.wrap.toggleClass("ks-think-streaming", streaming);
   }
   refreshThinking(index, thinking) {
@@ -2817,7 +3240,7 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
     if ((_a = this.toolSubs[index]) == null ? void 0 : _a.card.isConnected) return;
     const card = container.createDiv({ cls: "ks-tool-card" });
     const title = card.createDiv({ cls: "ks-tool-name" });
-    (0, import_obsidian5.setIcon)(title.createSpan({ cls: "ks-tool-icon" }), "wrench");
+    this.setIconSafe(title.createSpan({ cls: "ks-tool-icon" }), "wrench", "");
     title.createSpan({ text: block.name || "tool" });
     const inputEl = card.createDiv({ cls: "ks-tool-input" });
     const resultEl = card.createDiv({ cls: "ks-tool-result" });
@@ -2988,6 +3411,18 @@ var KnowledgeChatView = class extends import_obsidian5.ItemView {
         if ("error" in r) return `ERROR: ${r.error}`;
         if (r.result.length === 0) return "\u672A\u627E\u5230\u5339\u914D\u7684\u7B14\u8BB0";
         return JSON.stringify(r.result);
+      }
+      if (name === "modify_output_note") {
+        const r = await modifyOutputNoteTool(ctx, { name: a.name, sections: a.sections, yaml: a.yaml });
+        return "error" in r ? `ERROR: ${r.error}` : `\u5DF2\u4FEE\u6539\uFF1A${r.result.path}`;
+      }
+      if (name === "modify_output_note_versioned") {
+        const r = await modifyOutputNoteVersionedTool(ctx, { name: a.name, sections: a.sections, yaml: a.yaml });
+        return "error" in r ? `ERROR: ${r.error}` : `\u5DF2\u4FEE\u6539\uFF08\u5DF2\u5F52\u6863\uFF09\uFF1A${r.result.path}`;
+      }
+      if (name === "read_output_note") {
+        const r = await readOutputNoteTool(ctx, { name: a.name });
+        return "error" in r ? `ERROR: ${r.error}` : r.result.content;
       }
       return `ERROR: \u672A\u77E5\u5DE5\u5177 ${name}`;
     } catch (e) {

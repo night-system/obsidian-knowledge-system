@@ -141,6 +141,17 @@ export interface KnowledgeSystemSettings {
   updateYamlRules: UpdateYamlRule[];
   /** create_note body template headings (v0.7.0); empty = free-text content. */
   noteTemplate: NoteTemplateEntry[];
+  /**
+   * create_note 限制：开启后（默认 false 兼容现状）AI 的 `yaml` 键必须在
+   * `yamlRules` 键集内，规则外键 → `{ error }` 不落盘。desc 加「只能使用已配置的属性」提示。
+   */
+  createRestrictYaml: boolean;
+  /** modify_output_note_versioned 归档文件后缀（如「-归档」）；空 = 未配置不工作。 */
+  modifyVersionSuffix: string;
+  /** modify_output_note_versioned 版本号 yaml 属性名（数字递增）；空 = 未配置不工作。 */
+  modifyVersionProperty: string;
+  /** modify_output_note_versioned 归档 bool 属性名（写 true）；空 = 未配置不工作。 */
+  modifyArchiveProperty: string;
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -169,4 +180,8 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   updateYamlToolEnabled: false,
   updateYamlRules: [],
   noteTemplate: [],
+  createRestrictYaml: false,
+  modifyVersionSuffix: '',
+  modifyVersionProperty: '',
+  modifyArchiveProperty: '',
 };

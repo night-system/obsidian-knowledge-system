@@ -426,12 +426,15 @@
 /* chevron + 标题「思考中」+ 单行摘要（省略号）。 */
 .ks-think-icon {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   color: var(--text-muted, var(--text-normal, #888));
 }
 
+/* lucide svg 自带 stroke=currentColor，这里只需显式 color（父元素）即可保证
+   可见；fill:none 为 lucide 默认（无害保留），不额外写 stroke 覆盖。 */
 .ks-think-icon svg {
-  stroke: currentColor;
   fill: none;
 }
 
@@ -536,11 +539,12 @@
 
 .ks-tool-icon {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-muted, var(--text-normal, #888));
 }
 
 .ks-tool-icon svg {
-  stroke: currentColor;
   fill: none;
 }
 
@@ -920,6 +924,22 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* v0.8.0：折叠头部右侧的「启用该工具」开关（折叠区外，不展开也能开关）。
+   用 inline-flex 居中，避免 Obsidian 默认 toggle 基线错位；margin-left:auto
+   确保钉在折叠头部最右侧（与左侧 chevron 拉开距离）。 */
+.ks-tool-config-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.ks-tool-config-toggle .checkbox-container {
+  cursor: pointer;
 }
 
 /* update_note_yaml rule row (B.3): multi-line desc textarea. */

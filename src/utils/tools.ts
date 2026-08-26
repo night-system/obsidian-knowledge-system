@@ -32,6 +32,14 @@ export interface ToolCtx {
     updateYamlRules?: UpdateYamlRule[];
     /** create_note body template headings (v0.7.0). */
     noteTemplate?: NoteTemplateEntry[];
+    /** create_note/modify_output_note*: 限制 yaml 键必须在 yamlRules 内（v0.8.0）。 */
+    createRestrictYaml?: boolean;
+    /** modify_output_note_versioned 归档文件后缀（v0.8.0）。 */
+    modifyVersionSuffix?: string;
+    /** modify_output_note_versioned 版本号属性名（v0.8.0）。 */
+    modifyVersionProperty?: string;
+    /** modify_output_note_versioned 归档 bool 属性名（v0.8.0）。 */
+    modifyArchiveProperty?: string;
   };
   now?: number;
   moment?: any;
@@ -75,7 +83,11 @@ const FALLBACK_FORMATS = ['YYYY-MM-DD', 'YYYY.MM.DD', 'YYYY/MM/DD'];
  * structure (see `buildCreateNoteTool`). `buildAnthropicTools([])` stays
  * contract-equal to `ANTHROPIC_TOOLS`.
  */
-export function buildAnthropicTools(yamlRules?: YamlRule[], noteTemplate?: NoteTemplateEntry[]): AnthropicTool[] {
+export function buildAnthropicTools(
+  yamlRules?: YamlRule[],
+  noteTemplate?: NoteTemplateEntry[],
+  options?: { createRestrictYaml?: boolean }
+): AnthropicTool[] {
   const rules = Array.isArray(yamlRules) ? yamlRules : [];
   return [
     {
@@ -96,7 +108,7 @@ export function buildAnthropicTools(yamlRules?: YamlRule[], noteTemplate?: NoteT
         required: ['name'],
       },
     },
-    buildCreateNoteTool(rules, noteTemplate),
+    buildCreateNoteTool(rules, noteTemplate, options),
   ];
 }
 
@@ -109,18 +121,22 @@ export function buildAnthropicTools(yamlRules?: YamlRule[], noteTemplate?: NoteT
  * description but 「由模板固定，勿写」. With no template the free `content`
  * (v0.5.0) is preserved.
  */
-export function buildCreateNoteTool(
-  yamlRules?: YamlRule[],
-  noteTemplate?: NoteTemplateEntry[]
-): AnthropicTool {
-  const rules = Array.isArray(yamlRules) ? yamlRules : [];
-  // 只暴露「有可选值约束」的键；否则该键对 AI 隐藏（未配置约束规则，AI 不该知道）。
+/**
+ * 构建 `create_note` / `modify_output_note*` 共用的 yaml 属性 schema 与描述：
+ * 只暴露「有可选值约束」的键（否则该键对 AI 隐藏）；`restrictYaml` 开启时描述加
+ * 「只能使用已配置的属性」提示。`rejectWord` 控制越界时的措辞（创建/修改）。
+ */
+function buildYamlSchema(rules: YamlRule[], restrictYaml: boolean, rejectWord: string): { yamlSchema: any; yamlDesc: string } {
   const exposedRules = rules.filter((r) => r.key && r.values && r.values.length > 0);
   const yamlDesc =
-    'frontmatter 键值对对象（YAML frontmatter 区）。项目已配置以下属性规则：' +
+    'frontmatter 键值对对象（YAML frontmatter 区）。' +
+    (restrictYaml
+      ? '只能使用已配置的属性（下面的属性规则）——规则未列出的键名不允许使用。'
+      : '项目已配置以下属性规则：') +
     exposedRules.map((r) => `- ${r.key}：${r.desc}（可选值：${r.values.join('/')}）`).join('\n') +
-    '\n规则未列出的键名可以随意添加；规则内键名请严格遵守可选值，否则创建会被拒绝。';
-
+    (restrictYaml
+      ? (exposedRules.length > 0 ? `\n规则内键名请严格遵守可选值，否则会被拒绝。` : '')
+      : `\n规则未列出的键名可以随意添加；规则内键名请严格遵守可选值，否则${rejectWord}会被拒绝。`);
   const yamlSchema: any = { type: 'object', description: yamlDesc };
   if (exposedRules.length > 0) {
     const props: Record<string, any> = {};
@@ -134,6 +150,17 @@ export function buildCreateNoteTool(
     yamlSchema.properties = props;
     yamlSchema.required = []; // 规则键不强制 AI 填写
   }
+  return { yamlSchema, yamlDesc };
+}
+
+export function buildCreateNoteTool(
+  yamlRules?: YamlRule[],
+  noteTemplate?: NoteTemplateEntry[],
+  options?: { createRestrictYaml?: boolean }
+): AnthropicTool {
+  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  const restrictYaml = options?.createRestrictYaml === true;
+  const { yamlSchema } = buildYamlSchema(rules, restrictYaml, '创建');
 
   const template = (noteTemplate || [])
     .filter((e) => e && e.title && e.title.trim())
@@ -149,12 +176,16 @@ export function buildCreateNoteTool(
 
   let description = '在输出文件夹创建一篇新笔记。';
   if (hasTemplate) {
-    const lines = template.map((e) => {
+    // v0.8.0：非 allowAi 标题完全不对 AI 暴露（不使用「勿写」标记列出），
+    // 顶部说明正文结构由系统模板固定，并明确禁止 AI 创建任何 `#` 标题。
+    description +=
+      '\n正文结构由系统模板固定，AI 只需填写以下各节内容，禁止以 # 符号创建任何标题。';
+    const lines = allowAi.map((e) => {
       const heading = '#'.repeat(Math.max(1, Math.min(6, e.level))) + ' ' + e.title;
-      return e.allowAi ? `- ${heading}（可填写，AI 在此标题下写内容）` : `- ${heading}（由模板固定，勿写）`;
+      return `- ${heading}（可填写，AI 在此标题下写内容）`;
     });
     description +=
-      '\n正文按以下模板结构组装，AI 只能在标注「可填写」的标题下写内容（sections 参数）：\n' +
+      '\n可填写的各节（sections 参数）：\n' +
       lines.join('\n');
 
     const secProps: Record<string, any> = {};
@@ -311,6 +342,126 @@ export async function readNoteTool(
   return { result: { title: stripExt(match.basename ?? match.name ?? match.path), content: stripFrontmatter(raw) } };
 }
 
+// ---------------------------------------------------------------------------
+// shared helpers (v0.8.0): yaml 白名单约束、`#` 标题检测、正文标题结构修改
+// ---------------------------------------------------------------------------
+
+/** 某段文本是否有以 `# ` 起始的 markdown 标题行（`#` + 空格 = 任何级别标题）。 */
+function hasHeadingStart(text: string): boolean {
+  return /^#\s/m.test(text || '');
+}
+
+/**
+ * 校验 AI 提供的 yaml 键值对：`restrictYaml` 开启时，键必须在 `yamlRules` 键集内
+ * （规则外键 → 错误，不落盘）；随后再按 `validateYamlRules` 校验每个规则键的值
+ * （可选值空 = 任意）。返回 `null` 表示通过，否则返回给 AI 看的 `ERROR:` 中文消息。
+ */
+function validateAiYaml(obj: Record<string, unknown>, rules: YamlRule[], restrictYaml: boolean): string | null {
+  if (restrictYaml) {
+    const ruleKeys = (rules || []).filter((r) => r && r.key).map((r) => r.key);
+    const allowed = new Set(ruleKeys);
+    for (const k of Object.keys(obj)) {
+      if (!allowed.has(k)) {
+        return `ERROR: 不允许使用未配置的属性"${k}"（只能使用：[${ruleKeys.join(', ')}]）`;
+      }
+    }
+  }
+  return validateYamlRules(obj, rules);
+}
+
+/** 在输出文件夹内按「去 .md 后缀的文件名」找文件；找不到返回 null。 */
+function findOutputFile(ctx: ToolCtx, folder: string, target: string): VaultFile | null {
+  const files = (ctx.app.vault.getMarkdownFiles?.() ?? []) as VaultFile[];
+  return files.find(
+    (f) => inFolder(f.path, folder) && stripExt(f.basename ?? f.name ?? f.path) === target
+  ) ?? null;
+}
+
+/** 解析正文里所有 markdown 标题（`^#{1,6} `），带行号/级别/文本。 */
+function parseBodyHeadings(body: string): { lineIndex: number; level: number; text: string }[] {
+  const lines = body.split('\n');
+  const headings: { lineIndex: number; level: number; text: string }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(#{1,6})\s+(.*)$/);
+    if (m) headings.push({ lineIndex: i, level: m[1].length, text: (m[2] || '').trim() });
+  }
+  return headings;
+}
+
+/**
+ * 对正文应用 `sections`（{ 标题文本: 新内容 }）：每个键必须命中原文**已存在**的标题，
+ * 用新内容替换该标题下的文字（直到下一个同级别或更高级标题），标题行与后续标题行保持不动。
+ * 键不存在 → `{ error }`；任一节文本含 `# ` 开头行 → `{ error }`；全部校验通过才返回新正文。
+ */
+function applySectionsToBody(
+  body: string,
+  sections: Record<string, string>
+): { result: string } | { error: string } {
+  const keys = Object.keys(sections || {});
+  if (keys.length === 0) return { result: body };
+
+  const lines = body.split('\n');
+  const headings = parseBodyHeadings(body);
+  const firstByText = new Map<string, number>();
+  for (const h of headings) if (!firstByText.has(h.text)) firstByText.set(h.text, h.lineIndex);
+
+  const replacements: { start: number; end: number; text: string; key: string }[] = [];
+  for (const [key, value] of Object.entries(sections)) {
+    if (typeof value !== 'string') return { error: `ERROR: 节"${key}"的内容必须是字符串` };
+    if (hasHeadingStart(value)) return { error: 'ERROR: 禁止在正文中创建标题（# 开头）' };
+    const start = firstByText.get(key);
+    if (start == null) {
+      return { error: `ERROR: 原文中不存在此标题"${key}"，只能修改已存在的标题下的内容` };
+    }
+    const level = headings.find((h) => h.lineIndex === start)!.level;
+    let end = lines.length;
+    for (let j = start + 1; j < lines.length; j++) {
+      const m = lines[j].match(/^(#{1,6})\s+(.*)$/);
+      if (m && m[1].length <= level) { end = j; break; }
+    }
+    replacements.push({ start, end, text: value, key });
+  }
+
+  // 从下往上替换，保证行号在分批重写时保持有效。
+  replacements.sort((a, b) => b.start - a.start);
+  let out = lines;
+  for (const r of replacements) {
+    const before = out.slice(0, r.start + 1); // 保留标题行
+    const after = out.slice(r.end);           // 保留下一个标题开始处
+    const valueLines = r.text === '' ? [] : r.text.split('\n');
+    out = [...before, ...valueLines, ...after];
+  }
+  return { result: out.join('\n') };
+}
+
+/** 归档文件里一个版本块：`## 版本 <N>` 标题行 + frontmatter(yaml) + 正文。 */
+function buildArchiveBlock(version: number, fm: Record<string, unknown>, body: string): string {
+  const yamlStr = serializeYamlFromObj(fm);
+  const fmSection = yamlStr ? `---\n${yamlStr}\n---` : '---\n---';
+  return `## 版本 ${version}\n\n${fmSection}\n\n${body}`;
+}
+
+/**
+ * 从归档文件内容解析「最新版本号」：统计所有 `## 版本 <N>`（后面紧跟 `---` frontmatter）
+ * 的块，取最大 N；无有效版块 → 0。正文里若恰好出现形如 `## 版本 N` 的行，因其后非
+ * `---` frontmatter 而不会误计。
+ */
+function latestVersionFromArchive(content: string): number {
+  const lines = (content || '').split('\n');
+  let max = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^## 版本[ \t]+(\d+)[ \t]*$/);
+    if (!m) continue;
+    let j = i + 1;
+    while (j < lines.length && lines[j].trim() === '') j++;
+    if (j < lines.length && lines[j].trim() === '---') {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n) && n > max) max = n;
+    }
+  }
+  return max;
+}
+
 export async function createNoteTool(
   ctx: ToolCtx,
   args: { title?: string; yaml?: unknown; content?: string; sections?: Record<string, string> }
@@ -320,8 +471,9 @@ export async function createNoteTool(
   if (!isValidFilename(title)) return { error: 'ERROR: 非法文件名' };
 
   const rules = settings.yamlRules ?? [];
+  const restrictYaml = settings.createRestrictYaml === true;
   const obj = parseYamlObject(args?.yaml);
-  const err = validateYamlRules(obj, rules);
+  const err = validateAiYaml(obj, rules, restrictYaml);
   if (err) return { error: err }; // 校验失败：不落盘，错误回给 AI
 
   const moment = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
@@ -337,6 +489,11 @@ export async function createNoteTool(
   const sections = args?.sections ?? {};
   let body: string;
   if (template.length > 0 && allowAi.length > 0) {
+    // v0.8.0：检测 AI 各节文本是否以 `# ` 开头（创建标题），有 → 拒绝不落盘。
+    for (const e of allowAi) {
+      const text = typeof sections[e.title] === 'string' ? String(sections[e.title]) : '';
+      if (hasHeadingStart(text)) return { error: 'ERROR: 禁止在正文中创建标题（# 开头）' };
+    }
     const parts: string[] = [];
     for (const e of template) {
       const heading = '#'.repeat(Math.max(1, Math.min(6, e.level))) + ' ' + e.title;
@@ -460,7 +617,8 @@ export function buildSearchOutputNotesTool(
   return {
     name: 'search_output_notes',
     description:
-      '在输出文件夹内搜索笔记；filters 的值为包含匹配（子串、大小写不敏感）；query 为正文/文件名子串；limit 默认 20 最大 100。',
+      '在输出文件夹内搜索笔记，只返回匹配的标题（path + title）；需要正文全文请用 read_output_note。' +
+      'filters 的值为包含匹配（子串、大小写不敏感）；query 为正文/文件名子串；limit 默认 20 最大 100。',
     input_schema: { type: 'object', properties, required: [] },
   };
 }
@@ -517,10 +675,7 @@ export async function updateNoteYamlTool(
 export async function searchOutputNotesTool(
   ctx: ToolCtx,
   args: { filters?: { key: string; value: string }[]; query?: string; limit?: number }
-): Promise<
-  | { result: { path: string; title: string; frontmatter?: Record<string, unknown>; summary?: string }[] }
-  | { error: string }
-> {
+): Promise<{ result: { path: string; title: string }[] } | { error: string }> {
   const settings = ctx.settings;
   const folder = (settings.outputFolder || '/').trim();
   const filters = Array.isArray(args?.filters) ? (args!.filters as { key: string; value: string }[]) : [];
@@ -542,7 +697,7 @@ export async function searchOutputNotesTool(
 
   const files = (ctx.app.vault.getMarkdownFiles?.() ?? []) as VaultFile[];
   const q = query.toLowerCase();
-  const results: { path: string; title: string; frontmatter: Record<string, unknown>; summary: string }[] = [];
+  const results: { path: string; title: string }[] = [];
   for (const f of files) {
     if (!inFolder(f.path, folder)) continue;
     const raw = await ctx.app.vault.read(f);
@@ -563,13 +718,225 @@ export async function searchOutputNotesTool(
       const bodyHit = body.toLowerCase().includes(q);
       if (!nameHit && !bodyHit) continue;
     }
+    // v0.8.0：只返回标题，不再贴出 frontmatter/正文全文（需要全文用 read_output_note）。
     results.push({
       path: f.path,
       title: stripExt(f.basename ?? f.name ?? f.path),
-      frontmatter: fm,
-      summary: [...body].slice(0, 200).join(''),
     });
     if (results.length >= limit) break;
   }
   return { result: results };
+}
+
+/**
+ * Anthropic schema for `modify_output_note` (v0.8.0): 覆盖修改输出文件夹内已有
+ * 笔记。`sections` 的键必须是原文中已存在的标题文本（动态，用 additionalProperties），
+ * 值 = 该标题下要写入的新内容；yaml 受 yamlRules/createRestrictYaml 约束（同 create_note）。
+ */
+export function buildModifyOutputNoteTool(
+  yamlRules?: YamlRule[],
+  options?: { createRestrictYaml?: boolean }
+): AnthropicTool {
+  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  const restrictYaml = options?.createRestrictYaml === true;
+  const { yamlSchema } = buildYamlSchema(rules, restrictYaml, '修改');
+  return {
+    name: 'modify_output_note',
+    description:
+      '在输出文件夹内覆盖修改一篇已有笔记的正文与 frontmatter。' +
+      'sections 的键必须是原文中已存在的标题文本（值=该标题下要写入的新内容）：' +
+      '只能修改标题下的文字，不能修改标题文字或新增标题，禁止以 # 符号创建任何标题。' +
+      'frontmatter 只能使用已配置的属性（若开启限制）。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '输出文件夹内笔记文件名（可带或不带 .md 后缀）' },
+        sections: {
+          type: 'object',
+          description: '要修改的正文各节：键=原文中已存在的标题文本，值=该标题下要写入的新内容；键必须与原文标题完全一致，否则会被拒绝。',
+          additionalProperties: { type: 'string' },
+          required: [],
+        },
+        yaml: yamlSchema,
+      },
+      required: ['name'],
+    },
+  };
+}
+
+/**
+ * Anthropic schema for `modify_output_note_versioned` (v0.8.0): 接口与
+ * `modify_output_note` 完全一样（{name, sections, yaml}），版本计算/归档全部自动；
+ * 需用户先配置归档后缀/版本属性/归档属性，缺失则工具直接报错不工作。
+ */
+export function buildModifyOutputNoteVersionedTool(
+  yamlRules?: YamlRule[],
+  options?: { createRestrictYaml?: boolean }
+): AnthropicTool {
+  const rules = Array.isArray(yamlRules) ? yamlRules : [];
+  const restrictYaml = options?.createRestrictYaml === true;
+  const { yamlSchema } = buildYamlSchema(rules, restrictYaml, '修改');
+  return {
+    name: 'modify_output_note_versioned',
+    description:
+      '在输出文件夹内覆盖修改一篇已有笔记并自动归档（与 modify_output_note 相同的参数，版本/归档自动处理）。' +
+      'sections 的键必须是原文中已存在的标题文本（值=该标题下要写入的新内容）：' +
+      '只能修改标题下的文字，不能修改标题文字或新增标题，禁止以 # 符号创建任何标题。' +
+      '每次修改前把当前文件版本自动追加到该文件的归档文件（原文名+归档后缀.md），并写入新版本号与归档标记。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '输出文件夹内笔记文件名（可带或不带 .md 后缀）' },
+        sections: {
+          type: 'object',
+          description: '要修改的正文各节：键=原文中已存在的标题文本，值=该标题下要写入的新内容；键必须与原文标题完全一致，否则会被拒绝。',
+          additionalProperties: { type: 'string' },
+          required: [],
+        },
+        yaml: yamlSchema,
+      },
+      required: ['name'],
+    },
+  };
+}
+
+/**
+ * Anthropic schema for `read_output_note` (v0.8.0): 读取输出文件夹内笔记全文
+ * （含 YAML frontmatter 与正文），文件名匹配/防穿越与 readNoteTool 相同但作用于输出文件夹。
+ */
+export function buildReadOutputNoteTool(): AnthropicTool {
+  return {
+    name: 'read_output_note',
+    description: '读取输出文件夹内某篇笔记的全文（含 YAML frontmatter 与正文）。',
+    input_schema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: '输出文件夹内笔记文件名（可带或不带 .md 后缀）' } },
+      required: ['name'],
+    },
+  };
+}
+
+export async function readOutputNoteTool(
+  ctx: ToolCtx,
+  args: { name?: string }
+): Promise<{ result: { path: string; title: string; content: string } } | { error: string }> {
+  const settings = ctx.settings;
+  const folder = (settings.outputFolder || '/').trim();
+  const target = stripExt((args?.name || '').trim());
+  if (!target) return { error: 'ERROR: 未提供文件名' };
+  if (!isValidFilename(target)) return { error: 'ERROR: 非法文件名' };
+
+  const match = findOutputFile(ctx, folder, target);
+  if (!match) return { error: 'ERROR: 未找到笔记' };
+
+  const raw = await ctx.app.vault.read(match);
+  return {
+    result: {
+      path: match.path,
+      title: stripExt(match.basename ?? match.name ?? match.path),
+      content: raw, // 含 frontmatter 与正文的全文
+    },
+  };
+}
+
+export async function modifyOutputNoteTool(
+  ctx: ToolCtx,
+  args: { name?: string; sections?: Record<string, string>; yaml?: unknown }
+): Promise<{ result: { path: string } } | { error: string }> {
+  const settings = ctx.settings;
+  const folder = (settings.outputFolder || '/').trim();
+  const target = stripExt((args?.name || '').trim());
+  if (!target) return { error: 'ERROR: 未提供文件名' };
+  if (!isValidFilename(target)) return { error: 'ERROR: 非法文件名' };
+
+  const match = findOutputFile(ctx, folder, target);
+  if (!match) return { error: 'ERROR: 未找到笔记' };
+
+  const raw = await ctx.app.vault.read(match);
+  const originalFM = parseFrontmatterObj(raw);
+  const body = stripFrontmatter(raw);
+
+  // yaml 白名单/规则校验（同 create_note）。
+  const rules = settings.yamlRules ?? [];
+  const restrictYaml = settings.createRestrictYaml === true;
+  const aiYaml = parseYamlObject(args?.yaml);
+  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml);
+  if (yamlErr) return { error: yamlErr };
+
+  // sections 校验（标题必须已存在、禁 # 标题），全部通过才写盘。
+  const bodyResult = applySectionsToBody(body, (args?.sections ?? {}) as Record<string, string>);
+  if ('error' in bodyResult) return { error: bodyResult.error };
+
+  // 写回：保留原 frontmatter + AI 改的键 + 自动补默认 yaml。
+  const moment = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
+  const newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
+  const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
+
+  await ctx.app.vault.adapter.write(match.path, newContent);
+  return { result: { path: match.path } };
+}
+
+export async function modifyOutputNoteVersionedTool(
+  ctx: ToolCtx,
+  args: { name?: string; sections?: Record<string, string>; yaml?: unknown }
+): Promise<{ result: { path: string } } | { error: string }> {
+  const settings = ctx.settings;
+  const folder = (settings.outputFolder || '/').trim();
+  const target = stripExt((args?.name || '').trim());
+  if (!target) return { error: 'ERROR: 未提供文件名' };
+  if (!isValidFilename(target)) return { error: 'ERROR: 非法文件名' };
+
+  // 必填归档配置缺失 → 不进行任何写操作。
+  const versionSuffix = (settings.modifyVersionSuffix || '').trim();
+  const versionProperty = (settings.modifyVersionProperty || '').trim();
+  const archiveProperty = (settings.modifyArchiveProperty || '').trim();
+  if (!versionSuffix || !versionProperty || !archiveProperty) {
+    return { error: 'ERROR: 归档工具未配置（版本后缀/版本属性/归档属性）' };
+  }
+
+  const match = findOutputFile(ctx, folder, target);
+  if (!match) return { error: 'ERROR: 未找到笔记' };
+
+  const raw = await ctx.app.vault.read(match);
+  const originalFM = parseFrontmatterObj(raw);
+  const body = stripFrontmatter(raw);
+
+  // yaml + sections 校验（同 modify_output_note）。
+  const rules = settings.yamlRules ?? [];
+  const restrictYaml = settings.createRestrictYaml === true;
+  const aiYaml = parseYamlObject(args?.yaml);
+  const yamlErr = validateAiYaml(aiYaml, rules, restrictYaml);
+  if (yamlErr) return { error: yamlErr };
+  const bodyResult = applySectionsToBody(body, (args?.sections ?? {}) as Record<string, string>);
+  if ('error' in bodyResult) return { error: bodyResult.error };
+
+  // 计算下一个版本号：归档文件最新版本 + 1（无归档 → 1）。
+  const archiveName = target + versionSuffix + '.md';
+  const archivePath = joinVaultPath(folder, archiveName);
+  const archiveFile = findOutputFile(ctx, folder, target + versionSuffix);
+  let nextVersion = 1;
+  let existingArchiveRaw = '';
+  if (archiveFile) {
+    existingArchiveRaw = await ctx.app.vault.read(archiveFile);
+    nextVersion = latestVersionFromArchive(existingArchiveRaw) + 1;
+  }
+
+  // 归档：把当前（修改前）原文 yaml 区全部属性 + 全部正文打包为一个版本块追加进归档文件。
+  const archiveBlock = buildArchiveBlock(nextVersion, originalFM, body);
+  if (archiveFile) {
+    const sep = existingArchiveRaw.trimEnd() ? '\n\n' : '';
+    await ctx.app.vault.adapter.write(archivePath, existingArchiveRaw + sep + archiveBlock);
+  } else {
+    await ctx.app.vault.create(archivePath, archiveBlock);
+  }
+
+  // 写回原文件：保留原 yaml + AI 改的键 + 自动补默认 + versionProperty=N + archiveProperty=true。
+  const moment = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
+  const newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
+  newFM[versionProperty] = nextVersion;
+  newFM[archiveProperty] = true;
+  const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
+
+  await ctx.app.vault.adapter.write(match.path, newContent);
+  return { result: { path: match.path } };
 }

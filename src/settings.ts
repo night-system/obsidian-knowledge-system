@@ -141,8 +141,9 @@ export interface ToolPreset {
 /**
  * v0.9.3：用户自定义面板（Bases 自定义视图，泛化自 v0.9.2 的整理面板）。
  * - 每个面板扫描一个文件夹（'source'/'output' 映射全局设置 sourceFolder/outputFolder，
- *   其他值 = vault 内自定义路径），列出 bool 属性缺失或 String(值).toLowerCase()
- *   !== 'true' 的文件；afterDate 之后（含当天）修改/创建的文件才显示（留空 = 不限）。
+ *   其他值 = vault 内自定义路径），列出 bool 属性**存在且值（忽略大小写）不是 'true'**
+ *   的文件（v0.9.9：属性缺失/null 的文件不显示）；afterDate 之后（含当天）修改/创建
+ *   的文件才显示（留空 = 不限）。
  * - basePath = .base 文件路径（默认 `${name}.base`）；chatPresetId = 跳聊天预设
  *   （空 = 默认全部工具）；chatPrompt = prompt 模板（{{filename}} → basename 不含路径/.md）。
  */
@@ -155,7 +156,7 @@ export interface PanelConfig {
   enabled: boolean;
   /** 扫描文件夹：'source' | 'output' 映射全局设置，其他值 = 自定义路径。 */
   folder: 'source' | 'output' | string;
-  /** bool 属性名（缺失或值（忽略大小写）非 'true' → 显示）。 */
+  /** bool 属性名（v0.9.9：属性必须存在且值（忽略大小写）非 'true' → 显示；缺失不显示）。 */
   attr: string;
   /** 最早日期 YYYY-MM-DD；留空 = 不限（parseAfterDate 语义）。 */
   afterDate?: string;

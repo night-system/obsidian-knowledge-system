@@ -65,13 +65,13 @@ class ConfirmDeleteModal extends Modal {
  * Bases 查询把该文件夹所有 md 文件（含 frontmatter）交给视图（this.data.data:
  * BasesEntry[]）；视图在 onDataUpdated 里做两层过滤：
  * - 日期：file.stat.mtime（回退 ctime）>= afterDate 当天 00:00（解析失败/留空 = 不限）；
- * - bool 属性：frontmatter[panel.attr] 缺失、null、空、或 String(值).toLowerCase()
- *   !== 'true' → 显示；否则隐藏。
+ * - bool 属性（v0.9.9）：frontmatter[panel.attr] **必须存在**（缺失/null 不显示）且
+ *   String(值).toLowerCase() !== 'true' → 显示；否则隐藏。
  * 每条提供「打开」（点击文件名）、「bool 开关」（v0.9.4：把 frontmatter[panel.attr]
- * 设为 true → 条目消失 / 关闭则删除该属性）和「聊天」（message-square 图标 →
- * openChatWith：应用面板自己的预设 + 预填 panel.chatPrompt 模板渲染结果）；
- * v0.9.4 还提供「垃圾桶」（trash-2，panel.showDelete !== false 时显示）——
- * 二次确认后把文件移到系统回收站。
+ * 设为 true → 条目消失 / v0.9.9：关闭则写 false → 条目回到面板）和「聊天」
+ * （message-square 图标 → openChatWith：应用面板自己的预设 + 预填 panel.chatPrompt
+ * 模板渲染结果）；v0.9.4 还提供「垃圾桶」（trash-2，panel.showDelete !== false 时
+ * 显示）——二次确认后把文件移到系统回收站。
  */
 export const PANEL_VIEW_TYPE = 'ks-panel';
 
@@ -147,9 +147,11 @@ export function collectPanelMatches(
     if (attr) {
       const fm = app.metadataCache.getFileCache(file)?.frontmatter;
       const raw = fm?.[attr];
-      // bool 属性缺失、null、空、或值（字符串化、忽略大小写）非 'true' → 匹配。
-      const isDone = raw !== undefined && raw !== null && raw !== '' && String(raw).toLowerCase() === 'true';
-      if (isDone) return false;
+      // v0.9.9：属性**必须存在**（fm[attr] !== undefined && !== null）且值（字符串化、
+      // 忽略大小写）不是 'true' → 匹配；属性缺失/null 的文件不再进入面板。
+      const exists = raw !== undefined && raw !== null;
+      if (!exists) return false;
+      if (String(raw).toLowerCase() === 'true') return false;
     }
     return true;
   });
@@ -230,9 +232,9 @@ export async function regeneratePanelBaseFile(plugin: KnowledgeSystemPlugin, pan
 }
 
 /**
- * 面板视图：列出扫描文件夹中、afterDate 之后修改/创建、且 bool 属性缺失/非 true
- * 的文件；每条可「打开」或「聊天」。所有面板共用此视图类，用 config.name 匹配
- * settings.panels 里的配置。
+ * 面板视图：列出扫描文件夹中、afterDate 之后修改/创建、且 bool 属性**存在而
+ * 非 true**（v0.9.9：属性缺失的文件不显示）的文件；每条可「打开」或「聊天」。
+ * 所有面板共用此视图类，用 config.name 匹配 settings.panels 里的配置。
  * 不 extends BasesView 抽象类（Bases 在工厂返回后注入 app/config/data），
  * 实现相同形状即可，工厂里 cast（与 ReviewBasesView/TidyBasesView 同款做法）。
  */
@@ -323,7 +325,8 @@ export class PanelBasesView extends Component {
         });
       }
       // bool 开关：状态 = frontmatter[panel.attr] === true（面板判定的 bool 语义）。
-      // 开 = 写入布尔 true（条目随即移出面板）；关 = 删除该属性（回到「未处理」）。
+      // 开 = 写入布尔 true（条目随即移出面板）；关 = 写 false（v0.9.9：属性必须存在
+      // 才显示，写 false 让条目回到面板；delete 会让属性缺失 → 条目消失，语义错误）。
       // 用 fileManager.processFrontMatter 写盘（触发 metadataCache → Bases 重渲染），
       // 再直接 this.render() 兜底刷新开关状态。
       const toggle = new ToggleComponent(ops)
@@ -334,7 +337,7 @@ export class PanelBasesView extends Component {
           try {
             await this.app.fileManager.processFrontMatter(file, (f) => {
               if (on) f[attr] = true;
-              else delete f[attr];
+              else f[attr] = false;
             });
             this.render();
           } catch (e) {

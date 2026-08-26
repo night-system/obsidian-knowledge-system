@@ -784,7 +784,7 @@ class SettingsRenderer {
 
     const info = new Setting(containerEl)
       .setName('')
-      .setDesc('配置用户自定义面板（Bases 核心插件自定义视图）：可创建任意多个面板，每个面板扫描一个文件夹（源文件夹/输出文件夹跟随「文件夹」tab 的全局设置，或填自定义路径），列出 bool 属性缺失或不是 true 的文件；可设最早日期（该日期之后修改/创建的文件才显示）。点击文件名打开文件、点击聊天图标用面板自己的预设 + prompt 模板跳聊天。每个面板可「生成面板」（按配置重建 .base）与「打开面板」。需要 Obsidian 1.10.0+ 并启用 Bases 核心插件。');
+      .setDesc('配置用户自定义面板（Bases 核心插件自定义视图）：可创建任意多个面板，每个面板扫描一个文件夹（源文件夹/输出文件夹跟随「文件夹」tab 的全局设置，或填自定义路径），列出 bool 属性存在且不是 true 的文件（v0.9.9：属性缺失的文件不显示）；可设最早日期（该日期之后修改/创建的文件才显示）。点击文件名打开文件、点击聊天图标用面板自己的预设 + prompt 模板跳聊天。每个面板可「生成面板」（按配置重建 .base）与「打开面板」。需要 Obsidian 1.10.0+ 并启用 Bases 核心插件。');
     this.markSearchable(info, '面板 说明 Bases 自定义 多面板 扫描文件夹 生成面板 打开面板 聊天预设 prompt');
 
     const panels = this.plugin.settings.panels || (this.plugin.settings.panels = []);
@@ -908,7 +908,7 @@ class SettingsRenderer {
 
     const attr = new Setting(body)
       .setName('bool 属性名')
-      .setDesc('frontmatter 中标记「已处理」的 bool 属性名；缺失或值不是 true 的文件显示在面板，设为 true 后消失。')
+      .setDesc('frontmatter 中标记「已处理」的 bool 属性名；属性存在且值不是 true 的文件显示在面板（属性缺失不显示，v0.9.9），设为 true 后消失。')
       .addText((text) =>
         text
           .setPlaceholder('tidy')

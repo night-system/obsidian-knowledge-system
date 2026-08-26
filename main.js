@@ -1278,7 +1278,7 @@ var SettingsRenderer = class {
   // -------------------------------------------------------------------------
   renderPanelGroup(containerEl) {
     containerEl.empty();
-    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u7528\u6237\u81EA\u5B9A\u4E49\u9762\u677F\uFF08Bases \u6838\u5FC3\u63D2\u4EF6\u81EA\u5B9A\u4E49\u89C6\u56FE\uFF09\uFF1A\u53EF\u521B\u5EFA\u4EFB\u610F\u591A\u4E2A\u9762\u677F\uFF0C\u6BCF\u4E2A\u9762\u677F\u626B\u63CF\u4E00\u4E2A\u6587\u4EF6\u5939\uFF08\u6E90\u6587\u4EF6\u5939/\u8F93\u51FA\u6587\u4EF6\u5939\u8DDF\u968F\u300C\u6587\u4EF6\u5939\u300Dtab \u7684\u5168\u5C40\u8BBE\u7F6E\uFF0C\u6216\u586B\u81EA\u5B9A\u4E49\u8DEF\u5F84\uFF09\uFF0C\u5217\u51FA bool \u5C5E\u6027\u7F3A\u5931\u6216\u4E0D\u662F true \u7684\u6587\u4EF6\uFF1B\u53EF\u8BBE\u6700\u65E9\u65E5\u671F\uFF08\u8BE5\u65E5\u671F\u4E4B\u540E\u4FEE\u6539/\u521B\u5EFA\u7684\u6587\u4EF6\u624D\u663E\u793A\uFF09\u3002\u70B9\u51FB\u6587\u4EF6\u540D\u6253\u5F00\u6587\u4EF6\u3001\u70B9\u51FB\u804A\u5929\u56FE\u6807\u7528\u9762\u677F\u81EA\u5DF1\u7684\u9884\u8BBE + prompt \u6A21\u677F\u8DF3\u804A\u5929\u3002\u6BCF\u4E2A\u9762\u677F\u53EF\u300C\u751F\u6210\u9762\u677F\u300D\uFF08\u6309\u914D\u7F6E\u91CD\u5EFA .base\uFF09\u4E0E\u300C\u6253\u5F00\u9762\u677F\u300D\u3002\u9700\u8981 Obsidian 1.10.0+ \u5E76\u542F\u7528 Bases \u6838\u5FC3\u63D2\u4EF6\u3002");
+    const info = new import_obsidian3.Setting(containerEl).setName("").setDesc("\u914D\u7F6E\u7528\u6237\u81EA\u5B9A\u4E49\u9762\u677F\uFF08Bases \u6838\u5FC3\u63D2\u4EF6\u81EA\u5B9A\u4E49\u89C6\u56FE\uFF09\uFF1A\u53EF\u521B\u5EFA\u4EFB\u610F\u591A\u4E2A\u9762\u677F\uFF0C\u6BCF\u4E2A\u9762\u677F\u626B\u63CF\u4E00\u4E2A\u6587\u4EF6\u5939\uFF08\u6E90\u6587\u4EF6\u5939/\u8F93\u51FA\u6587\u4EF6\u5939\u8DDF\u968F\u300C\u6587\u4EF6\u5939\u300Dtab \u7684\u5168\u5C40\u8BBE\u7F6E\uFF0C\u6216\u586B\u81EA\u5B9A\u4E49\u8DEF\u5F84\uFF09\uFF0C\u5217\u51FA bool \u5C5E\u6027\u5B58\u5728\u4E14\u4E0D\u662F true \u7684\u6587\u4EF6\uFF08v0.9.9\uFF1A\u5C5E\u6027\u7F3A\u5931\u7684\u6587\u4EF6\u4E0D\u663E\u793A\uFF09\uFF1B\u53EF\u8BBE\u6700\u65E9\u65E5\u671F\uFF08\u8BE5\u65E5\u671F\u4E4B\u540E\u4FEE\u6539/\u521B\u5EFA\u7684\u6587\u4EF6\u624D\u663E\u793A\uFF09\u3002\u70B9\u51FB\u6587\u4EF6\u540D\u6253\u5F00\u6587\u4EF6\u3001\u70B9\u51FB\u804A\u5929\u56FE\u6807\u7528\u9762\u677F\u81EA\u5DF1\u7684\u9884\u8BBE + prompt \u6A21\u677F\u8DF3\u804A\u5929\u3002\u6BCF\u4E2A\u9762\u677F\u53EF\u300C\u751F\u6210\u9762\u677F\u300D\uFF08\u6309\u914D\u7F6E\u91CD\u5EFA .base\uFF09\u4E0E\u300C\u6253\u5F00\u9762\u677F\u300D\u3002\u9700\u8981 Obsidian 1.10.0+ \u5E76\u542F\u7528 Bases \u6838\u5FC3\u63D2\u4EF6\u3002");
     this.markSearchable(info, "\u9762\u677F \u8BF4\u660E Bases \u81EA\u5B9A\u4E49 \u591A\u9762\u677F \u626B\u63CF\u6587\u4EF6\u5939 \u751F\u6210\u9762\u677F \u6253\u5F00\u9762\u677F \u804A\u5929\u9884\u8BBE prompt");
     const panels = this.plugin.settings.panels || (this.plugin.settings.panels = []);
     panels.forEach((panel, index) => this.renderPanelCard(containerEl, panel, index));
@@ -1376,7 +1376,7 @@ var SettingsRenderer = class {
       );
       this.markSearchable(folderPath, "\u9762\u677F \u626B\u63CF\u6587\u4EF6\u5939 \u81EA\u5B9A\u4E49\u8DEF\u5F84 \u6587\u4EF6\u5939 \u8DEF\u5F84");
     }
-    const attr = new import_obsidian3.Setting(body).setName("bool \u5C5E\u6027\u540D").setDesc("frontmatter \u4E2D\u6807\u8BB0\u300C\u5DF2\u5904\u7406\u300D\u7684 bool \u5C5E\u6027\u540D\uFF1B\u7F3A\u5931\u6216\u503C\u4E0D\u662F true \u7684\u6587\u4EF6\u663E\u793A\u5728\u9762\u677F\uFF0C\u8BBE\u4E3A true \u540E\u6D88\u5931\u3002").addText(
+    const attr = new import_obsidian3.Setting(body).setName("bool \u5C5E\u6027\u540D").setDesc("frontmatter \u4E2D\u6807\u8BB0\u300C\u5DF2\u5904\u7406\u300D\u7684 bool \u5C5E\u6027\u540D\uFF1B\u5C5E\u6027\u5B58\u5728\u4E14\u503C\u4E0D\u662F true \u7684\u6587\u4EF6\u663E\u793A\u5728\u9762\u677F\uFF08\u5C5E\u6027\u7F3A\u5931\u4E0D\u663E\u793A\uFF0Cv0.9.9\uFF09\uFF0C\u8BBE\u4E3A true \u540E\u6D88\u5931\u3002").addText(
       (text) => text.setPlaceholder("tidy").setValue(panel.attr || "").onChange((value) => {
         panel.attr = value;
         void this.plugin.saveSettings();
@@ -4998,8 +4998,9 @@ function collectPanelMatches(app, settings, panel, files) {
     if (attr) {
       const fm = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
       const raw = fm == null ? void 0 : fm[attr];
-      const isDone = raw !== void 0 && raw !== null && raw !== "" && String(raw).toLowerCase() === "true";
-      if (isDone) return false;
+      const exists = raw !== void 0 && raw !== null;
+      if (!exists) return false;
+      if (String(raw).toLowerCase() === "true") return false;
     }
     return true;
   });
@@ -5132,7 +5133,7 @@ var PanelBasesView = class extends import_obsidian6.Component {
         try {
           await this.app.fileManager.processFrontMatter(file, (f) => {
             if (on) f[attr] = true;
-            else delete f[attr];
+            else f[attr] = false;
           });
           this.render();
         } catch (e) {

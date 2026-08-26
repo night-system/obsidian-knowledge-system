@@ -5162,6 +5162,19 @@ var PanelBasesView = class extends import_obsidian6.Component {
       list.createDiv({ cls: "ks-panel-count", text: `\u5171 ${count} \u4E2A\u9700\u8981\u5904\u7406\u7684\u6587\u4EF6` });
     }
   }
+  // v0.9.10 bug 修复：视图生命周期安全空实现——Obsidian（尤其移动端）在 leaf
+  // 切换/setViewState/关闭时会对视图实例调用 getEphemeralState/focus 等 View 方法；
+  // 本类只 extends Component（TaskNotes 形状），缺省会抛 TypeError → 弹 Notice
+  // 「e.getEphemeralState is not a function」/「n.focus is not a function」。
+  getEphemeralState() {
+    return {};
+  }
+  setEphemeralState(state) {
+  }
+  focus() {
+  }
+  onResize() {
+  }
 };
 function registerPanelBasesView(plugin) {
   if (typeof plugin.registerBasesView !== "function") return false;
@@ -5483,6 +5496,19 @@ var ReviewBasesView = class extends import_obsidian8.Component {
       new import_obsidian8.Notice(`\u53D6\u6D88\u6807\u8BB0\u5931\u8D25\uFF1A${String(e)}`);
     }
   }
+  // v0.9.10 bug 修复：视图生命周期安全空实现——Obsidian（尤其移动端）在 leaf
+  // 切换/setViewState/关闭时会对视图实例调用 getEphemeralState/focus 等 View 方法；
+  // 本类只 extends Component（TaskNotes 形状），缺省会抛 TypeError → 弹 Notice
+  // 「e.getEphemeralState is not a function」/「n.focus is not a function」。
+  getEphemeralState() {
+    return {};
+  }
+  setEphemeralState(state) {
+  }
+  focus() {
+  }
+  onResize() {
+  }
 };
 function registerReviewBasesView(plugin) {
   if (typeof plugin.registerBasesView !== "function") return false;
@@ -5637,6 +5663,19 @@ var TidyBasesView = class extends import_obsidian9.Component {
     } else {
       list.createDiv({ cls: "ks-tidy-count", text: `\u5171 ${count} \u4E2A\u9700\u8981\u6574\u7406\u7684\u6587\u4EF6` });
     }
+  }
+  // v0.9.10 bug 修复：视图生命周期安全空实现——Obsidian（尤其移动端）在 leaf
+  // 切换/setViewState/关闭时会对视图实例调用 getEphemeralState/focus 等 View 方法；
+  // 本类只 extends Component（TaskNotes 形状），缺省会抛 TypeError → 弹 Notice
+  // 「e.getEphemeralState is not a function」/「n.focus is not a function」。
+  getEphemeralState() {
+    return {};
+  }
+  setEphemeralState(state) {
+  }
+  focus() {
+  }
+  onResize() {
   }
 };
 function registerTidyBasesView(plugin) {

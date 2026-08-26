@@ -191,6 +191,27 @@ export class TidyBasesView extends Component {
       list.createDiv({ cls: 'ks-tidy-count', text: `共 ${count} 个需要整理的文件` });
     }
   }
+
+  // v0.9.10 bug 修复：视图生命周期安全空实现——Obsidian（尤其移动端）在 leaf
+  // 切换/setViewState/关闭时会对视图实例调用 getEphemeralState/focus 等 View 方法；
+  // 本类只 extends Component（TaskNotes 形状），缺省会抛 TypeError → 弹 Notice
+  // 「e.getEphemeralState is not a function」/「n.focus is not a function」。
+  getEphemeralState(): unknown {
+    return {};
+  }
+
+  setEphemeralState(state: unknown): void {
+    void state;
+  }
+
+  focus(): void {
+    /* no-op */
+  }
+
+  onResize(): void {
+    /* no-op（Bases 内部视图用 ResizeObserver 调用渲染对象的 onResize，缺省会抛
+       TypeError → Notice「e.onResize is not a function」） */
+  }
 }
 
 /** 注册整理视图到 Bases（Obsidian 1.10.0+ 公开 API）；false = Bases 未启用。 */

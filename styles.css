@@ -1063,9 +1063,10 @@
   flex: 1 1 100%;
 }
 
-/* 刷新/聊天 icon 按钮——无底色无边框，hover 仅变色（与整理面板一致）。 */
+/* 刷新/聊天/垃圾桶 icon 按钮——无底色无边框，hover 仅变色（垃圾桶 hover 红色）。 */
 .ks-panel-refresh,
-.ks-panel-chat {
+.ks-panel-chat,
+.ks-panel-del {
   background: transparent;
   color: var(--text-muted);
 }
@@ -1074,6 +1075,17 @@
 .ks-panel-chat:hover {
   background: transparent;
   color: var(--interactive-accent);
+}
+
+.ks-panel-del:hover {
+  background: transparent;
+  color: var(--text-error);
+}
+
+/* v0.9.4：删除确认弹窗正文（按钮行用 Obsidian 标准 .modal-button-container）。 */
+.ks-panel-del-modal-text {
+  color: var(--text-normal);
+  margin: var(--size-4-2) 0;
 }
 
 .ks-panel-list {

@@ -165,6 +165,11 @@ export interface PanelConfig {
   chatPresetId: string;
   /** prompt 模板（{{filename}} → basename 不含路径/.md）。 */
   chatPrompt: string;
+  /**
+   * v0.9.4：是否在面板条目右侧显示「垃圾桶删除文件」按钮（点击后二次确认，
+   * 删除到系统回收站）。缺省/undefined = 显示（渲染按 `showDelete !== false` 判断）。
+   */
+  showDelete?: boolean;
 }
 
 /**

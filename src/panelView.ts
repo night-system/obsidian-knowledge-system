@@ -1,8 +1,52 @@
-import { App, Component, Notice, TFile, setIcon } from 'obsidian';
+import { App, Component, Modal, Notice, TFile, ToggleComponent, setIcon } from 'obsidian';
 import type { BasesView, BasesViewFactory, QueryController } from 'obsidian';
 import type KnowledgeSystemPlugin from './main';
 import type { PanelConfig } from './settings';
 import { parseAfterDate, renderPromptTemplate } from './utils/review';
+
+/**
+ * v0.9.4：删除文件二次确认弹窗（面板条目垃圾桶按钮用）。
+ * 确认后把文件移到系统回收站（Obsidian 删除惯例 vault.trash(file, true)），
+ * 成功后回调 onDeleted（视图重渲染）并 Notice。
+ */
+class ConfirmDeleteModal extends Modal {
+  private file: TFile;
+  private onDeleted: () => void;
+
+  constructor(app: App, file: TFile, onDeleted: () => void) {
+    super(app);
+    this.file = file;
+    this.onDeleted = onDeleted;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.createEl('h3', { text: '删除文件' });
+    contentEl.createDiv({ cls: 'ks-panel-del-modal-text', text: `确定要删除「${this.file.basename}」吗？此操作不可撤销。` });
+    const btnRow = contentEl.createDiv({ cls: 'modal-button-container' });
+    const cancelBtn = btnRow.createEl('button', { cls: 'mod-ghost', text: '取消' });
+    cancelBtn.addEventListener('click', () => this.close());
+    const confirmBtn = btnRow.createEl('button', { cls: 'mod-warning', text: '删除' });
+    confirmBtn.addEventListener('click', () => {
+      void this.deleteFile();
+    });
+  }
+
+  private async deleteFile(): Promise<void> {
+    try {
+      await this.app.vault.trash(this.file, true);
+      new Notice(`已删除 ${this.file.basename}`);
+      this.onDeleted();
+      this.close();
+    } catch (e) {
+      new Notice(`删除失败：${String(e)}`);
+    }
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
 
 /**
  * v0.9.3：用户自定义面板（Obsidian Bases 核心插件自定义视图）——泛化自
@@ -23,8 +67,11 @@ import { parseAfterDate, renderPromptTemplate } from './utils/review';
  * - 日期：file.stat.mtime（回退 ctime）>= afterDate 当天 00:00（解析失败/留空 = 不限）；
  * - bool 属性：frontmatter[panel.attr] 缺失、null、空、或 String(值).toLowerCase()
  *   !== 'true' → 显示；否则隐藏。
- * 每条提供「打开」（点击文件名）和「聊天」（message-square 图标 → openChatWith：
- * 应用面板自己的预设 + 预填 panel.chatPrompt 模板渲染结果）。
+ * 每条提供「打开」（点击文件名）、「bool 开关」（v0.9.4：把 frontmatter[panel.attr]
+ * 设为 true → 条目消失 / 关闭则删除该属性）和「聊天」（message-square 图标 →
+ * openChatWith：应用面板自己的预设 + 预填 panel.chatPrompt 模板渲染结果）；
+ * v0.9.4 还提供「垃圾桶」（trash-2，panel.showDelete !== false 时显示）——
+ * 二次确认后把文件移到系统回收站。
  */
 export const PANEL_VIEW_TYPE = 'ks-panel';
 
@@ -171,7 +218,7 @@ export class PanelBasesView extends Component {
     const refreshBtn = head.createEl('button', { cls: 'clickable-icon ks-panel-refresh', attr: { 'aria-label': '刷新', 'title': '刷新' } });
     setIcon(refreshBtn, 'refresh-cw');
     refreshBtn.addEventListener('click', () => this.render());
-    head.createSpan({ cls: 'ks-panel-hint', text: '点击笔记标题打开文件；点击聊天图标用面板配置的预设进入聊天并引用此文件。把「bool 属性」设为 true 后文件会从这里消失。' });
+    head.createSpan({ cls: 'ks-panel-hint', text: '点击笔记标题打开文件；右侧开关把「bool 属性」设为 true（条目消失）、垃圾桶删除文件（需二次确认，可关）；聊天图标用面板配置的预设进入聊天并引用此文件。' });
 
     // 列表：只显示 afterDate 之后修改/创建、且 bool 属性缺失或非 true 的文件。
     const attr = (panel.attr || '').trim();
@@ -205,6 +252,36 @@ export class PanelBasesView extends Component {
       });
 
       const ops = row.createDiv({ cls: 'ks-panel-item-ops' });
+      // v0.9.4：条目右侧操作区 = [垃圾桶] [bool 开关] [聊天]（垃圾桶在开关左边，聊天最右）。
+      // 垃圾桶按钮（lucide trash-2，面板配置 showDelete !== false 才显示）——点击弹
+      // 二次确认，确认后把文件移到系统回收站（vault.trash(file, true)）。
+      if (panel.showDelete !== false) {
+        const delBtn = ops.createEl('button', { cls: 'clickable-icon ks-panel-del', attr: { 'aria-label': '删除文件', 'title': '删除文件' } });
+        setIcon(delBtn, 'trash-2');
+        delBtn.addEventListener('click', () => {
+          new ConfirmDeleteModal(this.app, file, () => this.render()).open();
+        });
+      }
+      // bool 开关：状态 = frontmatter[panel.attr] === true（面板判定的 bool 语义）。
+      // 开 = 写入布尔 true（条目随即移出面板）；关 = 删除该属性（回到「未处理」）。
+      // 用 fileManager.processFrontMatter 写盘（触发 metadataCache → Bases 重渲染），
+      // 再直接 this.render() 兜底刷新开关状态。
+      const toggle = new ToggleComponent(ops)
+        .setValue(fm?.[attr] === true)
+        .setTooltip(`标记为「${attr}」= true（处理后条目消失）`)
+        .onChange(async (on) => {
+          if (!attr) return;
+          try {
+            await this.app.fileManager.processFrontMatter(file, (f) => {
+              if (on) f[attr] = true;
+              else delete f[attr];
+            });
+            this.render();
+          } catch (e) {
+            new Notice(`标记失败：${String(e)}`);
+          }
+        });
+      void toggle;
       // 聊天图标按钮（lucide messages-square，与整理面板同款）——用面板的
       // 「聊天 prompt 模板」替换 {{filename}} → file.basename（不含路径、不含 .md），
       // 把**最终 prompt 文本**传给聊天视图，预设用面板自己的 chatPresetId。

@@ -813,6 +813,7 @@ class SettingsRenderer {
             basePath: '新面板.base',
             chatPresetId: '',
             chatPrompt: '请查看「{{filename}}」并帮我处理。',
+            showDelete: true,
           };
           this.plugin.settings.panels.push(np);
           void this.plugin.saveSettings();
@@ -825,8 +826,8 @@ class SettingsRenderer {
   /**
    * v0.9.3：渲染一个面板配置卡片（可折叠）：头部 = chevron + 名称输入 + 启用开关 +
    * 删除按钮；主体 = 扫描文件夹（下拉 + 自定义路径）+ bool 属性名 + 最早日期 +
-   * 面板位置 + 聊天预设下拉 + 聊天 prompt + 「生成面板」「打开面板」按钮。
-   * 折叠状态按 panel.id 记忆（缺省展开）。
+   * 面板位置 + 显示删除按钮（v0.9.4）+ 聊天预设下拉 + 聊天 prompt +
+   * 「生成面板」「打开面板」按钮。折叠状态按 panel.id 记忆（缺省展开）。
    */
   private renderPanelCard(containerEl: HTMLElement, panel: PanelConfig, index: number): void {
     const rerenderAll = () => this.renderPanelGroup(containerEl);
@@ -953,6 +954,20 @@ class SettingsRenderer {
           })
       );
     this.markSearchable(path, '面板 面板位置 面板 路径 base');
+
+    // v0.9.4：条目右侧「垃圾桶删除文件」按钮开关（缺省/undefined = 显示）。
+    const showDel = new Setting(body)
+      .setName('显示删除按钮')
+      .setDesc('在面板条目右侧显示「删除文件」垃圾桶按钮：点击后二次确认，确认后把文件移到系统回收站（vault.trash 系统回收站）。关闭则不显示垃圾桶。')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(panel.showDelete !== false)
+          .onChange((v) => {
+            panel.showDelete = v;
+            void this.plugin.saveSettings();
+          })
+      );
+    this.markSearchable(showDel, '面板 显示删除按钮 删除 垃圾桶 回收站 trash');
 
     const preset = new Setting(body)
       .setName('聊天预设')

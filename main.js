@@ -2521,16 +2521,20 @@ async function modifyOutputNoteVersionedTool(ctx, args) {
     currentVersion = latestVersionFromArchive(existingArchiveRaw) + 1;
   }
   const archiveBlock = buildArchiveBlock(currentVersion, originalFM, body, versionProperty);
+  const archiveHeader = `---
+${serializeYamlFromObj({ [archiveProperty]: true })}
+---
+`;
   if (archiveFile) {
-    const sep = existingArchiveRaw.trimStart() ? "\n\n" : "";
-    await ctx.app.vault.adapter.write(archivePath, archiveBlock + sep + existingArchiveRaw);
+    const existingBody = stripFrontmatter(existingArchiveRaw);
+    const sep = existingBody.trimStart() ? "\n\n" : "";
+    await ctx.app.vault.adapter.write(archivePath, archiveHeader + "\n" + archiveBlock + sep + existingBody);
   } else {
-    await ctx.app.vault.create(archivePath, archiveBlock);
+    await ctx.app.vault.create(archivePath, archiveHeader + "\n" + archiveBlock);
   }
   const moment = (_c = ctx.moment) != null ? _c : typeof window !== "undefined" ? window.moment : null;
   const newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
   newFM[versionProperty] = currentVersion + 1;
-  newFM[archiveProperty] = true;
   const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
   await ctx.app.vault.adapter.write(match.path, newContent);
   return { result: { path: match.path } };

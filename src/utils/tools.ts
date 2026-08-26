@@ -930,19 +930,24 @@ export async function modifyOutputNoteVersionedTool(
   // 归档：把当前（修改前）原文 yaml 区全部属性 + 全部正文打包为一个版本块（版本号=当前版本）；
   // v0.8.1：新版本块插到归档文件【最上面】（最新版本在最上），块内 `# 属性`
   // 强制含当前版本号（versionProperty: N）。
+  // 归档文件自身带 frontmatter：仅含归档标记属性（archiveProperty: true）——
+  // v0.8.1 修正：archived 属于归档文件，不再写入最新版（原文件）的 yaml 区。
   const archiveBlock = buildArchiveBlock(currentVersion, originalFM, body, versionProperty);
+  const archiveHeader = `---\n${serializeYamlFromObj({ [archiveProperty]: true })}\n---\n`;
   if (archiveFile) {
-    const sep = existingArchiveRaw.trimStart() ? '\n\n' : '';
-    await ctx.app.vault.adapter.write(archivePath, archiveBlock + sep + existingArchiveRaw);
+    // 旧归档文件：保留其 frontmatter（归档标记不变），新版本块插到 frontmatter 之后（body 顶部）。
+    const existingBody = stripFrontmatter(existingArchiveRaw);
+    const sep = existingBody.trimStart() ? '\n\n' : '';
+    await ctx.app.vault.adapter.write(archivePath, archiveHeader + '\n' + archiveBlock + sep + existingBody);
   } else {
-    await ctx.app.vault.create(archivePath, archiveBlock);
+    await ctx.app.vault.create(archivePath, archiveHeader + '\n' + archiveBlock);
   }
 
-  // 写回原文件：保留原 yaml + AI 改的键 + 自动补默认 + versionProperty=当前版本+1 + archiveProperty=true。
+  // 写回原文件：保留原 yaml + AI 改的键 + 自动补默认 + versionProperty=当前版本+1。
+  // （archiveProperty 不再写入原文件——它属于归档文件。）
   const moment = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
   const newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
   newFM[versionProperty] = currentVersion + 1;
-  newFM[archiveProperty] = true;
   const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
 
   await ctx.app.vault.adapter.write(match.path, newContent);

@@ -152,6 +152,12 @@ export interface KnowledgeSystemSettings {
   modifyVersionProperty: string;
   /** modify_output_note_versioned 归档 bool 属性名（写 true）；空 = 未配置不工作。 */
   modifyArchiveProperty: string;
+  /**
+   * modify_output_note / modify_output_note_versioned 的「固定默认」属性（v0.8.2）：
+   * AI 不可见，每次修改时强制覆写为渲染后的默认值（支持 {{moment}} 模板，如
+   * created=当前时间）。与 create_note 的 yamlRules 独立配置，不继承。
+   */
+  modifyFixedYaml: { key: string; default: string }[];
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
@@ -184,4 +190,5 @@ export const DEFAULT_SETTINGS: KnowledgeSystemSettings = {
   modifyVersionSuffix: '',
   modifyVersionProperty: '',
   modifyArchiveProperty: '',
+  modifyFixedYaml: [],
 };

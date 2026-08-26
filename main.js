@@ -59,7 +59,8 @@ var DEFAULT_SETTINGS = {
   createRestrictYaml: false,
   modifyVersionSuffix: "",
   modifyVersionProperty: "",
-  modifyArchiveProperty: ""
+  modifyArchiveProperty: "",
+  modifyFixedYaml: []
 };
 
 // src/settingsTab.ts
@@ -979,6 +980,40 @@ var SettingsRenderer = class {
       (text) => text.setPlaceholder("\u5982\uFF1Aarchived").setValue(this.plugin.settings.modifyArchiveProperty).onChange((v) => this.updateSetting("modifyArchiveProperty", v))
     );
     this.markSearchable(aprop, "AI \u4FEE\u6539\u8F93\u51FA\u5DE5\u5177 \u5F52\u6863\u6807\u8BB0\u5C5E\u6027 modifyArchiveProperty");
+    const fixedInfo = new import_obsidian3.Setting(containerEl).setName("\u56FA\u5B9A\u9ED8\u8BA4\u5C5E\u6027\uFF08AI \u4E0D\u53EF\u89C1\uFF09").setDesc("\u6BCF\u6B21\u4FEE\u6539\u65F6\u81EA\u52A8\u8986\u5199\u7684 frontmatter \u5C5E\u6027\uFF08\u4E0D\u66B4\u9732\u7ED9 AI\u3001AI \u65E0\u6CD5\u63A7\u5236\uFF09\uFF1B\u9ED8\u8BA4\u503C\u652F\u6301 {{YYYY.MM.DD}} \u7B49 moment \u6A21\u677F\uFF08\u5982 created \u2192 {{YYYY-MM-DD HH:mm}} \u8BB0\u5F55\u672C\u6B21\u4FEE\u6539\u65F6\u95F4\uFF09\u3002\u5F52\u6863\u7248\uFF08modify_output_note_versioned\uFF09\u4F1A\u5148\u5F52\u6863\u65E7\u72B6\u6001\u518D\u5199\u5165\u65B0\u65F6\u95F4\u6233\uFF0C\u4E0D\u4F1A\u6C61\u67D3\u5386\u53F2\u7248\u672C\u3002");
+    this.markSearchable(fixedInfo, "AI \u4FEE\u6539\u8F93\u51FA\u5DE5\u5177 \u56FA\u5B9A\u9ED8\u8BA4\u5C5E\u6027 created \u65F6\u95F4\u6233 modifyFixedYaml");
+    const fixedList = this.plugin.settings.modifyFixedYaml || [];
+    const fixedEl = containerEl.createDiv({ cls: "ks-extra-props" });
+    fixedList.forEach((entry, index) => {
+      const row = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addText(
+        (text) => text.setPlaceholder("\u5C5E\u6027\u540D\uFF0C\u5982 created").setValue(entry.key).onChange((value) => {
+          entry.key = value;
+          void this.plugin.saveSettings();
+        })
+      ).addText(
+        (text) => text.setPlaceholder("\u9ED8\u8BA4\u503C\uFF0C\u652F\u6301 {{moment}}\uFF0C\u5982 {{YYYY-MM-DD HH:mm}}").setValue(entry.default).onChange((value) => {
+          entry.default = value;
+          void this.plugin.saveSettings();
+        })
+      ).addButton(
+        (btn) => btn.setIcon("trash-2").setTooltip("\u5220\u9664").onClick(() => {
+          const a = this.plugin.settings.modifyFixedYaml;
+          a.splice(index, 1);
+          void this.plugin.saveSettings();
+          this.renderModifyOutputTools(containerEl);
+        })
+      );
+      row.settingEl.addClass("ks-extra-props-row");
+      this.markSearchable(row, `AI \u4FEE\u6539\u8F93\u51FA\u5DE5\u5177 \u56FA\u5B9A\u9ED8\u8BA4\u5C5E\u6027 ${entry.key} ${entry.default}`);
+    });
+    const addFixedBtn = new import_obsidian3.Setting(containerEl).setName("").setDesc("").addButton(
+      (btn) => btn.setIcon("plus").setButtonText("\u6DFB\u52A0\u56FA\u5B9A\u5C5E\u6027").onClick(() => {
+        this.plugin.settings.modifyFixedYaml.push({ key: "", default: "" });
+        void this.plugin.saveSettings();
+        this.renderModifyOutputTools(containerEl);
+      })
+    );
+    this.markSearchable(addFixedBtn, "AI \u4FEE\u6539\u8F93\u51FA\u5DE5\u5177 \u56FA\u5B9A\u9ED8\u8BA4\u5C5E\u6027 \u6DFB\u52A0 \u589E\u52A0");
   }
   /** Render each extra property as a row: key input, value input, delete button. */
   renderExtraProperties(containerEl) {
@@ -1878,14 +1913,13 @@ function applyDefaults(obj, rules, opts) {
   }
   return out;
 }
-function applyFixedDefaults(obj, rules, opts) {
+function applyFixedDefaults(obj, fixed, opts) {
   var _a;
   const out = { ...obj != null ? obj : {} };
-  for (const rule of rules != null ? rules : []) {
-    if (!rule || !rule.key) continue;
-    if (rule.values && rule.values.length > 0) continue;
-    if (String((_a = rule.default) != null ? _a : "").trim() === "") continue;
-    out[rule.key] = renderDefaultValue(rule.default, opts.moment, opts.now);
+  for (const entry of fixed != null ? fixed : []) {
+    if (!entry || !entry.key) continue;
+    if (String((_a = entry.default) != null ? _a : "").trim() === "") continue;
+    out[entry.key] = renderDefaultValue(entry.default, opts.moment, opts.now);
   }
   return out;
 }
@@ -2491,7 +2525,7 @@ async function readOutputNoteTool(ctx, args) {
   };
 }
 async function modifyOutputNoteTool(ctx, args) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d;
   const settings = ctx.settings;
   const folder = (settings.outputFolder || "/").trim();
   const target = stripExt(((args == null ? void 0 : args.name) || "").trim());
@@ -2511,13 +2545,13 @@ async function modifyOutputNoteTool(ctx, args) {
   if ("error" in bodyResult) return { error: bodyResult.error };
   const moment = (_c = ctx.moment) != null ? _c : typeof window !== "undefined" ? window.moment : null;
   let newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
-  newFM = applyFixedDefaults(newFM, rules, { moment, now: ctx.now });
+  newFM = applyFixedDefaults(newFM, (_d = settings.modifyFixedYaml) != null ? _d : [], { moment, now: ctx.now });
   const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
   await ctx.app.vault.adapter.write(match.path, newContent);
   return { result: { path: match.path } };
 }
 async function modifyOutputNoteVersionedTool(ctx, args) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d;
   const settings = ctx.settings;
   const folder = (settings.outputFolder || "/").trim();
   const target = stripExt(((args == null ? void 0 : args.name) || "").trim());
@@ -2564,7 +2598,7 @@ ${serializeYamlFromObj({ [archiveProperty]: true })}
   }
   const moment = (_c = ctx.moment) != null ? _c : typeof window !== "undefined" ? window.moment : null;
   let newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
-  newFM = applyFixedDefaults(newFM, rules, { moment, now: ctx.now });
+  newFM = applyFixedDefaults(newFM, (_d = settings.modifyFixedYaml) != null ? _d : [], { moment, now: ctx.now });
   newFM[versionProperty] = currentVersion + 1;
   const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
   await ctx.app.vault.adapter.write(match.path, newContent);

@@ -41,6 +41,8 @@ export interface ToolCtx {
     modifyVersionProperty?: string;
     /** modify_output_note_versioned 归档 bool 属性名（v0.8.0）。 */
     modifyArchiveProperty?: string;
+    /** modify_output_note* 固定默认属性（v0.8.2）：AI 不可见、每次修改强制覆写。 */
+    modifyFixedYaml?: { key: string; default: string }[];
   };
   now?: number;
   moment?: any;
@@ -873,11 +875,11 @@ export async function modifyOutputNoteTool(
   if ('error' in bodyResult) return { error: bodyResult.error };
 
   // 写回：保留原 frontmatter + AI 改的键 + 自动补默认 yaml；
-  // v0.8.2：再覆写「固定默认」属性（仅默认值、不暴露给 AI 的键，如 created=当前时间），
-  // 每次修改都刷新为渲染后的默认值（与 create 的「AI 未填才补」语义不同）。
+  // v0.8.2：再覆写「固定默认」属性（settings.modifyFixedYaml，独立于 create 的
+  // yamlRules、不暴露给 AI，如 created=当前时间），每次修改都刷新为渲染后的默认值。
   const moment = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
   let newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
-  newFM = applyFixedDefaults(newFM, rules, { moment, now: ctx.now });
+  newFM = applyFixedDefaults(newFM, settings.modifyFixedYaml ?? [], { moment, now: ctx.now });
   const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
 
   await ctx.app.vault.adapter.write(match.path, newContent);
@@ -950,11 +952,11 @@ export async function modifyOutputNoteVersionedTool(
   // 写回原文件：保留原 yaml + AI 改的键 + 自动补默认 + versionProperty=当前版本+1。
   // （archiveProperty 不再写入原文件——它属于归档文件。）
   // v0.8.2：**先归档（上面用修改前 originalFM 的旧时间戳）再写回**——此处才覆写
-  // 「固定默认」属性（仅默认值、不暴露给 AI 的键，如 created=当前时间），
-  // 防止新时间戳被同步到已归档的旧版本中。
+  // 「固定默认」属性（settings.modifyFixedYaml，独立配置、不暴露给 AI，如
+  // created=当前时间），防止新时间戳被同步到已归档的旧版本中。
   const moment = ctx.moment ?? (typeof window !== 'undefined' ? window.moment : null);
   let newFM = applyDefaults({ ...originalFM, ...aiYaml }, rules, { moment, now: ctx.now });
-  newFM = applyFixedDefaults(newFM, rules, { moment, now: ctx.now });
+  newFM = applyFixedDefaults(newFM, settings.modifyFixedYaml ?? [], { moment, now: ctx.now });
   newFM[versionProperty] = currentVersion + 1;
   const newContent = serializeFileWithFrontmatter(bodyResult.result, newFM);
 

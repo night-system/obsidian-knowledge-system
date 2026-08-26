@@ -470,6 +470,63 @@ class SettingsRenderer {
           .onChange((v) => this.updateSetting('modifyArchiveProperty', v))
       );
     this.markSearchable(aprop, 'AI 修改输出工具 归档标记属性 modifyArchiveProperty');
+
+    // v0.8.2：固定默认属性（AI 不可见、每次修改强制覆写；独立于 create_note 的 yamlRules）。
+    const fixedInfo = new Setting(containerEl)
+      .setName('固定默认属性（AI 不可见）')
+      .setDesc('每次修改时自动覆写的 frontmatter 属性（不暴露给 AI、AI 无法控制）；默认值支持 {{YYYY.MM.DD}} 等 moment 模板（如 created → {{YYYY-MM-DD HH:mm}} 记录本次修改时间）。归档版（modify_output_note_versioned）会先归档旧状态再写入新时间戳，不会污染历史版本。');
+    this.markSearchable(fixedInfo, 'AI 修改输出工具 固定默认属性 created 时间戳 modifyFixedYaml');
+
+    const fixedList = this.plugin.settings.modifyFixedYaml || [];
+    const fixedEl = containerEl.createDiv({ cls: 'ks-extra-props' });
+    fixedList.forEach((entry, index) => {
+      const row = new Setting(containerEl)
+        .setName('')
+        .setDesc('')
+        .addText((text) =>
+          text
+            .setPlaceholder('属性名，如 created')
+            .setValue(entry.key)
+            .onChange((value) => {
+              entry.key = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addText((text) =>
+          text
+            .setPlaceholder('默认值，支持 {{moment}}，如 {{YYYY-MM-DD HH:mm}}')
+            .setValue(entry.default)
+            .onChange((value) => {
+              entry.default = value;
+              void this.plugin.saveSettings();
+            })
+        )
+        .addButton((btn) =>
+          btn
+            .setIcon('trash-2')
+            .setTooltip('删除')
+            .onClick(() => {
+              const a = this.plugin.settings.modifyFixedYaml;
+              a.splice(index, 1);
+              void this.plugin.saveSettings();
+              this.renderModifyOutputTools(containerEl);
+            })
+        );
+      row.settingEl.addClass('ks-extra-props-row');
+      this.markSearchable(row, `AI 修改输出工具 固定默认属性 ${entry.key} ${entry.default}`);
+    });
+
+    const addFixedBtn = new Setting(containerEl)
+      .setName('')
+      .setDesc('')
+      .addButton((btn) =>
+        btn.setIcon('plus').setButtonText('添加固定属性').onClick(() => {
+          this.plugin.settings.modifyFixedYaml.push({ key: '', default: '' });
+          void this.plugin.saveSettings();
+          this.renderModifyOutputTools(containerEl);
+        })
+      );
+    this.markSearchable(addFixedBtn, 'AI 修改输出工具 固定默认属性 添加 增加');
   }
 
   /** Render each extra property as a row: key input, value input, delete button. */

@@ -38,8 +38,18 @@
   padding-top: var(--size-2-1);
 }
 
-/* v0.8.3：iPad/触屏长按选择与剪切修复——显式允许 input/textarea 内文本选择。
-   Obsidian 移动端可能禁用 touch-callout/选择，导致只能粘贴、不能选择/剪切。 */
+/* v0.8.5：iPad/触屏长按选择与剪切修复（在 v0.8.3 CSS-only 方案上加固）。
+   根因：Obsidian app.css 全局 body{user-select:none;-webkit-user-select:none}
+   （只对 [contenteditable] 重新开启）。iOS WKWebView 在祖先 user-select:none
+   时会压制 input/textarea 内的长按选择手柄 —— 长按只弹「粘贴」菜单，没有
+   选择/剪切（参考插件 TaskNotes 无任何特殊处理即正常，故问题不在输入框组件
+   本身，而在 iOS 全局 user-select 压制 + 自定义容器）。
+   对策（三层，逐层兜底）：
+   1) 输入框自身显式 user-select:text（!important 压过主题/全局规则）；
+   2) 移动端把我们自绘的设置容器整体抬到 user-select:text，阻断祖先 none
+      向下传播（body.is-mobile 由 Obsidian 移动端加到 body）；
+   3) settingsTab.ts 的 attachIosTextSelectionGuard 在 touchstart/focusin 时
+      对真实输入框内联重设 —— 内联样式无法被缓存/主题/特异性绕过。 */
 .ks-tab-content input,
 .ks-tab-content textarea,
 .ks-view input,
@@ -47,6 +57,15 @@
   -webkit-user-select: text !important;
   user-select: text !important;
   -webkit-touch-callout: default !important;
+}
+
+/* 移动端（iPad/iPhone）：自绘容器整体抬到 user-select:text。
+   副作用：设置项名称/描述在移动端也可长按选择 —— 可接受（反而便于复制
+   API 地址等文本），桌面端不受影响（仅输入框可选择，与 Obsidian 默认一致）。 */
+body.is-mobile .ks-tab-content,
+body.is-mobile .ks-view {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .ks-search {

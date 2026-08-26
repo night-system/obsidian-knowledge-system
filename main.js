@@ -1804,10 +1804,7 @@ function parseYamlObject(yaml) {
       const idx = line.indexOf(":");
       if (idx <= 0) continue;
       const key = line.slice(0, idx).trim();
-      let value = line.slice(idx + 1).trim();
-      if (value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
+      const value = unquoteYamlValue(line.slice(idx + 1).trim());
       if (!key) continue;
       obj[key] = value;
     }
@@ -1817,6 +1814,23 @@ function parseYamlObject(yaml) {
     return { ...yaml };
   }
   return {};
+}
+function unquoteYamlValue(raw) {
+  let v = raw;
+  for (let i = 0; i < 4; i++) {
+    let changed = false;
+    if (v.length >= 2 && (v.startsWith('"') && v.endsWith('"') || v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+      changed = true;
+    }
+    const unescaped = v.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    if (unescaped !== v) {
+      v = unescaped;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return v;
 }
 function validateYamlRules(obj, rules) {
   var _a;
@@ -1867,6 +1881,7 @@ function applyDefaults(obj, rules, opts) {
 function needsQuoting(v) {
   if (v === "") return true;
   if (/^[\s]|\s$/.test(v)) return true;
+  if (/^\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}([ T]\d{1,2}:\d{2}(:\d{2})?)?$/.test(v)) return false;
   if (/[:#\[\]{}'"]/.test(v)) return true;
   return false;
 }

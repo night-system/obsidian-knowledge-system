@@ -27,10 +27,9 @@ import { stripFrontmatter } from './index';
  * - string → split on lines; each line split at its first `:`, both sides
  *   trimmed; values kept as strings; empty lines and invalid lines ignored.
  *
- * v0.8.1：字符串分支会剥离 YAML 成对引号（`key: "value"` / `key: 'value'` →
- * `value`），避免 AI 以「字符串形式 + 带引号值」传参时，引号字符残留在值里、
- * 之后被 `serializeYamlFromObj` 的 needsQuoting 再次加引号（同一 yaml 在不同
- * 设备上出现「带引号/不带引号」的差异即源于 AI 传参形式随机）。
+ * v0.8.1：字符串分支会剥离 YAML 成对引号并还原 `\"` 转义（自愈旧污染数据），
+ * 避免 AI 以「字符串形式 + 带引号值」传参、或 modify 工具读写循环叠加转义时，
+ * 引号字符残留在值里被再次加引号。
  */
 export function parseYamlObject(yaml: unknown): Record<string, unknown> {
   if (yaml == null) return {};
@@ -43,15 +42,7 @@ export function parseYamlObject(yaml: unknown): Record<string, unknown> {
       if (idx <= 0) continue; // 非法行（无冒号或冒号在开头）
       // 首个冒号切分：键名、值（值保留字符串）
       const key = line.slice(0, idx).trim();
-      let value = line.slice(idx + 1).trim();
-      // 剥离 YAML 成对引号（整体被单引号或双引号包裹时去掉两端引号）
-      if (
-        value.length >= 2 &&
-        ((value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'")))
-      ) {
-        value = value.slice(1, -1);
-      }
+      const value = unquoteYamlValue(line.slice(idx + 1).trim());
       if (!key) continue;
       obj[key] = value;
     }
@@ -61,6 +52,32 @@ export function parseYamlObject(yaml: unknown): Record<string, unknown> {
     return { ...(yaml as Record<string, unknown>) }; // 浅拷贝
   }
   return {};
+}
+
+/**
+ * 还原一个 YAML 值字符串的引号/转义：循环剥离成对引号并还原 `\"` / `\\`，
+ * 直到值稳定（上限 4 轮，防多层污染叠加）。例如：
+ *   `"2026-08-26 15:30"` → `2026-08-26 15:30`
+ *   `"\"2026-08-26 15:30\""`（被 modify 工具转义污染过）→ `2026-08-26 15:30`
+ */
+function unquoteYamlValue(raw: string): string {
+  let v = raw;
+  for (let i = 0; i < 4; i++) {
+    let changed = false;
+    if (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))) {
+      v = v.slice(1, -1);
+      changed = true;
+    }
+    const unescaped = v
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+    if (unescaped !== v) {
+      v = unescaped;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return v;
 }
 
 /**
@@ -149,10 +166,17 @@ export function applyDefaults(
   return out;
 }
 
-/** Whether a plain string needs YAML double-quoting. */
+/**
+ * Whether a plain string needs YAML double-quoting.
+ * v0.8.1：时间戳形态（`2026-08-26` / `2026.08.26` / `2026-08-26 15:30` /
+ * `2026-08-26T15:30:00` 等）即使含冒号也不加引号——时间戳的冒号在 YAML 中
+ * 会被解析为普通字符串，加引号反而会在后续读写循环中被转义污染。
+ */
 function needsQuoting(v: string): boolean {
   if (v === '') return true; // 空串
   if (/^[\s]|\s$/.test(v)) return true; // 开头/结尾空白
+  // 时间戳形态豁免（年-月-日[ 或T 时:分[:秒]]，分隔符 . - / 均可）
+  if (/^\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}([ T]\d{1,2}:\d{2}(:\d{2})?)?$/.test(v)) return false;
   // eslint-disable-next-line no-useless-escape
   if (/[:#\[\]{}'"]/.test(v)) return true; // YAML 特殊字符
   return false;

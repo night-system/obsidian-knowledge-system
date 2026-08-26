@@ -317,9 +317,6 @@ class SettingsRenderer {
     this.containerEl = containerEl;
     containerEl.empty();
 
-    // v0.8.5：iPad/触屏长按选择/剪切修复 —— JS 侧兜底（挂在稳定的顶层容器上）。
-    this.attachIosTextSelectionGuard(containerEl);
-
     this.modelDropdown = null;
     this.groupEls = [];
     this.groupCollapsed.clear();
@@ -328,44 +325,6 @@ class SettingsRenderer {
     this.renderTabs(containerEl);
     this.renderSearch(containerEl);
     this.renderActiveTab(containerEl.createDiv({ cls: 'ks-tab-content' }));
-  }
-
-  /**
-   * v0.8.5：iPad/触屏长按选择/剪切修复（JS 侧兜底，配合 styles.css 的
-   * user-select:text 规则）。
-   *
-   * 根因：Obsidian app.css 全局 `body{user-select:none;-webkit-user-select:none}`
-   * （只对 [contenteditable] 重新开启）。iOS WKWebView 在祖先 user-select:none
-   * 时会压制 input/textarea 内的长按选择手柄 —— 长按只弹「粘贴」菜单，没有
-   * 选择/剪切；参考插件 TaskNotes 无任何特殊处理即正常，说明问题不在输入框
-   * 组件本身，而在 iOS 全局 user-select 压制 + 自绘容器。
-   *
-   * 做法：事件委托挂在每次 render 共用的顶层容器上（设置 tab 的 containerEl /
-   * 独立设置视图的 contentEl 都是持久节点，子内容反复 empty()+重渲染也不受影响；
-   * dataset 标记防止重复挂监听）。touchstart（捕获、passive，先于 iOS 长按手势
-   * 判定执行）与 focusin 时对真实 input/textarea 内联重设
-   * `-webkit-user-select:text` / `user-select:text` / `-webkit-touch-callout:default`。
-   * 内联样式优先于一切外部样式表，无法被主题、缓存或选择器特异性绕过，
-   * 保证 iPad 上长按可选择文本/剪切。
-   */
-  private attachIosTextSelectionGuard(containerEl: HTMLElement): void {
-    if (containerEl.dataset.ksIosSelApplied === '1') return;
-    containerEl.dataset.ksIosSelApplied = '1';
-
-    const apply = (target: EventTarget | null): void => {
-      const el = target as HTMLElement | null;
-      if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
-      el.style.setProperty('-webkit-user-select', 'text');
-      el.style.setProperty('user-select', 'text');
-      el.style.setProperty('-webkit-touch-callout', 'default');
-    };
-
-    containerEl.addEventListener(
-      'touchstart',
-      (ev) => apply(ev.target),
-      { capture: true, passive: true }
-    );
-    containerEl.addEventListener('focusin', (ev) => apply(ev.target));
   }
 
   // -------------------------------------------------------------------------

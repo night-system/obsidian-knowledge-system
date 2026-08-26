@@ -1144,6 +1144,102 @@ class SettingsRenderer {
   // preset (tool preset management UI, v0.5.0 — 6th tab)
   // -------------------------------------------------------------------------
 
+  /**
+   * v0.8.2：默认预设（全局设置）——其他预设未配置的项继承这里。结构与普通预设
+   * 一致（可折叠项 + 每工具折叠组），编辑的是全局 settings（yamlRules / noteTemplate /
+   * modifyYamlRules / 归档三配置 / createRestrictYaml）。
+   */
+  private renderDefaultPresetRow(containerEl: HTMLElement): void {
+    const itemEl = containerEl.createDiv({ cls: 'ks-preset-item' });
+    const expanded = this.presetExpanded.has('__default__');
+    if (!expanded) itemEl.addClass('ks-preset-item-collapsed');
+
+    const headEl = itemEl.createDiv({ cls: 'ks-preset-item-head' });
+    const chev = headEl.createSpan({ cls: 'ks-preset-item-chev' });
+    this.setIconSafe(chev, expanded ? 'chevron-down' : 'chevron-right', expanded ? '\u2304' : '\u203A');
+    chev.addEventListener('click', () => this.togglePresetItem(itemEl, chev, '__default__'));
+    headEl.createSpan({ cls: 'ks-preset-tool-label', text: '默认预设（全局设置）' });
+    headEl.createSpan({ cls: 'ks-tool-config-desc', text: '其他预设未启用覆盖的项继承这里的配置；等同于设置页「输出属性」tab。' });
+
+    const bodyEl = itemEl.createDiv({ cls: 'ks-preset-item-body' });
+
+    const toolArea = bodyEl.createDiv({ cls: 'ks-preset-tools' });
+
+    const renderGlobalGroup = (
+      name: string,
+      explanation: string,
+      renderBody: (bodyEl: HTMLElement) => void
+    ): void => {
+      const key = `__default__:${name}`;
+      const groupEl = toolArea.createDiv({ cls: 'ks-group ks-tool-config' });
+      const head = groupEl.createDiv({ cls: 'ks-tool-config-head' });
+      const c = head.createSpan({ cls: 'ks-group-icon' });
+      const open = this.toolExpanded.has(key);
+      this.setIconSafe(c, open ? 'chevron-down' : 'chevron-right', open ? '\u2304' : '\u203A');
+      head.createSpan({ cls: 'ks-preset-tool-label', text: name });
+      head.createSpan({ cls: 'ks-tool-config-desc', text: explanation });
+      const b = groupEl.createDiv({ cls: 'ks-group-body' });
+      if (!open) groupEl.addClass('ks-collapsed');
+      head.addEventListener('click', () => {
+        const collapsed = groupEl.hasClass('ks-collapsed');
+        groupEl.toggleClass('ks-collapsed', !collapsed);
+        this.setIconSafe(c, collapsed ? 'chevron-down' : 'chevron-right', collapsed ? '\u2304' : '\u203A');
+        if (collapsed) this.toolExpanded.add(key);
+        else this.toolExpanded.delete(key);
+      });
+      renderBody(b);
+    };
+
+    renderGlobalGroup('create_note（属性规则 / 模板）', '默认预设的创建规则与正文模板（AI 创建属性规则 / AI 创建模板）。', (b) => {
+      const yamlBody = b.createDiv();
+      this.renderYamlRules(yamlBody);
+      const tmplBody = b.createDiv();
+      const tmplHeading = new Setting(tmplBody)
+        .setName('AI 创建模板')
+        .setDesc('create_note 正文结构（标题级别 / 允许 AI 写 / 解释）；空 = 自由正文。');
+      this.markSearchable(tmplHeading, '默认预设 创建模板 noteTemplate 标题');
+      this.renderNoteTemplate(tmplBody);
+    });
+
+    renderGlobalGroup('modify_output_note（属性规则）', '默认预设的修改属性规则（AI 修改属性规则）。', (b) => {
+      const modBody = b.createDiv();
+      this.renderModifyYamlRules(modBody);
+    });
+
+    renderGlobalGroup('modify_output_note_versioned（归档配置）', '默认预设的归档配置（版本后缀 / 版本号属性 / 归档标记属性）。', (b) => {
+      const suffix = new Setting(b)
+        .setName('版本后缀')
+        .setDesc('归档文件后缀（如「-归档」→ 原文名-归档.md）。')
+        .addText((text) =>
+          text
+            .setPlaceholder('如：-归档')
+            .setValue(this.plugin.settings.modifyVersionSuffix)
+            .onChange((v) => this.updateSetting('modifyVersionSuffix', v))
+        );
+      this.markSearchable(suffix, '默认预设 归档 版本后缀');
+      const vprop = new Setting(b)
+        .setName('版本号属性名')
+        .setDesc('写入原文件的版本号 yaml 属性名（数字递增）。')
+        .addText((text) =>
+          text
+            .setPlaceholder('如：version')
+            .setValue(this.plugin.settings.modifyVersionProperty)
+            .onChange((v) => this.updateSetting('modifyVersionProperty', v))
+        );
+      this.markSearchable(vprop, '默认预设 归档 版本号属性');
+      const aprop = new Setting(b)
+        .setName('归档标记属性名')
+        .setDesc('写入归档文件 frontmatter 的 bool 属性名（如 archived，写 true）。')
+        .addText((text) =>
+          text
+            .setPlaceholder('如：archived')
+            .setValue(this.plugin.settings.modifyArchiveProperty)
+            .onChange((v) => this.updateSetting('modifyArchiveProperty', v))
+        );
+      this.markSearchable(aprop, '默认预设 归档 归档标记属性');
+    });
+  }
+
   private renderPresetGroup(containerEl: HTMLElement): void {
     containerEl.empty();
 
@@ -1173,6 +1269,10 @@ class SettingsRenderer {
 
     const listBody = this.createGroup(containerEl, '工具预设', false);
     const presets = this.plugin.settings.toolPresets || [];
+
+    // v0.8.2：默认预设（全局设置）——其他预设未配置的项继承这里。
+    this.renderDefaultPresetRow(listBody);
+
     presets.forEach((preset, index) => this.renderPresetRow(listBody, preset, index, containerEl));
 
     const addBtn = new Setting(listBody)
@@ -1211,6 +1311,8 @@ class SettingsRenderer {
     index: number,
     parentEl: HTMLElement
   ): void {
+    // 预设内配置变化后重渲染整个预设组（保证覆盖开关/列表结构正确刷新）。
+    const rerenderAll = () => this.renderPresetGroup(parentEl);
     // B.1：每个预设一个可折叠项（默认收起），头部=名称输入+展开 chevron+删除。
     const itemEl = containerEl.createDiv({ cls: 'ks-preset-item' });
     const expanded = this.presetExpanded.has(preset.id);
@@ -1288,8 +1390,56 @@ class SettingsRenderer {
       '创建新笔记（参数：title 文件名 / yaml 属性规则 / 模板正文）', (body) => {
         const info = new Setting(body)
           .setName('说明')
-          .setDesc('描述「创建新笔记」。允许 AI 创建新笔记；正文结构与 frontmatter 属性规则由设置页「输出属性」的「AI 创建模板 / AI 创建属性规则」配置。');
+          .setDesc('描述「创建新笔记」。允许 AI 创建新笔记；正文结构与 frontmatter 属性规则默认继承「默认预设（全局设置）」，也可在本预设内独立配置（见下方）。');
         this.markSearchable(info, '预设 create_note 说明 创建 新建');
+
+        // v0.8.2：预设覆盖 —— AI 创建属性规则
+        const oc = (preset.outputConfig = preset.outputConfig ?? {});
+        const yamlOv = new Setting(body)
+          .setName('AI 创建属性规则（覆盖默认预设）')
+          .setDesc('开 = 本预设用下方规则；关 = 继承「默认预设（全局设置）」的规则。')
+          .addToggle((t) =>
+            t.setValue(Array.isArray(oc.yamlRules)).onChange((v) => {
+              oc.yamlRules = v ? (oc.yamlRules ?? []) : undefined;
+              void this.plugin.saveSettings();
+              rerenderAll();
+            })
+          );
+        this.markSearchable(yamlOv, '预设 create_note AI创建属性规则 覆盖 yamlRules');
+        if (Array.isArray(oc.yamlRules)) {
+          this.renderPresetRuleList(body, oc.yamlRules, 'create 属性规则',
+            (rule) => `AI 创建属性规则 ${rule.key} ${rule.desc} ${rule.values.join(' ')} ${rule.default}`,
+            () => rerenderAll());
+        }
+
+        // v0.8.2：预设覆盖 —— AI 创建模板
+        const tmplOv = new Setting(body)
+          .setName('AI 创建模板（覆盖默认预设）')
+          .setDesc('开 = 本预设用下方模板；关 = 继承「默认预设（全局设置）」的模板。')
+          .addToggle((t) =>
+            t.setValue(Array.isArray(oc.noteTemplate)).onChange((v) => {
+              oc.noteTemplate = v ? (oc.noteTemplate ?? []) : undefined;
+              void this.plugin.saveSettings();
+              rerenderAll();
+            })
+          );
+        this.markSearchable(tmplOv, '预设 create_note AI创建模板 覆盖 noteTemplate');
+        if (Array.isArray(oc.noteTemplate)) {
+          this.renderPresetTemplateList(body, oc.noteTemplate,
+            () => rerenderAll());
+        }
+
+        // v0.8.2：预设覆盖 —— 限制仅已配置属性
+        const restrictOv = new Setting(body)
+          .setName('限制 AI 只能使用已配置的属性（覆盖默认预设）')
+          .setDesc('开 = 本预设内 create/modify 的 yaml 键只能在对应规则集内；关 = 继承默认预设（默认关闭）。')
+          .addToggle((t) =>
+            t.setValue(oc.createRestrictYaml === true).onChange((v) => {
+              oc.createRestrictYaml = v;
+              void this.plugin.saveSettings();
+            })
+          );
+        this.markSearchable(restrictOv, '预设 create_note 限制 已配置属性 createRestrictYaml 覆盖');
       });
 
     this.renderToolConfigGroup(toolArea, preset, 'update_note_yaml',
@@ -1323,16 +1473,100 @@ class SettingsRenderer {
       '覆盖修改输出文件夹笔记（参数：name / sections / yaml）', (body) => {
         const info = new Setting(body)
           .setName('说明')
-          .setDesc('描述「覆盖修改输出文件夹笔记」。sections 的键必须是原文中已存在的标题文本，只能修改标题下的文字（不能修改标题或新增标题，禁止 # 开头）；yaml 受「AI 创建属性规则 / 限制仅已配置属性」约束。');
+          .setDesc('描述「覆盖修改输出文件夹笔记」。sections 的键必须是原文中已存在的标题文本，只能修改标题下的文字（不能修改标题或新增标题，禁止 # 开头）；yaml 规则默认继承「默认预设（全局设置）」，也可在本预设内独立配置（见下方）。');
         this.markSearchable(info, '预设 modify_output_note 说明 修改 输出 覆盖');
+
+        // v0.8.2：预设覆盖 —— AI 修改属性规则
+        const oc = (preset.outputConfig = preset.outputConfig ?? {});
+        const modYamlOv = new Setting(body)
+          .setName('AI 修改属性规则（覆盖默认预设）')
+          .setDesc('开 = 本预设用下方规则；关 = 继承「默认预设（全局设置）」的修改属性规则。')
+          .addToggle((t) =>
+            t.setValue(Array.isArray(oc.modifyYamlRules)).onChange((v) => {
+              oc.modifyYamlRules = v ? (oc.modifyYamlRules ?? []) : undefined;
+              void this.plugin.saveSettings();
+              rerenderAll();
+            })
+          );
+        this.markSearchable(modYamlOv, '预设 modify_output_note AI修改属性规则 覆盖 modifyYamlRules');
+        if (Array.isArray(oc.modifyYamlRules)) {
+          this.renderPresetRuleList(body, oc.modifyYamlRules, 'modify 属性规则',
+            (rule) => `AI 修改属性规则 ${rule.key} ${rule.desc} ${rule.values.join(' ')} ${rule.default}`,
+            () => rerenderAll());
+        }
       });
 
     this.renderToolConfigGroup(toolArea, preset, 'modify_output_note_versioned',
       '覆盖修改输出文件夹笔记并自动归档（参数：name / sections / yaml）', (body) => {
         const info = new Setting(body)
           .setName('说明')
-          .setDesc('描述「覆盖修改并自动归档」。接口同 modify_output_note（{name, sections, yaml}），每次修改前自动把当前版本追加到归档文件并写入新版本号/归档标记；需在输出属性页配置归档后缀/版本属性/归档属性（缺失则报错不工作）。');
+          .setDesc('描述「覆盖修改并自动归档」。接口同 modify_output_note（{name, sections, yaml}），每次修改前自动把当前版本追加到归档文件并写入新版本号/归档标记；归档配置默认继承「默认预设（全局设置）」，也可在本预设内独立配置（见下方）。');
         this.markSearchable(info, '预设 modify_output_note_versioned 说明 修改 归档');
+
+        // v0.8.2：预设覆盖 —— 归档配置
+        const oc = (preset.outputConfig = preset.outputConfig ?? {});
+        const archOv = new Setting(body)
+          .setName('归档配置（覆盖默认预设）')
+          .setDesc('开 = 本预设用下方版本后缀/版本号属性/归档标记属性；关 = 继承「默认预设（全局设置）」的归档配置。')
+          .addToggle((t) =>
+            t.setValue(
+              oc.modifyVersionSuffix !== undefined ||
+              oc.modifyVersionProperty !== undefined ||
+              oc.modifyArchiveProperty !== undefined
+            ).onChange((v) => {
+              oc.modifyVersionSuffix = v ? (oc.modifyVersionSuffix ?? '') : undefined;
+              oc.modifyVersionProperty = v ? (oc.modifyVersionProperty ?? '') : undefined;
+              oc.modifyArchiveProperty = v ? (oc.modifyArchiveProperty ?? '') : undefined;
+              void this.plugin.saveSettings();
+              rerenderAll();
+            })
+          );
+        this.markSearchable(archOv, '预设 modify_output_note_versioned 归档配置 覆盖');
+        if (
+          oc.modifyVersionSuffix !== undefined ||
+          oc.modifyVersionProperty !== undefined ||
+          oc.modifyArchiveProperty !== undefined
+        ) {
+          const s = new Setting(body)
+            .setName('版本后缀')
+            .setDesc('归档文件后缀（如「-归档」→ 原文名-归档.md）。')
+            .addText((text) =>
+              text
+                .setPlaceholder('如：-归档')
+                .setValue(oc.modifyVersionSuffix ?? '')
+                .onChange((v) => {
+                  oc.modifyVersionSuffix = v;
+                  void this.plugin.saveSettings();
+                })
+            );
+          this.markSearchable(s, '预设 modify_output_note_versioned 归档 版本后缀');
+          const vp = new Setting(body)
+            .setName('版本号属性名')
+            .setDesc('写入原文件的版本号 yaml 属性名（数字递增）。')
+            .addText((text) =>
+              text
+                .setPlaceholder('如：version')
+                .setValue(oc.modifyVersionProperty ?? '')
+                .onChange((v) => {
+                  oc.modifyVersionProperty = v;
+                  void this.plugin.saveSettings();
+                })
+            );
+          this.markSearchable(vp, '预设 modify_output_note_versioned 归档 版本号属性');
+          const ap = new Setting(body)
+            .setName('归档标记属性名')
+            .setDesc('写入归档文件 frontmatter 的 bool 属性名（如 archived，写 true）。')
+            .addText((text) =>
+              text
+                .setPlaceholder('如：archived')
+                .setValue(oc.modifyArchiveProperty ?? '')
+                .onChange((v) => {
+                  oc.modifyArchiveProperty = v;
+                  void this.plugin.saveSettings();
+                })
+            );
+          this.markSearchable(ap, '预设 modify_output_note_versioned 归档 归档标记属性');
+        }
       });
 
     this.renderToolConfigGroup(toolArea, preset, 'read_output_note',
@@ -1343,173 +1577,8 @@ class SettingsRenderer {
         this.markSearchable(info, '预设 read_output_note 说明 读取 输出 全文');
       });
     void toolArea;
-
-    // v0.8.2：预设级「输出属性」覆盖（把设置页「输出属性」tab 的关键配置搬进预设，
-    // 每个预设可独立自定义；未开启的项用全局设置）。
-    const outputGroup = bodyEl.createDiv({ cls: 'ks-group ks-tool-config' });
-    const outputHead = outputGroup.createDiv({ cls: 'ks-tool-config-head' });
-    const outputChev = outputHead.createSpan({ cls: 'ks-group-icon' });
-    const outputKey = `${preset.id}:__outputConfig__`;
-    const outputExpanded = this.toolExpanded.has(outputKey);
-    this.setIconSafe(outputChev, outputExpanded ? 'chevron-down' : 'chevron-right', outputExpanded ? '\u2304' : '\u203A');
-    outputHead.createSpan({ cls: 'ks-preset-tool-label', text: '输出属性（预设覆盖）' });
-    outputHead.createSpan({ cls: 'ks-tool-config-desc', text: '把「输出属性」tab 的关键配置搬进本预设（yaml 规则 / 创建模板 / modify 规则与归档配置）；未启用「预设覆盖」的项使用全局设置。' });
-    const outputBody = outputGroup.createDiv({ cls: 'ks-group-body' });
-    if (!outputExpanded) outputGroup.addClass('ks-collapsed');
-    outputHead.addEventListener('click', () => {
-      const isCollapsed = outputGroup.hasClass('ks-collapsed');
-      outputGroup.toggleClass('ks-collapsed', !isCollapsed);
-      this.setIconSafe(outputChev, isCollapsed ? 'chevron-down' : 'chevron-right', isCollapsed ? '\u2304' : '\u203A');
-      if (isCollapsed) this.toolExpanded.add(outputKey);
-      else this.toolExpanded.delete(outputKey);
-    });
-    this.renderPresetOutputConfig(outputBody, preset);
   }
 
-  /**
-   * v0.8.2：预设级「输出属性」覆盖编辑器。每项一个开关（启用预设值）+ 编辑器；
-   * 未启用的项在 resolveToolConfig 里回退全局设置。
-   */
-  private renderPresetOutputConfig(containerEl: HTMLElement, preset: ToolPreset): void {
-    const oc = (preset.outputConfig = preset.outputConfig ?? {});
-
-    const info = new Setting(containerEl)
-      .setName('')
-      .setDesc('每个预设可独立定义这些设置（未启用/留空的项自动用设置页「输出属性」的全局值）。')
-    ;
-    this.markSearchable(info, '预设 输出属性 覆盖 outputConfig yaml 规则 模板 归档');
-
-    // —— AI 创建属性规则（yamlRules）——
-    const yamlEnabled = new Setting(containerEl)
-      .setName('AI 创建属性规则（预设覆盖）')
-      .setDesc('开启 = 本预设使用下方规则（AI 创建属性规则，结构与设置页一致）；关闭 = 用全局规则。')
-      .addToggle((t) =>
-        t.setValue(Array.isArray(oc.yamlRules)).onChange((v) => {
-          oc.yamlRules = v ? (oc.yamlRules ?? []) : undefined;
-          void this.plugin.saveSettings();
-          this.renderPresetOutputConfig(containerEl, preset);
-        })
-      );
-    this.markSearchable(yamlEnabled, '预设 输出属性 AI创建属性规则 yamlRules 覆盖');
-    if (Array.isArray(oc.yamlRules)) {
-      this.renderPresetRuleList(containerEl, oc.yamlRules, 'create 属性规则',
-        (rule) => `AI 创建属性规则 ${rule.key} ${rule.desc} ${rule.values.join(' ')} ${rule.default}`,
-        () => this.renderPresetOutputConfig(containerEl, preset));
-    }
-
-    // —— AI 创建模板（noteTemplate）——
-    const tmplEnabled = new Setting(containerEl)
-      .setName('AI 创建模板（预设覆盖）')
-      .setDesc('开启 = 本预设使用下方标题模板（结构与设置页「AI 创建模板」一致）；关闭 = 用全局模板。')
-      .addToggle((t) =>
-        t.setValue(Array.isArray(oc.noteTemplate)).onChange((v) => {
-          oc.noteTemplate = v ? (oc.noteTemplate ?? []) : undefined;
-          void this.plugin.saveSettings();
-          this.renderPresetOutputConfig(containerEl, preset);
-        })
-      );
-    this.markSearchable(tmplEnabled, '预设 输出属性 AI创建模板 noteTemplate 覆盖');
-    if (Array.isArray(oc.noteTemplate)) {
-      this.renderPresetTemplateList(containerEl, oc.noteTemplate, () => this.renderPresetOutputConfig(containerEl, preset));
-    }
-
-    // —— modify 属性规则（modifyYamlRules）——
-    const modYamlEnabled = new Setting(containerEl)
-      .setName('AI 修改属性规则（预设覆盖）')
-      .setDesc('开启 = 本预设使用下方规则（modify 工具属性规则）；关闭 = 用全局规则。')
-      .addToggle((t) =>
-        t.setValue(Array.isArray(oc.modifyYamlRules)).onChange((v) => {
-          oc.modifyYamlRules = v ? (oc.modifyYamlRules ?? []) : undefined;
-          void this.plugin.saveSettings();
-          this.renderPresetOutputConfig(containerEl, preset);
-        })
-      );
-    this.markSearchable(modYamlEnabled, '预设 输出属性 AI修改属性规则 modifyYamlRules 覆盖');
-    if (Array.isArray(oc.modifyYamlRules)) {
-      this.renderPresetRuleList(containerEl, oc.modifyYamlRules, 'modify 属性规则',
-        (rule) => `AI 修改属性规则 ${rule.key} ${rule.desc} ${rule.values.join(' ')} ${rule.default}`,
-        () => this.renderPresetOutputConfig(containerEl, preset));
-    }
-
-    // —— 归档三配置（modify_output_note_versioned）——
-    const archEnabled = new Setting(containerEl)
-      .setName('归档配置（预设覆盖）')
-      .setDesc('开启 = 本预设使用下方版本后缀/版本号属性/归档标记属性；关闭 = 用全局配置。')
-      .addToggle((t) =>
-        t.setValue(
-          oc.modifyVersionSuffix !== undefined ||
-          oc.modifyVersionProperty !== undefined ||
-          oc.modifyArchiveProperty !== undefined
-        ).onChange((v) => {
-          oc.modifyVersionSuffix = v ? (oc.modifyVersionSuffix ?? '') : undefined;
-          oc.modifyVersionProperty = v ? (oc.modifyVersionProperty ?? '') : undefined;
-          oc.modifyArchiveProperty = v ? (oc.modifyArchiveProperty ?? '') : undefined;
-          void this.plugin.saveSettings();
-          this.renderPresetOutputConfig(containerEl, preset);
-        })
-      );
-    this.markSearchable(archEnabled, '预设 输出属性 归档配置 版本后缀 版本号属性 归档标记 覆盖');
-    if (
-      oc.modifyVersionSuffix !== undefined ||
-      oc.modifyVersionProperty !== undefined ||
-      oc.modifyArchiveProperty !== undefined
-    ) {
-      const s = new Setting(containerEl)
-        .setName('版本后缀')
-        .setDesc('归档文件后缀（如「-归档」→ 原文名-归档.md）。')
-        .addText((text) =>
-          text
-            .setPlaceholder('如：-归档')
-            .setValue(oc.modifyVersionSuffix ?? '')
-            .onChange((v) => {
-              oc.modifyVersionSuffix = v;
-              void this.plugin.saveSettings();
-            })
-        );
-      this.markSearchable(s, '预设 输出属性 归档 版本后缀');
-      const vp = new Setting(containerEl)
-        .setName('版本号属性名')
-        .setDesc('写入原文件的版本号 yaml 属性名（数字递增）。')
-        .addText((text) =>
-          text
-            .setPlaceholder('如：version')
-            .setValue(oc.modifyVersionProperty ?? '')
-            .onChange((v) => {
-              oc.modifyVersionProperty = v;
-              void this.plugin.saveSettings();
-            })
-        );
-      this.markSearchable(vp, '预设 输出属性 归档 版本号属性');
-      const ap = new Setting(containerEl)
-        .setName('归档标记属性名')
-        .setDesc('写入归档文件 frontmatter 的 bool 属性名（如 archived，写 true）。')
-        .addText((text) =>
-          text
-            .setPlaceholder('如：archived')
-            .setValue(oc.modifyArchiveProperty ?? '')
-            .onChange((v) => {
-              oc.modifyArchiveProperty = v;
-              void this.plugin.saveSettings();
-            })
-        );
-      this.markSearchable(ap, '预设 输出属性 归档 归档标记属性');
-    }
-
-    // —— createRestrictYaml ——
-    const restrict = new Setting(containerEl)
-      .setName('限制 AI 只能使用已配置的属性（预设覆盖）')
-      .setDesc('开 = 本预设内 create/modify 的 yaml 键只能在对应规则集内；关 = 用全局设置（默认关闭）。')
-      .addToggle((t) =>
-        t.setValue(oc.createRestrictYaml === true).onChange((v) => {
-          oc.createRestrictYaml = v;
-          void this.plugin.saveSettings();
-          this.renderPresetOutputConfig(containerEl, preset);
-        })
-      );
-    this.markSearchable(restrict, '预设 输出属性 限制 已配置属性 createRestrictYaml 覆盖');
-  }
-
-  /** 预设内属性规则列表（结构与设置页规则行一致：属性名/解释/默认值/暴露开关 + 可选值 tag）。 */
   private renderPresetRuleList(
     containerEl: HTMLElement,
     rules: YamlRule[],
@@ -1742,6 +1811,12 @@ class SettingsRenderer {
     const list = preset.enabledTools || [];
     if (list.length === 0) return true; // 空 = 全部启用（默认）
     return list.includes(name);
+  }
+
+  /** Index of `preset` in settings.toolPresets (for re-rendering a preset row). */
+  private presetIndexOf(preset: ToolPreset): number {
+    const i = (this.plugin.settings.toolPresets || []).findIndex((p) => p.id === preset.id);
+    return i < 0 ? 0 : i;
   }
 
   /** Toggle tool `name` in the preset, writing back `enabledTools`. Empty list
